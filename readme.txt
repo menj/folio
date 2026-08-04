@@ -1,223 +1,310 @@
 === Folio ===
-Contributors: menj
-Tags: file manager, pdf, images, markdown, seo, document library
-Requires PHP: 7.4
-Tested up to: PHP 8.3
-Stable tag: 1.0.0
+Contributors: folio
+Requires PHP: 8.4
+Requires at least: PHP 8.4
+Tested up to: PHP 8.4
+Stable tag: 1.7.2
 License: Proprietary
 
-A single-script PHP file library. Lists FTP-uploaded files, previews and
-prints PDFs and images, and serves an SEO-ready detail page for every file.
+Folio turns a web folder into a small public document library with crawlable
+file pages, previews, metadata, categories, accounts, sitemap, and llms.txt.
+Files remain managed over FTP and no database is required. Optional standalone
+pages (About, FAQ, custom) sit alongside the library. Hover preview cards give
+each row a real thumbnail on desktop, and the layout collapses cleanly on
+mobile.
 
-== Description ==
+== Requirements ==
 
-Folio turns a web folder into a public document library with
-no database. Files are managed entirely over FTP. An authenticated admin
-assigns a title, a short description, one category, and up to ten tags per
-file. Raw filenames and extensions stay hidden from visitors.
-
-Major features:
-
-* Directory listing with subfolder navigation and breadcrumbs
-* Inline preview and printing for PDF, image, and Markdown files
-* Markdown rendered to HTML by Parsedown in safe mode
-* Full schema.org JSON-LD graph: WebSite, publisher, BreadcrumbList,
-  CollectionPage, ItemList, and a typed node for every file
-* Per-file titles, descriptions, categories, and tags
-* Browsable category archive pages at /category/<slug>/ with their own
-  SEO URLs, gathering documents from every folder
-* Client-side filtering by tag chip
-* One-click hotlink copying with stable, filename-bearing URLs
-* SEO layer: crawlable detail pages, canonical URLs, Open Graph and
-  Twitter Card tags, JSON-LD structured data, XML sitemap with image
-  extensions, optional clean URLs via mod_rewrite
-* Four colour schemes (Folio, Ledger, Garden, Night) remembered per visitor
-* Security hardening: CSRF tokens, login throttling, strict CSP,
-  hardened session cookies, path traversal guards, SVG script
-  neutralisation
+* PHP 8.4 or newer
+* JSON, password, random and mbstring support
+* PHP read access to uploads/ and write access to data/
+* Apache/LiteSpeed using the supplied .htaccess with mod_mime and mod_headers;
+  mod_rewrite is optional
 
 == Installation ==
 
-1. Unzip the package. It expands to a folio/ folder; upload its
-   contents into a web folder, for example /documents/.
-2. Copy config-sample.php to config.php. All settings live there.
-3. In config.php set ADMIN_USERNAME, and set ADMIN_PASSWORD_HASH to a
-   bcrypt hash of your password:
-   php -r "echo password_hash('your-password', PASSWORD_DEFAULT);"
-   Until it is set, the admin login is disabled.
-4. Set SITE_NAME, SITE_DESCRIPTION, PUBLISHER_TYPE, PUBLISHER_NAME,
-   PUBLISHER_URL, and SITE_LANGUAGE in config.php.
-5. Rename htaccess.txt to .htaccess. As shipped it only adds security
-   hardening and changes no URLs, so it is safe in any folder.
-   For clean URLs, uncomment the block at the bottom of that file and
-   set PRETTY_URLS to true in index.php. Check the result at
-   index.php?action=selftest, and comment the block out again if
-   pages start returning 404.
-6. Edit the Sitemap line in robots.txt, then upload robots.txt to the
-   DOMAIN ROOT (not this folder). Merge it into an existing root
-   robots.txt if you have one.
-7. Upload files into the uploads/ folder over FTP.
-8. Serve the site over HTTPS.
+1. Upload the contents of the folio/ folder.
+2. Make uploads/ readable by PHP and data/ writable by the web-server account.
+3. Confirm .htaccess uploaded. It ships ready to use, but many FTP
+   clients hide dotfiles by default.
+4. Open install.php. It creates data/install-token.php.
+5. Read the one-time token over FTP and enter it in the installer.
+6. Enter the exact canonical SITE_URL, account, and site details.
+7. Delete install.php after installation.
+8. Log in at ?action=login and run the admin-only diagnostics.
 
-== Supported file formats ==
+== Metadata and files ==
 
-Displayed inline, with a detail page and a sitemap entry:
+Upload, rename, and remove documents over FTP. Folio never edits the document
+contents. Titles, descriptions, categories, and tags are stored atomically in
+data/metadata.json, with data/metadata.json.bak as the last-known-good backup.
+Older uploads/.sfm-meta.json data is read for migration.
 
-* PDF (.pdf) in an embedded viewer, printable
-* Images (.png, .jpg, .jpeg, .gif, .webp, .bmp, .svg), printable
-* Markdown (.md), rendered to HTML by Parsedown, printable
-* Plain text (.txt), listed with a download link
+Supported preview formats are PDF, PNG, JPEG, GIF, WebP, BMP, SVG, and Markdown.
+Plain text and unknown files receive detail pages with download links. Unknown
+or active formats are forced to download by the supplied server rules and by
+the PHP fallback endpoint. Symlinks are rejected.
 
-Every other file type is listed, can be titled, described, categorised,
-and tagged, and is downloadable. Such files are served as attachments
-rather than displayed, and are left out of the sitemap.
+== URLs and SEO ==
 
-To support another format, add its extension and MIME type to the
-$mime_map array near the top of index.php.
+File page slugs include the extension, for example paper.pdf becomes paper-pdf.
+A short hash is added only when normalised names still collide. Unambiguous old
+extensionless or extension-bearing URLs redirect to the current canonical URL.
 
-== Upgrading ==
+SITE_URL is authoritative for canonical, Open Graph, sitemap, and structured
+data URLs. Incoming Host headers are never trusted. Raw PDF, text, and Markdown
+responses are marked noindex by the supplied server rules so their Folio detail
+pages remain the search target.
 
-1. Back up uploads/ and config.php. The metadata file
-   uploads/.sfm-meta.json holds every title, description, category,
-   and tag you have written.
-2. Overwrite index.php, assets/, lib/, and the documentation files.
-3. Do NOT overwrite config.php, uploads/, or .htaccess.
-4. Check config-sample.php for settings the release has added.
-5. Run index.php?action=selftest.
-6. Hard-refresh the browser (Ctrl+F5) so cached assets are replaced.
+Listing and category pages emit focused WebSite, breadcrumb, CollectionPage,
+and ItemList schema. Detailed typed file schema appears on the file page.
+Publisher schema is omitted when no publisher name is configured.
 
-Rolling back means restoring the previous index.php and assets/.
-Documents and metadata are never touched by an upgrade.
+== Sessions and accounts ==
 
-== Removing Folio ==
+Public requests do not start PHP sessions. Sessions begin only for login,
+authenticated routes, POST requests, or visitors who already carry the Folio
+session cookie. Password changes and resets increment an authentication version;
+deleted or reset accounts lose old sessions on their next request.
 
-1. Download uploads/ first. Those documents exist nowhere else.
-2. Keep uploads/.sfm-meta.json if you may reinstall; it restores the
-   whole catalogue.
-3. Delete the installation folder.
-4. Remove the Sitemap: line pointing at Folio from the robots.txt at
-   your domain root.
-5. If the library was indexed, serve 410 Gone or redirect the old URLs.
+Accounts are managed at ?action=users and stored privately in data/users.php.
+Every account has full access; Folio has no role hierarchy.
 
-Folio writes nothing outside its own folder: no database, no
-configuration elsewhere on the server.
+== Security ==
+
+The installer requires a one-time private token and creates config.php
+exclusively with restrictive permissions. Metadata updates use a locked,
+atomic transaction and reject malformed JSON. Upload scanning rejects symlinks
+and paths outside uploads/. The Apache/LiteSpeed rules block executable
+formats, sandbox SVG, force active files to download, and disable indexing.
+
+Set TRUST_PROXY_HEADERS to true only behind a trusted reverse proxy that
+overwrites X-Forwarded-Proto. Always use HTTPS in production.
 
 == Frequently Asked Questions ==
 
-= Where are titles and tags stored? =
+= Where do I set the canonical URL? =
 
-In uploads/.sfm-meta.json, keyed by relative path. Keep this file when
-moving the installation. Renaming a file over FTP orphans its entry.
+Set SITE_URL in config.php to the complete public URL of the Folio folder,
+including the trailing slash.
 
-= How do I upload files? =
+= How do I generate a password hash manually? =
 
-Over FTP only. The application reads the uploads/ folder and never
-modifies your files.
-
-= How do I generate the password hash? =
-
-Three ways. Easiest: upload hash-tool.php beside index.php, open it
-in a browser, type your password, and copy the define(...) line it
-prints into config.php. Delete hash-tool.php afterwards.
-
-With shell or cPanel Terminal:
+Run:
 php -r "echo password_hash('your-password', PASSWORD_DEFAULT), PHP_EOL;"
 
-Or create a temporary file hash.php containing
-<?php echo password_hash('your-password', PASSWORD_DEFAULT);
-load it in a browser, copy the output, then delete the file.
-
-A valid hash starts with $2y$ and is 60 characters long.
-
-= How do I change the admin password? =
-
-Generate a new hash by any method above and replace the
-ADMIN_PASSWORD_HASH line in config.php.
-
-= What is the default password? =
-
-There is none. Without config.php the hash falls back to CHANGE_ME,
-which disables the login rather than accepting any password. Supply
-your own hash to enable the admin.
-
-= Is it safe to publish this in a public repository? =
-
-Yes. config.php holds the credentials and is listed in .gitignore,
-as is uploads/. Only config-sample.php with placeholders is committed.
-If a real hash was ever committed, rotate the password: deleting it in
-a later commit does not remove it from the repository history.
-
-= What happens after failed logins? =
-
-Eight failed attempts from one IP address lock that address out for
-15 minutes.
-
-= Why is robots.txt not in the application folder? =
-
-Crawlers only read robots.txt at the domain root. A copy inside a
-subfolder has no effect. Upload it to the root and edit the Sitemap
-line to point at this installation.
-
-= What is the URL of a file itself? =
-
-Its real location in the uploads folder, e.g.
-/documents/uploads/paper-title.pdf. Files are served directly by the
-web server, not proxied through PHP. The uploads/.htaccess that ships
-with Folio disables script execution there and sandboxes SVG files;
-keep it. Older ?action=raw links are 301-redirected.
-
-= Do page URLs include the file extension? =
-
-No. A file's page URL is its filename minus the extension, slugified:
-Acts 17 Reconsidered.pdf becomes /acts-17-reconsidered/. The extension
-appears only on the raw asset URL. Old URLs containing the extension
-are 301-redirected to the slug URL. Two files in one folder whose
-names differ only by extension will collide; rename one.
-
-= Can I read the documentation inside Folio? =
-
-Yes. Log in and click Docs in the top bar, or open
-index.php?action=docs. It renders README.md and CHANGELOG.md and shows
-readme.txt as plain text. The page is admin-only and noindex.
-
-= Clicking a file name returns 404. Why? =
-
-PRETTY_URLS is true but the rewrite rules are not active. Set
-PRETTY_URLS to false in index.php and links work again at once, or
-install .htaccess correctly. Run index.php?action=selftest to see
-which applies.
-
-= Does it work on nginx? =
-
-Yes, with PRETTY_URLS set to false. Clean URLs require Apache
-mod_rewrite or equivalent nginx rewrite rules of your own.
-
-= What file formats are supported? =
-
-PDF, images (PNG, JPEG, GIF, WebP, BMP, SVG), Markdown, and plain text
-are handled natively. Any other file type is still listed and
-downloadable. See the Supported file formats section above.
-
-= Can it display Markdown files? =
-
-Yes. Files ending in .md are rendered to formatted HTML by Parsedown in
-safe mode, both in the preview pane and on the file detail page.
+The guided installer performs this automatically.
 
 = How do categories differ from tags? =
 
-Each category has its own archive page with an indexable URL, gathering
-every document in that category across all folders. Tags filter the
-current view in the browser and have no pages of their own. Use
-categories for the few durable divisions of the library.
+Categories have crawlable archive pages spanning all folders. Tags filter the
+current listing in the browser and do not have archive pages.
 
-= Can a folder be named "category"? =
+= Does it work on Nginx? =
 
-No. That name collides with the category archive route. Rename it.
+Query-string URLs will work, since Folio falls back to them automatically
+whenever it can't confirm rewriting is active. Nginx is not a supported or
+documented deployment target, though: Folio ships and maintains only an
+Apache/LiteSpeed .htaccess, and features that depend on server-level rewrite
+rules (clean URLs, per-file PDF access control) will not be enforced. Folio
+detects this itself and fails safe rather than presenting a false sense of
+protection.
+
+= Is there a page-turning reader for PDFs? =
+
+Yes. PDF rows have a "Flip view" button that opens a reader rendering real
+pages with Mozilla's pdf.js, served from your own domain. Navigate with the
+arrow keys, Home and End, the page-number field, the buttons, or by clicking
+the left and right thirds of the page. Escape returns to the file. The
+animation is skipped for visitors whose system asks for reduced motion.
+
+= My library is very large. Does the sitemap still work? =
+
+Yes. A sitemap may contain at most 50,000 URLs, so beyond that Folio serves
+sitemap.xml as a sitemap index pointing at sitemap-1.xml, sitemap-2.xml, and
+so on. Smaller libraries are served as a single file exactly as before.
+
+= Does the sitemap notice when I only change a title? =
+
+Yes. Each page reports the later of the file's modification time and the last
+time its metadata changed, so retitling a document tells search engines that
+page changed. Editing one document does not change any other entry.
+
+= What happens when the site is non-indexable? =
+
+Public pages emit noindex, nofollow. Sitemap and llms.txt return 404 until the
+site is made indexable again.
+
+= Can I add pages like About and FAQ? =
+
+Yes, at ?action=pages. Two named slots (About, FAQ) and three custom slots are
+available. All are off by default; enable and fill in Markdown to publish. FAQ
+pages emit FAQPage structured data with Question and Answer entities parsed
+from ## headings, useful for AI search visibility.
+
+= How do I notify search engines when the library changes? =
+
+The Crawlers screen has one-click Bing ping and IndexNow support (Bing, Yandex,
+Naver, and others). Google no longer accepts sitemap pings; use Search Console
+for Google. IndexNow requires generating a key from the same screen; Folio
+hosts the verification file at /{key}.txt automatically.
+
+= Does Folio use server tools like OCR? =
+
+Yes, when they are installed. Folio looks for ocrmypdf, tesseract, pdftotext,
+pdfinfo, pdftocairo, pdftoppm, pngquant and unpaper, and uses whichever are
+present. None are required. Check ?action=diagnostics to see what was found,
+where each one lives, and what it enables.
+
+The main gain is OCR. A scanned document is a picture of text and cannot be
+searched by anyone. With OCRmyPDF and Tesseract installed, Folio can make a
+searchable copy. Your original file is never modified: the copy is kept in
+data/ocr/ and can be deleted at any time.
+
+Where Poppler is installed, PDF previews are rendered with it rather than
+through ImageMagick and Ghostscript, which many hosts disable for security
+reasons.
+
+= What happens to a document URL if I rename the file over FTP? =
+
+Nothing. A document address is stored, not derived from the filename, so
+renaming or moving a file does not change its URL.
+
+After renaming or moving files, open ?action=diagnostics and run
+reconciliation. Folio matches each record to its file by content and updates
+only the stored path. The URL, title, transcript and everything else stay as
+they were, and nothing on disk is touched.
+
+If a file was renamed AND edited, its contents no longer match and Folio will
+not guess. It shows the document as missing its file alongside the new
+uncatalogued file, and you can relink them by hand.
+
+= Can I change a document URL? =
+
+Yes. Edit the URL slug field in the metadata editor. The old address then
+redirects permanently to the new one. Change it again and every previous
+address redirects straight to the newest, never through a chain.
+
+= Does Folio manage my files? =
+
+No, and deliberately. FTP owns the files; Folio owns the catalogue and the
+public addresses. Folio never uploads, renames, moves, replaces or deletes
+anything, and never creates folders.
+
+= What is planned for future versions? =
+
+docs/upgrading.md carries a roadmap: what is planned next, what is under
+consideration, and what has been declined and why. It also lists the
+principles that will not change.
+
+The most important of those: Folio never modifies your files. It will not gain
+upload, rename, move, delete or folder controls in any version. FTP owns the
+files; Folio owns the catalogue and the public addresses.
 
 == Changelog ==
 
+Every tool is optional. Without ocrmypdf, OCR still runs using Tesseract and
+Poppler. Without Tesseract there is no OCR but nothing else changes. Without
+any of them Folio behaves exactly as it did before the feature existed.
+
+Folio does not need Ghostscript. PDF pages are rendered with Poppler, which
+needs no delegate, and both OCR routes work without it. ImageMagick's own PDF
+support, which would call Ghostscript, stays off unless you set
+PDF_ALLOW_GHOSTSCRIPT to true.
+
+= 1.6.0 =
+
+Document URLs are now permanent and independent of filenames and folders.
+Adds an editable URL slug per document, automatic 301 redirects from previous
+addresses, permanent internal document identifiers, and reconciliation that
+matches records back to files by content after an FTP rename or move. Existing
+metadata and existing URLs are preserved. Folio still performs no physical
+file operation.
+
+= 1.5.0 =
+
+Folio now detects command-line utilities on the server and uses them when
+present: OCR for scanned documents via OCRmyPDF and Tesseract, text
+extraction via pdftotext, PDF previews via Poppler that need no Ghostscript,
+and smaller PNGs via pngquant. Nothing is required and nothing changes if
+none are installed. Originals are never modified; results are cached under
+data/ and can be deleted freely.
+
+= 1.4.2 =
+
+Documentation accuracy. The installer, Diagnostics and this file told you to
+rename htaccess.txt, a file that stopped shipping in 1.2.0 — .htaccess is
+active as delivered, and when it is missing the usual cause is an FTP client
+hiding dotfiles. Four fixes shipped in 1.4.0 were also missing from its
+changelog and are now recorded.
+
+= 1.4.1 =
+
+Removes nginx.conf.example. Nginx was never actively maintained as a
+deployment target and keeping the file implied a level of support that
+wasn't real; Folio already fails safe on any server it can't confirm its
+rewrite is active on, so this changes documentation, not behaviour.
+Requirements, install steps, and the PDF access control docs now state
+plainly that Apache or LiteSpeed is required, rather than carving Nginx
+out as a special case.
+
+= 1.4.0 =
+
+Adds cached WebP derivative images (Imagick or GD) for listings, hover
+cards, and detail pages, keyed to the source file's modification time and
+size so replacing a file over FTP invalidates the cache automatically.
+Adds viewable conversions for TIFF, HEIC, HEIF, and AVIF; the original file
+remains what direct links and downloads give you. Adds PDF_SERVER_PREVIEW
+(off by default) for optional server-side first-page PDF rendering. Fixes
+an issue where an excluded folder's contents were hidden but the folder
+itself, an empty listing row, and a CollectionPage entry in structured data
+were not; exclusion now matches on path segments so nested content is
+excluded however deeply nested. Restores uploads/.htaccess and .gitignore,
+which were documented as shipped but missing from the 1.3.0 package.
+Nginx is not a supported deployment target; nginx.conf.example has been
+removed rather than kept as an unmaintained, partially-accurate reference —
+see the FAQ above.
+
+= 1.3.0 =
+
+Adds per-file PDF access control (public/viewer/hidden) enforced through
+a signed-URL raw endpoint, with a preflight confirmation step on the
+Crawlers screen before anything is actually restricted. Adds document_type,
+transcript, and language metadata fields, with the transcript rendered
+server-side so restricted documents stay fully readable and indexable by
+search engines and AI crawlers even when the original PDF is not. Adds
+Dublin Core Terms alongside the existing Schema.org structured data, and
+automatic blurred first-page previews for hidden PDFs where Imagick with a
+Ghostscript delegate is available (falls back to a manual placeholder image
+otherwise). PDF access control requires Apache or LiteSpeed. Fixes the
+analytics tracker being blocked by the security policy and collecting
+nothing.
+
+= 1.2.0 =
+
+Adds an Analytics screen supporting Matomo and Google Analytics 4;
+Folio itself stores no visit data, IP addresses, or geolocation, and
+admin sessions are excluded by default. Fixes category chips not
+filtering the listing, the hover preview rendering the library inside
+itself, a PDF preview that could hang indefinitely, and a duplicate
+download button on PDF pages.
+
+= 1.1.0 =
+
+Fixes a bug where every link pointed at localhost unless SITE_URL was
+set, which broke navigation, both PDF readers, and the admin. Apache
+config now ships as a real .htaccess with clean URLs active, and Folio
+detects whether mod_rewrite actually works instead of assuming. Admin
+login is a header dropdown again. Upgraders: upload the new .htaccess
+and delete any old htaccess.txt files left from releases before 1.2.0.
+
+= 1.0.1 =
+
+Security: fixed HTML injection through JSON-LD structured data; logout now
+requires POST with a CSRF token; login throttling is safe under concurrent
+requests; the installer emits hardened security headers.
+Changed: removed the retired Bing sitemap ping; IndexNow submissions are now
+batched to respect the 10,000-URL limit.
+
 = 1.0.0 =
-* Initial release: listing, preview, print, hotlinks, titles and
-  descriptions, categories and tags with filtering, admin login,
-  SEO detail pages, XML sitemap, clean URLs, security hardening,
-  Markdown rendering via Parsedown 1.8.0 (MIT), category archive pages.
+* Initial release.

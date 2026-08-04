@@ -1,0 +1,10 @@
+Folio Proprietary Licence Notice
+
+Copyright (c) 2026. All rights reserved.
+
+Folio is proprietary software. Possession of a copy does not grant permission
+to redistribute, sublicense, sell, publish, or create derivative distributions
+without the copyright holder's written permission.
+
+The bundled Parsedown component is separately licensed under the MIT License;
+see lib/parsedown/license.txt.
