@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.7.2. Update this file in the same commit as any change it describes.
+Version 1.8.3. Update this file in the same commit as any change it describes.
 
 ## Version
 
@@ -15,11 +15,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.7.2');` |
-| `changelog.md` | `## 1.7.2 — 4 August 2026` |
-| `readme.txt` | `Stable tag: 1.7.2` |
-| `readme.md` | `1.7.2.` under `## Version` |
-| `security.md` | `The current supported release is **1.7.2**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.8.3');` |
+| `changelog.md` | `## 1.8.3 — 4 August 2026` |
+| `readme.txt` | `Stable tag: 1.8.3` |
+| `readme.md` | `1.8.3.` under `## Version` |
+| `security.md` | `The current supported release is **1.8.3**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -50,7 +50,7 @@ robots.txt                to be copied to the domain root
 readme.md                 technical documentation
 changelog.md              version history
 security.md               vulnerability disclosure policy
-license.txt               licence
+license.txt               GNU GPL v3 + bundled-component notices
 readme.txt                general-audience documentation
 docs/ssot.md              this file
 docs/install.md           installation guide
@@ -69,6 +69,8 @@ lib/pdfjs/                PDF.js, Apache 2.0
 tests/smoke.sh            regression suite
 tests/readme.md           how to run it
 uploads/.htaccess         hardening for the served uploads folder
+uploads/readme.txt        keeps the folder present in git and on GitHub
+data/readme.txt           keeps the folder present in git and on GitHub
 data/thumbs/              generated image derivatives; safe to delete
 data/.htaccess            denies web access to data/
 ```
@@ -260,7 +262,7 @@ cache cannot be filled on demand. Derivatives are stripped of metadata, because
 a public thumbnail should not republish EXIF GPS coordinates.
 
 `PDF_SERVER_PREVIEW` is off by default. Rasterising PDFs means invoking
-Ghostscript through Imagick, a path with a poor security history, and the
+ImageMagick's PDF delegate, which has a poor security record, and the
 client-side reader already previews PDFs without it.
 
 ## External utilities
@@ -276,7 +278,7 @@ absent, and nothing in it may become a hard requirement.
 | `pdftotext` | Text extraction, indexing | No extracted text; no text search over PDFs |
 | `pdfinfo` | Page counts, encryption check | Page counts unknown; Tesseract OCR route unavailable |
 | `pdftocairo` | PDF page rendering | Falls back to `pdftoppm` |
-| `pdftoppm` | PDF page rendering | With neither, no PDF previews unless Ghostscript is allowed |
+| `pdftoppm` | PDF page rendering | With neither, no PDF previews |
 | `qpdf` | Joining OCR'd pages | Single-page documents still OCR; multi-page reports why not |
 | `pngquant` | Shrinking rendered PDF pages | Renders are simply larger |
 | `exiftool` | Reading a document's own creation date | The filesystem date is used |
@@ -315,23 +317,18 @@ fails when it is the wrong one.
 
 1. **`ocrmypdf`** — OCRmyPDF drives the job. Best results: it keeps existing
    text layers, deskews, and optimises. `--output-type pdf` is passed so it
-   never attempts PDF/A, which is the one part that wants Ghostscript.
+   never attempts PDF/A conversion.
 2. **`tesseract`** — Poppler renders each page, Tesseract writes a searchable
-   single-page PDF, qpdf joins them. No Python, no Ghostscript. `qpdf` is
+   single-page PDF, qpdf joins them. No Python needed. `qpdf` is
    needed only for multi-page documents.
 3. **none** — OCR is unavailable and says so.
 
-### Ghostscript
+### PDF rendering
 
-Folio does not require Ghostscript and does not use it unless
-`PDF_ALLOW_GHOSTSCRIPT` is explicitly set to true. It defaults to false
-because the delegate has a poor security record, many hosts disable it in
-ImageMagick's `policy.xml`, and many servers do not install it.
+PDF pages are rendered with Poppler. ImageMagick's own PDF support is reached
+only when `PDF_ALLOW_GHOSTSCRIPT` is true, which it is not by default. With
+both unavailable, previews are not generated and the original is served.
 
-PDF rendering goes through Poppler, which needs no delegate. Both OCR routes
-work without it. With Ghostscript disallowed and Poppler absent, PDF previews
-are not generated and the original file is served — a missing feature, never
-an error.
 
 ## Document identity and URLs
 
@@ -417,6 +414,29 @@ one record wanting that file. Anything else is reported for manual relinking.
 Attaching a document's history to the wrong file is far worse than asking
 someone to choose.
 
+## Licensing
+
+Folio is **GPL-3.0-or-later**. Copyright (C) 2026 Mohd Elfie Nieshaem Juferi.
+
+Version 3 rather than version 2 is a constraint, not a preference: the
+bundled Mozilla pdf.js is Apache-2.0, which is compatible with GPL version 3
+and **incompatible with version 2**. Relicensing Folio to GPL-2.0 would make
+the release undistributable without removing pdf.js first.
+
+| Component | Licence | Notice |
+| --- | --- | --- |
+| Folio | GPL-3.0-or-later | `license.txt` |
+| Parsedown 1.8.0 | MIT | `lib/parsedown/license.txt` |
+| Mozilla pdf.js 5.4.149 | Apache-2.0 | `lib/pdfjs/license.txt` |
+| OpenJPEG, QCMS (WASM) | own permissive | `lib/pdfjs/wasm/` |
+
+Every source file carries an `SPDX-License-Identifier: GPL-3.0-or-later`
+line, so the licence is discoverable from any single file rather than only
+from the release as a whole.
+
+Before adding a dependency, check it against GPL-3. Anything GPL-2-only,
+proprietary, or non-commercial cannot be bundled.
+
 ## Invariants
 
 Rules that must hold. A change breaking any of these is a defect.
@@ -469,6 +489,8 @@ Rules that must hold. A change breaking any of these is a defect.
     moves, replaces, or deletes a file, and never creates or removes a folder.
     FTP owns the files; Folio owns the catalogue.
 20. An ambiguous reconciliation is never resolved automatically.
+21. Every bundled dependency must be licence-compatible with GPL-3. A
+    GPL-2-only, proprietary, or non-commercial component cannot ship.
 
 ## Documentation set
 
@@ -584,14 +606,14 @@ public or not.
 
 ### Blurred previews for `hidden`
 
-Where Imagick with a Ghostscript PDF delegate is available
+Where the server can render PDF pages
 (`pdf_blur_available()`), page one is rasterized server-side at low
 resolution, downscaled hard, blurred, then scaled back up
 (`pdf_blur_generate()`) — deliberately more destructive than a blur filter
 over a full-resolution render, which can be partially reversed with a
 sharpening/deconvolution pass. The result is cached in `data/previews/` and
 served through `?action=pdf_preview`, never the original file. Where
-Imagick/Ghostscript isn't available, or where set regardless, the
+PDF rendering isn't available, or where set regardless, the
 `placeholder_image` field takes priority: an existing image already in
 `uploads/` the admin points at directly. Availability is detected and
 reported on the Diagnostics screen the same way pdf.js availability already

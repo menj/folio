@@ -1,3 +1,4 @@
+/* Folio. Copyright (C) 2026 Mohd Elfie Nieshaem Juferi. SPDX-License-Identifier: GPL-3.0-or-later */
 /* Folio — file detail page */
 (function () {
     "use strict";

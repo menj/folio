@@ -1,3 +1,4 @@
+/* Folio. Copyright (C) 2026 Mohd Elfie Nieshaem Juferi. SPDX-License-Identifier: GPL-3.0-or-later */
 /* Folio — PDF flip-view reader.
  *
  * Loaded only on ?action=flipbook, as an ES module. Renders real PDF pages

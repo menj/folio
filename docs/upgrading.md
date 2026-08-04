@@ -116,30 +116,6 @@ Two new cache directories appear under `data/` the first time they are used:
 are disposable. Deleting them frees space and costs only the work of
 regenerating. Your uploaded files are never modified.
 
-### If your server has no Ghostscript
-
-Folio does not need it. PDF pages are rendered with Poppler, which reads PDFs
-directly, and both OCR routes work without Ghostscript. `PDF_ALLOW_GHOSTSCRIPT`
-defaults to false, so Folio will not attempt to use it even if it is present.
-
-If you have neither Poppler nor Ghostscript, PDF previews are not generated
-and the original file is served instead. The library works normally.
-
-For OCR without Ghostscript, either route is fine:
-
-- **OCRmyPDF present** — used as-is, with `--output-type pdf` so it never
-  attempts PDF/A, which is the only part that would want Ghostscript.
-- **OCRmyPDF absent** — Poppler plus Tesseract plus qpdf. `qpdf` is needed
-  only to join multi-page documents; single-page scans work without it.
-
-### A note if your host restricts ImageMagick
-
-Many servers disable ImageMagick's PDF support in `policy.xml` because it
-relies on Ghostscript, which has a poor security record. If PDF previews had
-stopped working for that reason, they will start working again after this
-upgrade: where Poppler is installed, Folio renders PDF pages with it and does
-not invoke Ghostscript at all. The restriction can stay in place.
-
 ## Upgrading to 1.4.2
 
 Documentation only — no code behaviour changed. Upload the changed files if
