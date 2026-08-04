@@ -1,4 +1,6 @@
 <?php
+/* Folio. Copyright (C) 2026 Mohd Elfie Nieshaem Juferi.
+   SPDX-License-Identifier: GPL-3.0-or-later. See license.txt. */
 /**
  * Folio installer.
  *

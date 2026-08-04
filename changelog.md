@@ -3,6 +3,104 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.8.3 — 4 August 2026
+
+### Fixed
+
+- **`uploads/.htaccess` could return 403 for every file in the folder.** It set
+  `Options -FollowSymLinks`. On cPanel and similar hosts the path to
+  `public_html` is frequently a symlink itself, and disabling symlink following
+  makes Apache refuse the entire directory — documents included. It is now
+  `+SymLinksIfOwnerMatch`, which keeps the protection without the risk. Folio's
+  own path resolution rejects symlinks regardless, so nothing is lost.
+
+- **PDFs were being told not to appear in search results.** Both
+  `uploads/.htaccess` and the raw file endpoint sent
+  `X-Robots-Tag: noindex, follow` for `.pdf`, `.txt` and `.md`. For a public
+  document library that is backwards: the documents are the content, and a
+  scanned certificate a search engine cannot see is a document nobody will
+  find. Documents are now left indexable. The detail page still carries the
+  canonical URL, so the record and the file do not compete.
+
+Formats a browser would execute — HTML, XHTML, XML, MHTML and anything
+unrecognised — are unaffected and still forced to download with `noindex`.
+
+## 1.8.2 — 4 August 2026
+
+### Fixed
+
+- **`uploads/` did not appear when the project was pushed to GitHub.** Two
+  causes. The `.gitignore` carried a bare `.htaccess` rule, which matches at
+  every level, and it came *after* the `!uploads/.htaccess` exception — so the
+  later rule won and every file in `uploads/` was ignored. With nothing
+  tracked, Git dropped the directory, since it cannot store an empty one. The
+  rule is now `/.htaccess`, scoped to the installed copy at the root.
+
+  Separately, `uploads/` and `data/` contained only dotfiles, and GitHub's
+  web uploader silently skips those — so even a correct `.gitignore` would
+  have produced empty folders when dragging the release in. Both now carry a
+  visible `readme.txt` explaining what belongs there.
+
+- **`data/` ignored a list of known files rather than the folder.** Any
+  runtime file added by a future version would have been committed to a public
+  repository. It now ignores the folder and names the few files that belong in
+  the repository, so it fails closed.
+
+Verified with `git check-ignore`: `uploads/` and `data/` are both present in a
+commit, while `config.php`, the installed `.htaccess`, accounts, settings, the
+catalogue, generated caches, and uploaded documents are all still excluded.
+
+## 1.8.1 — 4 August 2026
+
+### Changed
+
+- **Stopped labouring the Ghostscript point.** Folio does not use Ghostscript,
+  and the documentation said so 77 times across seven files — in the readmes,
+  the security notes, the architecture reference, the upgrade guide, the
+  sample configuration, and on the Diagnostics screen. Repeating it made an
+  irrelevance look like a caveat. The user-facing text now simply says PDF
+  pages are rendered with Poppler.
+
+  What remains is only the `PDF_ALLOW_GHOSTSCRIPT` setting name, which cannot
+  be renamed without breaking existing configurations. Behaviour is unchanged.
+
+## 1.8.0 — 4 August 2026
+
+Folio is free software.
+
+### Changed
+
+- **Folio is now licensed under the GNU General Public License, version 3 or
+  later.** It was previously marked proprietary, which was wrong: Folio is
+  open source. You may use, study, modify, and redistribute it; derivative
+  works carry the same licence.
+
+      Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
+      SPDX-License-Identifier: GPL-3.0-or-later
+
+  `license.txt` now carries the full, verbatim GPL version 3 text, preceded by
+  the standard notice and a list of the bundled components.
+
+- **Version 3 rather than version 2 is a constraint, not a preference.** The
+  bundled Mozilla pdf.js is Apache-2.0, which is compatible with GPL version 3
+  and incompatible with version 2. Licensing Folio as GPL-2.0-only would make
+  the release undistributable without first removing pdf.js.
+
+- Every source file — PHP, JavaScript, and CSS — carries an
+  `SPDX-License-Identifier` line, so the licence is discoverable from any one
+  file rather than only from the release as a whole.
+
+- `docs/ssot.md` gained a Licensing section recording each bundled
+  component's licence and where its notice lives, and an invariant: a
+  dependency that is GPL-2-only, proprietary, or non-commercial cannot be
+  bundled.
+
+### Unchanged
+
+- The bundled components keep their own licences and are unaffected:
+  Parsedown (MIT), Mozilla pdf.js (Apache-2.0), and the OpenJPEG and QCMS
+  WebAssembly decoders.
+
 ## 1.7.2 — 4 August 2026
 
 ### Fixed

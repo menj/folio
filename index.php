@@ -1,10 +1,21 @@
 <?php
 /**
- * Folio
- * Lists files in a web folder, previews and prints PDFs and images.
+ * Folio — a self-hosted document library.
  *
+ * Turns a web folder into a public, catalogued, searchable collection.
  * Drop this folder into your web root. Set BASE_DIR below to the folder
  * you want to browse. Defaults to an "uploads" directory beside this script.
+ *
+ * Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version. It is distributed WITHOUT ANY WARRANTY; without even the
+ * implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+ * See license.txt, or <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 declare(strict_types=1);
@@ -112,7 +123,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.7.2');
+define('FOLIO_VERSION', '1.8.3');
 
 defined('SITE_URL')             || define('SITE_URL', '');
 defined('SITE_DESCRIPTION')     || define('SITE_DESCRIPTION', 'A reading library of documents, papers, and images.');
@@ -205,7 +216,7 @@ defined('IMAGE_MEMORY_LIMIT')   || define('IMAGE_MEMORY_LIMIT', 256);
 defined('IMAGE_TIME_LIMIT')     || define('IMAGE_TIME_LIMIT', 20);
 
 /** Render page one of a PDF server-side. Requires Imagick with a working
- *  Ghostscript delegate. Off by default: the delegate has a poor security
+ *  PDF delegate. Off by default: that delegate has a poor security
  *  history, and the client-side reader already covers this without it. */
 defined('PDF_SERVER_PREVIEW')   || define('PDF_SERVER_PREVIEW', false);
 
@@ -253,9 +264,9 @@ defined('OCR_TIMEOUT')      || define('OCR_TIMEOUT', 600);
 defined('OCR_LANGUAGES')    || define('OCR_LANGUAGES', ['eng', 'msa', 'ara']);
 
 /**
- * Allow ImageMagick to render PDFs through its Ghostscript delegate.
+ * Allow ImageMagick to render PDFs directly.
  *
- * Off by default and deliberately so. Ghostscript has a long history of
+ * Off by default and deliberately so. Its PDF delegate has a long history of
  * serious vulnerabilities, many hosts disable it in ImageMagick's policy.xml,
  * and plenty of servers do not install it at all. Folio does not need it:
  * Poppler renders PDF pages directly, and OCR runs without it.
@@ -1681,10 +1692,10 @@ function ocr_output_path(string $rel, string $abs): string
  *                keeps existing text layers, and optimises output.
  *   'tesseract'— Poppler renders each page, Tesseract OCRs it into a
  *                single-page searchable PDF, and qpdf joins them. Needs no
- *                Python and no Ghostscript.
+ *                Python.
  *   ''         — neither is possible.
  *
- * Both routes work without Ghostscript. OCRmyPDF skips PDF/A output when it
+ * Neither route needs a PDF delegate. OCRmyPDF skips PDF/A output when it
  * is missing and says so; the Tesseract route never wanted it.
  */
 function ocr_method(): string
@@ -1767,7 +1778,7 @@ function ocr_run_ocrmypdf(string $abs, string $tmp, string &$message): bool
         // Leave pages that already carry text alone rather than rasterising.
         '--skip-text',
         // Plain PDF, not PDF/A. PDF/A output is the one part of OCRmyPDF that
-        // wants Ghostscript, and asking for it on a server without it costs a
+        // needs a delegate, and asking for it where none exists costs a
         // failed attempt and a warning for no benefit.
         '--output-type', 'pdf',
         '--optimize', tool_have('pngquant') ? '2' : '1',
@@ -1793,7 +1804,7 @@ function ocr_run_ocrmypdf(string $abs, string $tmp, string &$message): bool
  * searchable single-page PDF, then join them with qpdf.
  *
  * Slower and less refined than OCRmyPDF, but it needs no Python and no
- * Ghostscript, so it works on a plain LAMP host with three common packages.
+ * a PDF delegate, so it works on a plain LAMP host with three packages.
  */
 function ocr_run_tesseract(string $abs, string $tmp, string &$message): bool
 {
@@ -1977,7 +1988,7 @@ function image_can_derive(string $rel): bool
     }
     $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
     if ($ext === 'pdf') {
-        // Poppler renders PDFs without Ghostscript, so where it is present
+        // Poppler renders PDFs directly, so where it is present
         // the security argument for keeping previews off does not apply and
         // they work regardless of PDF_SERVER_PREVIEW. Falling back to
         // Imagick's delegate still requires that setting to be turned on
@@ -2074,12 +2085,12 @@ function thumb_build(string $rel, string $abs, int $width): ?string
 /**
  * Rasterise page one of a PDF with Poppler.
  *
- * Preferred over Imagick for PDFs. Imagick delegates PDF work to Ghostscript,
+ * Preferred over Imagick for PDFs. Imagick delegates PDF work out of process,
  * which has a long history of serious vulnerabilities and which many hosts
  * disable in policy.xml for exactly that reason. Poppler renders PDFs
  * directly, is the library Firefox and most Linux viewers rely on, and needs
  * no delegate. Where it is installed, Folio uses it and never invokes
- * Ghostscript at all.
+ * that delegate at all.
  *
  * Returns the path to a temporary PNG, or null.
  */
@@ -2145,7 +2156,7 @@ function thumb_build_imagick(string $abs, string $ext, int $width, string $out):
         image_apply_limits($im);
 
         if ($ext === 'pdf') {
-            // Poppler first: it renders PDFs without Ghostscript, which is
+            // Poppler first: it renders PDFs directly, which is
             // both safer and works on hosts whose ImageMagick policy forbids
             // PDF. Imagick's own delegate is the fallback.
             $png = pdf_rasterise_page($abs, max($width, 1000));
@@ -2153,9 +2164,8 @@ function thumb_build_imagick(string $abs, string $ext, int $width, string $out):
                 $im->readImage($png);
                 @unlink($png);
             } elseif (PDF_ALLOW_GHOSTSCRIPT) {
-                // Only reached when Poppler is absent and Ghostscript has
-                // been allowed on purpose. Imagick delegates PDF work to
-                // Ghostscript, so without this Folio never invokes it.
+                // Only reached when Poppler is absent and the delegate has
+                // been allowed on purpose.
                 $im->setResolution(150, 150);
                 $im->readImage($abs . '[0]');
             } else {
@@ -3634,7 +3644,7 @@ function pdf_blur_cache_path(string $rel): string
     return __DIR__ . '/data/previews/' . hash('sha256', $rel) . '.jpg';
 }
 
-/** Whether Imagick with a working PDF (Ghostscript) delegate is available. */
+/** Whether Imagick can read PDFs on this server. */
 function pdf_blur_available(): bool
 {
     if (!extension_loaded('imagick') || !class_exists('Imagick')) {
@@ -3670,7 +3680,7 @@ function pdf_blur_generate(string $abs_pdf, string $rel): bool
     try {
         $img = new Imagick();
         image_apply_limits($img);
-        // Poppler first: it renders PDFs directly and needs no Ghostscript,
+        // Poppler first: it renders PDFs directly and needs no delegate,
         // which this server may not have and which Folio does not require.
         $png = pdf_rasterise_page($abs_pdf, 400);
         if ($png !== null) {
@@ -5624,7 +5634,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         'tesseract'  => 'the OCR engine itself',
         'pdftotext'  => 'text extraction and search indexing',
         'pdfinfo'    => 'page counts and PDF facts',
-        'pdftocairo' => 'PDF page previews without Ghostscript',
+        'pdftocairo' => 'rendering PDF pages for previews',
         'pdftoppm'   => 'PDF page previews (fallback)',
         'qpdf'       => 'PDF structure checks',
         'pngquant'   => 'shrinking rendered PDF pages before they become thumbnails',
@@ -5647,7 +5657,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         $tools_note   = 'Turned off by TOOLS_ENABLED in config.php. Folio behaves as though none were installed.';
     } elseif (!$found) {
         $tools_status = 'ok';
-        $tools_note   = 'None found. Everything works without them; OCR, text search over scans, and Ghostscript-free PDF previews are simply unavailable.'
+        $tools_note   = 'None found. Everything works without them; OCR, text search over scans, and server-rendered PDF previews are simply unavailable.'
             . ($homes ? ' Searched the system paths plus ' . implode(', ', $homes)
                 . ' (including .local/bin and any virtual environment). Name a tool in TOOL_PATHS if it lives elsewhere.' : '');
     } else {
@@ -5758,7 +5768,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         $cfg_checks[] = [
             'label'  => 'PDF rasteriser',
             'status' => 'ok',
-            'note'   => 'Poppler is present, so PDF previews are rendered without Ghostscript. This is both safer and unaffected by an ImageMagick policy that forbids PDF.',
+            'note'   => 'Poppler is present, so PDF pages can be rendered for previews and thumbnails.',
         ];
     }
 
@@ -5839,9 +5849,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         'label'  => 'Blurred preview for hidden PDFs',
         'status' => $imagick_ok && $ghostscript_ok ? 'ok' : 'warn',
         'note'   => $imagick_ok && $ghostscript_ok
-            ? 'Imagick with a PDF (Ghostscript) delegate is available — automatic blurred first-page previews can be generated.'
+            ? 'Available — automatic blurred first-page previews can be generated.'
             : ($imagick_ok
-                ? 'Imagick is installed but has no PDF delegate (Ghostscript). Upload a manual placeholder image per file instead.'
+                ? 'Imagick is installed but cannot read PDFs on this server. Upload a manual placeholder image per file instead.'
                 : 'Imagick is not installed. Upload a manual placeholder image per file instead of an automatic blurred preview.'),
     ];
 
@@ -6171,9 +6181,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
             header('Content-Disposition: attachment; filename="' . str_replace(['"', "\r", "\n"], '', basename($abs)) . '"');
             header("Content-Security-Policy: default-src 'none'; sandbox");
             header('X-Robots-Tag: noindex, nofollow');
-        } elseif (in_array($ext, ['pdf', 'txt', 'md'], true)) {
-            header('X-Robots-Tag: noindex, follow');
         }
+        // Documents are deliberately left indexable. They are the content of
+        // the library, and a scanned certificate a search engine cannot see is
+        // a document nobody will find. The detail page carries the canonical
+        // URL, so the record and the file do not compete.
         if ($ext === 'svg') {
             header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
         }
@@ -6785,7 +6797,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     // Manual fallback preview for "hidden" PDFs when automatic blurring
-    // (Imagick/Ghostscript) is not available on this host: a redacted or
+    // is not available on this host: a redacted or
     // placeholder image the admin has already placed in uploads/, the same
     // way every other file in the library gets there.
     $placeholder_image = trim((string) ($_POST['placeholder_image'] ?? ''));

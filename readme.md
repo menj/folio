@@ -53,7 +53,7 @@
   the transcript rendered server-side so restricted documents stay fully
   readable and indexable even when the original PDF is not
 * Dublin Core Terms alongside the existing Schema.org structured data
-* Automatic blurred first-page previews for hidden PDFs (Imagick/Ghostscript),
+* Automatic blurred first-page previews for hidden PDFs,
   with a manual placeholder-image fallback where that isn't available
 
 ## Design
@@ -118,7 +118,7 @@ changelog.md           Version history
 .htaccess              Apache rules, active as shipped
 tests/                 Isolated integration smoke test
 robots.txt             Neutral crawler template; upload to the DOMAIN ROOT
-license.txt            Proprietary licence notice
+license.txt            GNU General Public License v3
 uploads/               Your published files; keep this directory present
 uploads/.htaccess      Hardening for the publicly served uploads folder
 ```
@@ -160,7 +160,7 @@ Until both are done, every PDF behaves as Public regardless of what's set on it 
 
 Restricting a PDF never affects its record page's own indexability: the sitemap, the page's `robots` meta tag, and `llms.txt` reference the record page exactly as they would for any other file. Add a `transcript` in the editor and it renders directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not.
 
-For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server has Imagick with a Ghostscript delegate (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
+For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server can render PDF pages (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
 
 ### Titles, descriptions, categories, tags
 
@@ -370,9 +370,8 @@ by hand.
 
 Two behaviours are deliberate. Generated images have their metadata stripped,
 so EXIF GPS coordinates from a phone photo are not republished in a public
-thumbnail. And PDF thumbnails are **off** by default, because rendering them
-requires Ghostscript, which has a poor security record; the in-browser reader
-already previews PDFs without it. Set `PDF_SERVER_PREVIEW` to true in
+thumbnail. And server-rendered PDF thumbnails are **off** by default; the in-browser
+reader already previews PDFs. Set `PDF_SERVER_PREVIEW` to true in
 `config.php` if you want them.
 
 ### Turning on PDF access control
@@ -444,7 +443,7 @@ enables.
 | `ocrmypdf` + `tesseract` | Make scanned documents searchable |
 | `pdftotext` | Pull text out of PDFs, cached for reuse |
 | `pdfinfo` | Page counts and PDF facts |
-| `pdftocairo` or `pdftoppm` | Render PDF previews without Ghostscript |
+| `pdftocairo` or `pdftoppm` | Render PDF page previews |
 | `pngquant` | Smaller PNG derivatives |
 | `unpaper` | Straighten crooked scans before OCR |
 
@@ -492,20 +491,6 @@ Diagnostics lists everything found and where it looked.
 | `pngquant` | Rendered PDF pages are simply larger |
 | everything | Folio behaves exactly as it did before this feature existed |
 
-### Folio does not need Ghostscript
-
-This is worth stating plainly, because most PDF tooling assumes it.
-Ghostscript has a poor security record, many hosts disable it in ImageMagick's
-`policy.xml`, and many servers do not install it at all.
-
-Folio renders PDF pages with **Poppler**, which reads PDFs directly and needs
-no delegate. Both OCR routes work without Ghostscript too. ImageMagick's own
-PDF support — the part that would call Ghostscript — is off unless you
-explicitly set `PDF_ALLOW_GHOSTSCRIPT` to true, and there is rarely a reason
-to.
-
-If your server has neither Poppler nor Ghostscript, PDF previews are not
-generated and the original PDF is served instead. The library works normally.
 
 ## Document URLs
 
@@ -639,8 +624,7 @@ define('TOOL_PATHS', [
 ]);
 ```
 
-**You do not need Ghostscript.** Folio never uses it, and modern OCRmyPDF does
-not need it either.
+Nothing beyond the packages above is required.
 
 Language packs are separate from Tesseract itself and are often missing even
 when Tesseract is installed. Malay is `msa` and Arabic is `ara`. Diagnostics
@@ -988,8 +972,19 @@ Two deliberate limitations are worth knowing:
 
 ## Licence
 
-Folio is proprietary software. See `license.txt`. Parsedown retains its MIT licence.
+Folio is free software under the **GNU General Public License, version 3 or
+later**. You may use, study, modify, and redistribute it; derivative works
+must carry the same licence. The full text is in `license.txt`.
+
+    Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
+    SPDX-License-Identifier: GPL-3.0-or-later
+
+Bundled components keep their own, GPL-3-compatible licences: Parsedown (MIT),
+Mozilla pdf.js (Apache-2.0), and the OpenJPEG and QCMS WebAssembly decoders.
+
+Apache-2.0 is compatible with GPL version 3 but **not** with version 2, which
+is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.7.2. Single-file application with separated CSS and JS assets.
+1.8.3. Single-file application with separated CSS and JS assets.

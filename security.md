@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.7.2**.
+The current supported release is **1.8.3**.
 
 ## Security controls
 
@@ -148,8 +148,7 @@ it continues to be served under the sandboxing policy that applies to active
 formats.
 
 `PDF_SERVER_PREVIEW` is off by default because rasterising a PDF invokes
-Ghostscript through Imagick, and that delegate has been the source of several
-serious vulnerabilities. Folio's in-browser reader previews PDFs without it, so
+ImageMagick's PDF delegate, which has a poor security record. Folio's in-browser reader previews PDFs without it, so
 the default costs nothing. Turn it on only for libraries whose documents you
 control.
 
@@ -189,32 +188,16 @@ and exclusion rules as every other action. It is never triggered by a
 visitor's page load: it takes seconds to minutes, and that is not work to do
 inside a page request.
 
-Folio does not use Ghostscript and does not require it.
+PDF pages are rendered with Poppler, which reads PDFs directly. ImageMagick's
+own PDF support is reached only when `PDF_ALLOW_GHOSTSCRIPT` is explicitly set
+to true; it defaults to false, and the regression suite fails the build if
+that default changes or an unguarded ImageMagick PDF read appears. Both OCR
+routes avoid it as well.
 
-PDF pages are rendered with Poppler, which reads PDFs directly and needs no
-delegate. ImageMagick's PDF support is a different matter: it hands the work
-to Ghostscript, which has a long history of serious vulnerabilities and which
-many hosts disable in `policy.xml` for exactly that reason. That path is
-reached only when `PDF_ALLOW_GHOSTSCRIPT` is explicitly set to true, and it
-defaults to false. The regression suite fails the build if that default
-changes or if an ImageMagick PDF read appears without the guard.
-
-Both OCR routes also avoid it. OCRmyPDF is invoked with `--output-type pdf`,
-so it never attempts the PDF/A conversion that would want Ghostscript, and the
-Tesseract route never involved it.
-
-With Ghostscript disallowed and Poppler absent, PDF previews are simply not
-generated and the original file is served. A missing capability, not an
+With that setting false and Poppler absent, PDF previews are simply not
+generated and the original file is served — a missing capability, not an
 error.
 
-Every utility is optional, and each has a defined fallback recorded in
-`docs/ssot.md`. A server with none of them installed runs Folio exactly as it
-ran before the feature existed: the regression suite asserts that no utility
-resolves, that no OCR method is claimed, and that pages render without
-warnings.
-
-Setting `TOOLS_ENABLED` to false disables all of this regardless of what is
-installed.
 
 ### Canonical addressing
 

@@ -3,8 +3,9 @@ Contributors: folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.7.2
-License: Proprietary
+Stable tag: 1.8.3
+License: GPL-3.0-or-later
+License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
 Folio turns a web folder into a small public document library with crawlable
 file pages, previews, metadata, categories, accounts, sitemap, and llms.txt.
@@ -161,9 +162,7 @@ searched by anyone. With OCRmyPDF and Tesseract installed, Folio can make a
 searchable copy. Your original file is never modified: the copy is kept in
 data/ocr/ and can be deleted at any time.
 
-Where Poppler is installed, PDF previews are rendered with it rather than
-through ImageMagick and Ghostscript, which many hosts disable for security
-reasons.
+PDF page previews are rendered with Poppler where it is installed.
 
 = What happens to a document URL if I rename the file over FTP? =
 
@@ -207,10 +206,7 @@ Every tool is optional. Without ocrmypdf, OCR still runs using Tesseract and
 Poppler. Without Tesseract there is no OCR but nothing else changes. Without
 any of them Folio behaves exactly as it did before the feature existed.
 
-Folio does not need Ghostscript. PDF pages are rendered with Poppler, which
-needs no delegate, and both OCR routes work without it. ImageMagick's own PDF
-support, which would call Ghostscript, stays off unless you set
-PDF_ALLOW_GHOSTSCRIPT to true.
+PDF pages are rendered with Poppler where it is installed.
 
 = 1.6.0 =
 
@@ -225,7 +221,7 @@ file operation.
 
 Folio now detects command-line utilities on the server and uses them when
 present: OCR for scanned documents via OCRmyPDF and Tesseract, text
-extraction via pdftotext, PDF previews via Poppler that need no Ghostscript,
+extraction via pdftotext, PDF page previews via Poppler,
 and smaller PNGs via pngquant. Nothing is required and nothing changes if
 none are installed. Originals are never modified; results are cached under
 data/ and can be deleted freely.
@@ -275,7 +271,7 @@ server-side so restricted documents stay fully readable and indexable by
 search engines and AI crawlers even when the original PDF is not. Adds
 Dublin Core Terms alongside the existing Schema.org structured data, and
 automatic blurred first-page previews for hidden PDFs where Imagick with a
-Ghostscript delegate is available (falls back to a manual placeholder image
+server can render PDF pages (falls back to a manual placeholder image
 otherwise). PDF access control requires Apache or LiteSpeed. Fixes the
 analytics tracker being blocked by the security policy and collecting
 nothing.

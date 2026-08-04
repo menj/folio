@@ -1,4 +1,6 @@
 <?php
+/* Folio. Copyright (C) 2026 Mohd Elfie Nieshaem Juferi.
+   SPDX-License-Identifier: GPL-3.0-or-later. See license.txt. */
 /**
  * Folio settings.
  *
@@ -215,7 +217,7 @@ define('EXCLUDE_PATTERNS', []);
 
 /**
  * Render page one of a PDF on the server. Requires Imagick with a working
- * Ghostscript delegate.
+ * PDF delegate.
  *
  * Off by default, deliberately. The PDF delegate has a poor security record,
  * and Folio's in-browser reader already previews PDFs without it. Turn this
@@ -242,7 +244,7 @@ define('EXCLUDE_PATTERNS', []);
  *   ocrmypdf + tesseract   make scanned PDFs searchable
  *   pdftotext              pull text out of PDFs for indexing
  *   pdfinfo                page counts and PDF facts
- *   pdftocairo / pdftoppm  render PDF previews WITHOUT Ghostscript
+ *   pdftocairo / pdftoppm  render PDF pages for previews
  *   pngquant               smaller PNG derivatives
  *   unpaper                straighten crooked scans before OCR
  *
@@ -299,18 +301,12 @@ define('EXCLUDE_PATTERNS', []);
 // define('OCR_LANGUAGES', ['eng', 'msa', 'ara']);
 
 /**
- * Let ImageMagick render PDFs through its Ghostscript delegate.
+ * Let ImageMagick render PDFs directly.
  *
- * Off by default and best left that way. Ghostscript has a long record of
- * serious vulnerabilities, many hosts disable it in ImageMagick's
- * policy.xml, and many servers do not install it at all.
- *
- * Folio does not need it. Where Poppler is installed, PDF pages are
- * rendered with pdftocairo or pdftoppm, which use no delegate. OCR also
- * runs without Ghostscript by either route.
- *
- * With this false and no Poppler installed, PDF previews are simply not
- * generated and the original file is served instead. Nothing breaks.
+ * Off by default. Folio renders PDF pages with Poppler instead, which is
+ * available on most hosts and needs no extra configuration. With this false
+ * and no Poppler installed, PDF previews are simply not generated and the
+ * original file is served.
  */
 // define('PDF_ALLOW_GHOSTSCRIPT', false);
 
