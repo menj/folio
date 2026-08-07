@@ -12,7 +12,7 @@ html[data-theme="folio"] {
     --paper:   #f3f2ee;   /* bone, cooled */
     --leaf:    #fbfaf8;   /* the page itself */
     --ink:     #26262a;   /* graphite */
-    --quiet:   #75727a;   /* apparatus */
+    --quiet:   #6f6c74;   /* apparatus — darkened to clear WCAG AA (4.60:1) */
     --accent:  #6e1d1d;   /* oxblood */
     --rule:    #ddd9d2;   /* hairline */
     --gutter:  rgba(38, 38, 42, 0.09);
@@ -22,7 +22,7 @@ html[data-theme="ledger"] {
     --paper:  #eef0f3;
     --leaf:   #ffffff;
     --ink:    #1e2530;
-    --quiet:  #6b7684;
+    --quiet:  #616c7a;   /* WCAG AA 4.68:1 on --paper */
     --accent: #1d4b6e;
     --rule:   #dbe0e6;
     --gutter: rgba(30, 37, 48, 0.09);
@@ -32,7 +32,7 @@ html[data-theme="garden"] {
     --paper:  #eef1ec;
     --leaf:   #fcfdfb;
     --ink:    #1e2a21;
-    --quiet:  #6b7a6f;
+    --quiet:  #5f6e63;   /* WCAG AA 4.73:1 on --paper */
     --accent: #2f5d3a;
     --rule:   #d9e0d8;
     --gutter: rgba(30, 42, 33, 0.09);
@@ -116,20 +116,37 @@ body {
 
 /* ---- Colour scheme picker --------------------------------------- */
 
-.theme-picker { display: flex; gap: 0.4rem; }
+.theme-picker { display: flex; gap: 0.25rem; }
+
+/* The dot stays small, but the button around it is a full 24px so it can
+   actually be tapped. Anything below that is a target most thumbs miss, and
+   four of them in a row compounds the problem. The colour lives on the inner
+   circle rather than the button, so the tap area itself stays invisible. */
 .theme-picker button {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    line-height: 0;
+}
+.theme-picker button::before {
+    content: "";
     width: 13px;
     height: 13px;
     border-radius: 50%;
     border: 1px solid var(--rule);
-    cursor: pointer;
-    padding: 0;
+    box-sizing: border-box;
 }
-.theme-picker button[data-set-theme="folio"]  { background: #6e1d1d; }
-.theme-picker button[data-set-theme="ledger"] { background: #1d4b6e; }
-.theme-picker button[data-set-theme="garden"] { background: #2f5d3a; }
-.theme-picker button[data-set-theme="night"]  { background: #17171a; }
-.theme-picker button.active { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink); }
+.theme-picker button[data-set-theme="folio"]::before  { background: #6e1d1d; }
+.theme-picker button[data-set-theme="ledger"]::before { background: #1d4b6e; }
+.theme-picker button[data-set-theme="garden"]::before { background: #2f5d3a; }
+.theme-picker button[data-set-theme="night"]::before  { background: #17171a; }
+.theme-picker button.active::before { box-shadow: 0 0 0 2px var(--paper), 0 0 0 3px var(--ink); }
+.theme-picker button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* ---- The spread ------------------------------------------------- */
 
@@ -216,12 +233,24 @@ td a:hover { color: var(--accent); }
 
 /* ---- Chips ------------------------------------------------------ */
 
+/* Search and category filters are two different jobs, so they get two rows.
+   Previously both sat in one wrapping flex container with the search pushed
+   right by margin-left:auto — which meant the search landed at the end of
+   whatever row the chips happened to stop on, moving every time a category
+   was added. */
 .filter-bar {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 0.8rem 1.5rem;
+    border-bottom: 1px solid var(--rule);
+}
+
+.filter-chips {
     display: flex;
     flex-wrap: wrap;
     gap: 0.35rem;
-    padding: 0.8rem 1.5rem;
-    border-bottom: 1px solid var(--rule);
+    align-items: center;
 }
 
 .chip {
@@ -242,69 +271,127 @@ td a:hover { color: var(--accent); }
 .chip-mini { font-size: 0.65rem; }
 a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 0.35em; }
 
-/* ---- Listing search --------------------------------------------- */
+/* ---- Search: a nav trigger and an overlay -------------------------
+ *
+ * The field used to sit in the filter bar, where it had to be wide enough to
+ * look deliberate and so dominated a row that is otherwise small chips. As an
+ * icon it takes no space until it is wanted, and the overlay gives the field
+ * room without competing with anything.
+ */
 
-.listing-search-label {
-    margin-left: auto;
-    display: inline-flex;
-    align-items: center;
+.nav-search-open {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    color: var(--quiet);
 }
+.nav-search-open:hover { color: var(--accent); }
+.nav-search-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* A magnifier drawn in CSS: two elements, no image request. */
+.nav-search-glyph {
+    position: relative;
+    display: block;
+    width: 0.72rem;
+    height: 0.72rem;
+    border: 1.5px solid currentColor;
+    border-radius: 50%;
+}
+.nav-search-glyph::after {
+    content: "";
+    position: absolute;
+    right: -0.28rem;
+    bottom: -0.14rem;
+    width: 0.36rem;
+    height: 1.5px;
+    background: currentColor;
+    transform: rotate(45deg);
+}
+
+.search-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    background: color-mix(in srgb, var(--ink) 38%, transparent);
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 12vh 1rem 1rem;
+}
+@supports not (background: color-mix(in srgb, red 50%, transparent)) {
+    .search-overlay { background: rgba(0, 0, 0, 0.38); }
+}
+
+.search-overlay-panel {
+    position: relative;
+    width: min(38rem, 100%);
+    background: var(--leaf);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    box-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.45);
+    padding: 1rem 1.1rem 0.8rem;
+}
+
+.search-overlay-label {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--quiet);
+}
+
 .listing-search {
     font-family: var(--sans);
-    font-size: 0.75rem;
-    letter-spacing: 0.02em;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
     color: var(--ink);
     background: transparent;
-    border: 1px solid var(--rule);
-    border-radius: 2px;
-    padding: 0.15rem 0.55rem;
-    width: 15rem;
-    max-width: 100%;
+    border: 0;
+    border-bottom: 1px solid var(--rule);
+    padding: 0.35rem 0;
+    width: 100%;
     -webkit-appearance: none;
     appearance: none;
-    transition: border-color 0.15s ease;
 }
-.listing-search::placeholder {
+.listing-search::placeholder { color: var(--quiet); font-style: italic; }
+.listing-search:focus { outline: none; border-bottom-color: var(--accent); }
+.listing-search::-webkit-search-cancel-button { -webkit-appearance: none; }
+
+.search-overlay-close {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.5rem;
+    width: 28px;
+    height: 28px;
+    border: 0;
+    background: none;
     color: var(--quiet);
-    font-style: italic;
-}
-.listing-search:focus {
-    outline: none;
-    border-color: var(--accent);
-}
-.listing-search::-webkit-search-cancel-button {
-    -webkit-appearance: none;
-    height: 0.8em;
-    width: 0.8em;
+    font-size: 1.1rem;
+    line-height: 1;
     cursor: pointer;
-    background:
-        linear-gradient(45deg, transparent 45%, var(--quiet) 45% 55%, transparent 55%),
-        linear-gradient(-45deg, transparent 45%, var(--quiet) 45% 55%, transparent 55%);
+}
+.search-overlay-close:hover { color: var(--accent); }
+
+.search-overlay-hint {
+    margin: 0.55rem 0 0;
+    font-size: 0.72rem;
+    color: var(--quiet);
+}
+.search-overlay-hint kbd {
+    font-family: var(--mono);
+    font-size: 0.9em;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 0 0.25em;
 }
 
-.row-search-empty td.empty {
-    color: var(--quiet);
-    font-style: italic;
-    text-align: center;
-    padding: 1.5rem 1rem;
+@media (max-width: 700px) {
+    .search-overlay { padding-top: 6vh; }
 }
-.chip-count { font-variant-numeric: tabular-nums; opacity: 0.6; font-size: 0.9em; }
-
-.archive-title {
-    font-size: 1.5rem;
-    font-weight: 500;
-    margin: 1.5rem 1.5rem 0.2rem;
-    letter-spacing: -0.01em;
-}
-.archive-note {
-    font-family: var(--sans);
-    font-size: 0.7rem;
-    letter-spacing: 0.13em;
-    text-transform: uppercase;
-    color: var(--quiet);
-    margin: 0 1.5rem 1.25rem;
-}
-.file-chips { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.3rem; }
 
 /* ---- Controls --------------------------------------------------- */
 
@@ -583,12 +670,6 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     position: static;
     padding: 2.5rem 1rem;
 }
-.pdf-preview-actions {
-    display: flex;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-    margin: 0;
-}
 
 .detail-facts {
     font-size: 0.7rem;
@@ -684,12 +765,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 /* ---- Narrow screens: listing becomes stacked cards -------------- */
 
 @media (max-width: 560px) {
-    .listing-search-label {
-        margin-left: 0;
-        flex-basis: 100%;
-        margin-top: 0.25rem;
-    }
-    .listing-search { width: 100%; box-sizing: border-box; }
 
     /* Stop the four-column row from forcing horizontal scroll. */
     .listing > table,
@@ -1237,4 +1312,247 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-family: var(--mono);
     font-size: 0.75rem;
     user-select: all;
+}
+
+/* The date the document is from, distinct from the file's modification time
+   shown in the MODIFIED column. Those are different facts and a reader should
+   not have to guess which one they are looking at. */
+/* Sits inline after the description, so a row reads as one line of context
+   rather than a stack of fragments. On its own — an undescribed document —
+   it stands alone without a leading separator. */
+.file-date {
+    font-size: 0.78rem;
+    color: var(--quiet);
+    font-variant-numeric: oldstyle-nums;
+}
+.file-desc + .file-date::before {
+    content: "\00A0\00B7\00A0";
+    color: var(--rule);
+}
+
+/* A file modification time standing in for a missing document date. Muted,
+   because it answers a different question from the one the column asks. */
+.file-date-fallback { color: var(--quiet); }
+
+/* ---- Column sorting ---------------------------------------------- */
+
+/* The header is a real button so it is reachable by keyboard and announced
+   as an action, rather than a click handler bolted onto a <th>. */
+.col-sort {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3em;
+}
+.col-sort:hover { color: var(--accent); }
+.col-sort:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The marker holds its space whatever the state, so the header does not
+   shift sideways as you change the sort. */
+.sort-mark {
+    width: 0.6em;
+    font-size: 0.85em;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+}
+th[aria-sort="ascending"]  .sort-mark::before { content: "\2191"; }
+th[aria-sort="descending"] .sort-mark::before { content: "\2193"; }
+th[aria-sort="ascending"]  .sort-mark,
+th[aria-sort="descending"] .sort-mark { opacity: 1; }
+th[aria-sort="ascending"]  .col-sort,
+th[aria-sort="descending"] .col-sort { color: var(--accent); }
+.col-sort:hover .sort-mark { opacity: 0.45; }
+
+/* ---- Category and tags: two different things -----------------------
+ *
+ * They used to sit in one row styled almost identically — a bordered chip
+ * each, differing only by a "#" and some letter-spacing — so a row of eight
+ * read as undifferentiated noise. A document belongs to exactly one category
+ * and that is a navigational fact; tags are annotations, and there may be
+ * many. Giving them the same weight said they were the same kind of thing.
+ */
+
+.file-cats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.35rem;
+}
+
+.file-tags {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.15rem 0.5rem;
+    margin-top: 0.3rem;
+}
+
+/* The category keeps its box: it is one value, and it is a link. */
+.file-cats .chip-cat {
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--rule));
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+@supports not (background: color-mix(in srgb, red 50%, transparent)) {
+    .file-cats .chip-cat { border-color: var(--rule); color: var(--accent); }
+}
+
+/* Tags lose the box entirely. Several of them then read as a line of words
+   rather than a row of competing buttons. */
+.file-tags .chip-tag {
+    border: 0;
+    background: none;
+    padding: 0;
+    font-size: 0.7rem;
+    color: var(--quiet);
+    letter-spacing: 0.01em;
+    text-transform: none;
+}
+.file-tags .chip-tag:hover,
+.file-tags .chip-tag:focus-visible {
+    color: var(--accent);
+    text-decoration: underline;
+    text-underline-offset: 0.18em;
+}
+.file-tags .chip-tag.chip-active {
+    color: var(--accent);
+    background: none;
+    font-weight: 600;
+}
+
+/* Facts line, sitting with the metadata above the document rather than
+   between the document and its buttons. Quiet, single line, wraps on narrow
+   screens. */
+.detail-facts-lead {
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin: 0.35rem 0 1.15rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5em;
+    align-items: baseline;
+}
+.detail-facts-lead .sep { opacity: 0.55; }
+
+/* Every action for a document sits in one row under it. */
+.detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+    margin-top: 1.25rem;
+}
+
+/* Sitemap list on the Crawlers screen. */
+.sitemap-list {
+    font-family: var(--sans);
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--ink);
+    padding-left: 1.15rem;
+    margin: 0 0 1.25rem;
+}
+.sitemap-list li { margin: 0.3em 0; }
+
+/* ---- Diagnostics tabs -------------------------------------------------
+   Without JavaScript every panel shows, so the page degrades to labelled
+   sections rather than hiding its own contents. */
+.diag-tablist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--rule);
+    margin: 0 0 1.25rem;
+    padding-bottom: 0.5rem;
+}
+.diag-tabs:not(.diag-tabs-live) .diag-tablist { display: none; }
+
+.diag-tab {
+    font-family: var(--sans);
+    font-size: 0.74rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: 2px;
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    min-height: 2.25rem;
+}
+.diag-tab:hover { color: var(--ink); }
+.diag-tab.is-active {
+    color: var(--accent);
+    border-color: var(--rule);
+    background: var(--leaf);
+}
+.diag-tab-count {
+    font-size: 0.9em;
+    opacity: 0.65;
+    margin-left: 0.15em;
+}
+.diag-tab-alert.is-active,
+.diag-tab-alert { color: #a33; }
+.diag-tab-alert.is-active { border-color: #a33; }
+
+.diag-tabs-live .diag-panel { display: none; }
+.diag-tabs-live .diag-panel.is-active { display: block; }
+.diag-tabs-live .diag-panel-heading { display: none; }
+
+/* The group a row came from, shown only in the Needs attention list where
+   rows are pulled out of their original sections. */
+.diag-row-group {
+    display: block;
+    font-family: var(--sans);
+    font-size: 0.68rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin-top: 0.15em;
+}
+
+/* Standalone pages: per-page delete and the add control. */
+.page-delete {
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    text-transform: none;
+    letter-spacing: normal;
+    color: var(--quiet);
+    margin-left: 0.75rem;
+    white-space: nowrap;
+}
+.pages-actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.5rem; }
+
+/* ---- Touch targets ---------------------------------------------------
+ * Chips are deliberately small: a row of them is apparatus, not buttons, and
+ * at reading size they sit quietly under a title. On a touch screen that same
+ * restraint makes them hard to hit — around fifteen pixels tall, against the
+ * twenty-four a finger needs.
+ *
+ * Scoped to coarse pointers so the desktop appearance is untouched: the same
+ * markup, only comfortable to tap where tapping is how it is used.
+ */
+@media (pointer: coarse) {
+    .chip {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        padding-top: 0.25rem;
+        padding-bottom: 0.25rem;
+    }
+    .file-chips,
+    .detail-chips,
+    .filter-bar {
+        gap: 0.4rem;
+    }
 }

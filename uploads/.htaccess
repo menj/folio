@@ -1,0 +1,68 @@
+# Folio — uploads folder hardening.
+# Keep this file as uploads/.htaccess on Apache or LiteSpeed.
+
+# No directory listing. Symlinks are restricted to those owned by this
+# account rather than disabled outright: on cPanel and similar hosts the path
+# to public_html is often itself a symlink, and "-FollowSymLinks" makes Apache
+# return 403 for every file in this folder. Folio's own path resolution
+# rejects symlinks regardless, so this stays defence in depth without the
+# risk of locking out the whole library.
+Options -Indexes +SymLinksIfOwnerMatch
+
+<Files ".sfm-meta.json">
+<IfModule mod_authz_core.c>
+Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+Order allow,deny
+Deny from all
+</IfModule>
+</Files>
+
+<IfModule mod_php.c>
+php_flag engine off
+</IfModule>
+
+# Remove common executable handlers, then deny executable source formats.
+<IfModule mod_mime.c>
+RemoveHandler .php .phtml .phar .php3 .php4 .php5 .php7 .php8 .cgi .pl .py .sh .shtml
+RemoveType .php .phtml .phar .php3 .php4 .php5 .php7 .php8 .cgi .pl .py .sh .shtml
+</IfModule>
+
+<FilesMatch "(?i)\.(php|phtml|phar|php[0-9]|cgi|pl|py|sh|shtml|fcgi|asp|aspx|jsp)$">
+<IfModule mod_authz_core.c>
+Require all denied
+</IfModule>
+<IfModule !mod_authz_core.c>
+Order allow,deny
+Deny from all
+</IfModule>
+</FilesMatch>
+
+<IfModule mod_headers.c>
+Header always set X-Content-Type-Options "nosniff"
+
+# Documents are the content of the library, so they are explicitly indexable
+# and followable. A scanned certificate a search engine cannot see is a
+# document nobody will find.
+<FilesMatch "(?i)\.(pdf|txt|md)$">
+Header always set X-Robots-Tag "index, follow"
+</FilesMatch>
+
+# SVG remains displayable but cannot execute scripts or navigate its parent.
+<FilesMatch "(?i)\.svg$">
+Header always set Content-Security-Policy "default-src 'none'; style-src 'unsafe-inline'; sandbox"
+</FilesMatch>
+
+# Any format outside Folio's explicit inline allowlist is a download. This
+# includes HTML, XML, MHTML, and future unknown formats.
+<FilesMatch "(?i)^(?!.*\.(?:pdf|png|jpe?g|gif|webp|svg|bmp|txt|md)$).+$">
+Header always set Content-Disposition "attachment"
+Header always set Content-Security-Policy "default-src 'none'; sandbox"
+Header always set X-Robots-Tag "noindex, nofollow"
+</FilesMatch>
+</IfModule>
+
+<FilesMatch "(?i)^(?!.*\.(?:pdf|png|jpe?g|gif|webp|svg|bmp|txt|md)$).+$">
+ForceType application/octet-stream
+</FilesMatch>

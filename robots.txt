@@ -108,3 +108,9 @@ Allow: /
 # Sitemaps (absolute URLs; edit the domain and folder to match)
 # ---------------------------------------------------------------
 Sitemap: https://example.com/documents/sitemap.xml
+
+# The documents themselves, listed separately. Search engines index PDFs as
+# pages in their own right, and this is what gets a scanned certificate found
+# rather than only the page describing it. Restricted and excluded files are
+# left out automatically.
+Sitemap: https://example.com/documents/sitemap-pdf.xml

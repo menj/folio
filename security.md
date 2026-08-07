@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.8.3**.
+The current supported release is **1.13.1**.
 
 ## Security controls
 
@@ -118,6 +118,17 @@ the third party's records.
 Folio itself records nothing: no visit log, no IP addresses, no geolocation.
 Anything collected is collected by the configured provider under its own terms,
 which is a decision for whoever runs the site.
+
+### Browser PDF controls
+
+Embedded PDFs ask the browser to drop its own toolbar, so its download and
+print buttons do not sit on top of Folio's. That is presentation only. The
+parameters are advisory, several browsers ignore them, and the file's URL is
+reachable whatever the viewer displays.
+
+Nothing about hiding a button restricts access. A document that must not be
+downloaded needs `pdf_access` set to viewer or hidden, which is enforced when
+the request reaches the server.
 
 ### Derivative images
 

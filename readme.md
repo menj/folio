@@ -533,6 +533,9 @@ Folio finds the file again by its contents.
 The document keeps its URL, title, description, transcript, category, tags,
 and access settings. Nothing on disk is touched.
 
+Open **Catalogue** in the admin bar to do this. It lists what has come adrift
+and offers both repairs.
+
 ### When a file cannot be matched
 
 Content matching only works while the bytes are unchanged. If a file was
@@ -707,6 +710,63 @@ use.
 If a new icon does not appear immediately, it is almost always the browser
 cache — icons are cached far more aggressively than pages. Check in a private
 window before concluding it has not worked.
+
+## Getting documents found
+
+Folio publishes two sitemaps:
+
+| Sitemap | Lists |
+| --- | --- |
+| `/sitemap.xml` | Record pages, categories, and standalone pages |
+| `/sitemap-pdf.xml` | The PDF files themselves |
+
+The second matters for a document library. Search engines index PDFs as pages
+in their own right, so a scanned certificate can be found directly rather than
+only through the page describing it. Both are announced in `robots.txt`.
+
+Documents are served `index, follow`, so crawlers may index them and follow
+the links inside them.
+
+**Every PDF in the library is listed**, whatever its access setting. The
+access setting governs delivery, not discovery.
+
+Files matching `EXCLUDE_PATTERNS` are the one exception, and not really an
+exception at all: those are not part of the library. They return 404 on every
+route, so a sitemap entry would point at nothing.
+
+## Sorting and filtering the listing
+
+Click **Name**, **Size** or **Date** to sort; click again to reverse. An arrow
+marks the active column, and the headers work by keyboard.
+
+Sorting uses the real values, not what is shown, so sizes order by bytes and
+dates order chronologically whatever form they were entered in. A document
+without its own date sorts after those that have one.
+
+Search is the magnifier in the header, or press `/` from anywhere on the
+page. Escape closes it and keeps the results.
+
+Sorting and filtering are separate. The category chips and the search box
+choose which documents appear; sorting only changes their order, so the two
+compose. Your chosen order is remembered while you browse.
+
+## Making a PDF smaller
+
+Scanners often write PDFs that store their page images with little or no
+compression, so a single certificate can arrive as tens of megabytes.
+
+Each PDF row has a **Compress** button. It prepares a smaller copy with qpdf,
+losslessly — the structure is rewritten and the streams recompressed, and the
+images are left alone, so the result is the same document to any reader. On an
+unoptimised scan this can be dramatic: 42 MB down to 57 KB in testing.
+
+**Your file is not replaced.** The copy downloads to you; put it in place over
+FTP if you want it, exactly as you would any other change to the library.
+Because the path stays the same, the document keeps its URL and metadata.
+
+A copy is only offered when it saves at least 3% and still opens correctly.
+An already-efficient document says so rather than being duplicated for
+nothing.
 
 ## Standalone pages
 
@@ -987,4 +1047,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.8.3. Single-file application with separated CSS and JS assets.
+1.13.1. Single-file application with separated CSS and JS assets.

@@ -35,7 +35,12 @@
         }
         var frame = document.createElement("iframe");
         frame.className = "pdf-frame";
-        frame.src = pdfUrl;
+        /* Drop the browser's own PDF toolbar where it is honoured, so its
+           download and print buttons do not sit on top of the ones Folio
+           already provides. Presentation only: the parameters are ignored by
+           some browsers, and access is governed by pdf_access on the server. */
+        frame.src = pdfUrl + (pdfUrl.indexOf("#") === -1 ? "#" : "&")
+                  + "toolbar=0&navpanes=0&statusbar=0&view=FitH";
         frame.title = host.getAttribute("data-pdf-title") || "PDF preview";
         while (wrap.firstChild) {
             wrap.removeChild(wrap.firstChild);

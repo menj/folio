@@ -1,0 +1,31 @@
+# Local settings — contains the fallback password hash. Never commit.
+/config.php
+
+# The live Apache config, created by copying the shipped .htaccess into place.
+# The leading slash matters: a bare ".htaccess" pattern would also match
+# uploads/.htaccess and data/.htaccess, which are part of the release and
+# carry the folder's security rules.
+/.htaccess
+
+# data/ holds settings, accounts, the catalogue and generated caches. Ignore
+# the whole folder and name the few files that belong in the repository,
+# rather than listing what to exclude: a rule that lists exclusions lets any
+# new runtime file added in a later version leak into a public repository.
+data/*
+!data/.htaccess
+!data/readme.txt
+!data/previews/
+data/previews/*
+!data/previews/.gitkeep
+
+# Uploaded documents belong to the installation, not the repository — but the
+# folder itself must exist, so its own files are kept.
+uploads/*
+!uploads/.htaccess
+!uploads/.gitkeep
+!uploads/readme.txt
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+*.swp

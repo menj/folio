@@ -28,6 +28,130 @@ A folder that previously held metadata in `uploads/.sfm-meta.json` is read
 once for migration; Folio writes all future changes to `data/metadata.json`.
 Keep the legacy file until the migrated metadata has been verified.
 
+## Upgrading to 1.16.1
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
+
+**Your category URLs change.** They lose the hash suffix that every category
+carried: `/category/tracts-2a4f72ad/` becomes `/category/tracts/`. Only
+categories whose names collide when slugified keep a suffix.
+
+Nothing breaks. The old addresses 301-redirect to the new ones, so indexed
+links, bookmarks, and any sitemap already submitted continue to work. Search
+engines will pick up the new addresses on their next crawl; the sitemap
+carries them immediately.
+
+If you would rather they did not change, there is no setting for it: the old
+form is available only as a redirect target.
+
+## Upgrading to 1.14.0
+
+Upload the new release except `config.php`, `data/`, and `uploads/`, as usual.
+Two things are new in the package:
+
+```
+assets/css/*.min.css     minified stylesheets
+assets/js/*.min.js       minified scripts
+tools/minify.js          the script that builds them; maintainers only
+```
+
+Folio serves the minified files automatically. There is nothing to enable.
+
+**If you have edited `assets/css/style.css`** to change a colour or a rule,
+your edit still wins: Folio compares modification times and ignores a
+minified file that is older than its source. You do not need to rebuild
+anything, and you can delete the `.min.` files entirely if you would rather
+work with readable sources permanently.
+
+Reload once with Ctrl-Shift-R afterwards. The asset URLs carry the version,
+so this should not be necessary, but it costs nothing.
+
+### Removed from Known issues
+
+The roadmap listed minification as outstanding. It is done, and the entry has
+been removed.
+
+## Upgrading to 1.13.1
+
+Everything from 1.7.0 to 1.13.1 shipped over two days, so this covers the whole
+span at once. If you are further back than 1.7.0, work through the older
+sections below first, then return here.
+
+Nothing in this range migrates or rewrites stored data. Your documents,
+titles, categories, tags, accounts, and settings carry over as they are.
+
+### Step 1 — Upload the whole release except your own files
+
+Upload every file and folder from the package except these three:
+
+```
+config.php
+data/
+uploads/
+```
+
+Two of the files people skip are the ones that matter most here.
+
+**`.htaccess` is mandatory, not optional.** Between 1.9.0 and 1.11.x it gained
+rules that features now depend on. Without the new file, restricted PDFs are
+served straight off disk with no access check, `/sitemap-pdf.xml` returns
+nothing, and compression and cache lifetimes never apply. The site will look
+fine, which is what makes it worth stating plainly.
+
+**`uploads/.htaccess` fixes a fault that could return 403 for every document
+in the folder** (1.8.3). If your library has been returning permission errors
+on files that plainly exist, this is why.
+
+### Step 2 — Upload the new folders
+
+```
+branding/          your own site icon lives here, safe from upgrades
+```
+
+`branding/` became part of the release in 1.7.2. Put `favicon.svg`,
+`favicon.ico`, or `apple-touch-icon.png` in it and Folio finds them with no
+configuration. Icons placed inside `assets/` are overwritten on every upgrade,
+which is the problem the folder exists to solve.
+
+You will also see `uploads/readme.txt` and `data/readme.txt` in the package.
+They exist only so the folders survive a `git clone`, and are harmless either
+way.
+
+### Step 3 — Reload once with the cache cleared
+
+Press Ctrl-Shift-R, or open the site in a private window.
+
+Releases up to 1.13.0 told browsers to cache the stylesheet and scripts for a
+year without changing the URL when those files changed. A browser that had
+visited before would keep the old stylesheet and apply it to new markup: sort
+buttons drawn as plain boxes, the header unstyled. From 1.13.1 assets are
+linked with a version, so this corrects itself and will not recur. This one
+reload clears the last of it.
+
+### Step 4 — Verify
+
+1. Open **Diagnostics**. It should report 1.13.1 and no failures.
+2. Open a PDF document page, and hover a PDF row in the listing. Both should
+   show a rendered page.
+3. Open `/sitemap-pdf.xml`. It should list your documents.
+4. Sort the listing by Name, then Size. The columns should be clickable and
+   the arrows should render properly rather than as plain boxes.
+5. If anything still looks unstyled, repeat step 3 — it is the browser cache,
+   not the upgrade.
+
+### Worth knowing
+
+- **The licence changed in 1.8.0** to the GNU General Public License v3 or
+  later. If you have redistributed Folio or built on it, read `license.txt`.
+- **A Catalogue screen** arrived in 1.13.0 at `?action=catalogue`. If any
+  records have drifted from their files, it will show them and offer to
+  reconnect records to files by comparing contents. It never touches the files
+  themselves, and only accepts a match when it is unambiguous. Worth opening
+  once after upgrading a library that has been reorganised over FTP.
+- **Documents have their own date field** from 1.10.0, separate from the
+  file's modification time. Existing documents keep showing the file date
+  until you set one, so nothing changes on its own.
+
 ## Upgrading to 1.6.0
 
 Document URLs become permanent in this release: they no longer follow the
@@ -417,14 +541,57 @@ cannot be built without breaking one of them, the feature does not get built.
 6. **Delete a cache and nothing is lost.** `data/thumbs/`, `data/text/`,
    `data/ocr/`, and `data/previews/` are all disposable.
 
+### Known issues
+
+Measured on this release rather than assumed. These are defects or gaps with a
+known cause, listed ahead of new work because they affect libraries that exist
+today.
+
+- **A large folder renders every row at once.** A folder holding 1,500
+  documents emits a 2.8 MB page of roughly 15,000 elements. Compression hides
+  it in transit — 83 KB on the wire — but the browser still parses all of it,
+  and the in-page search and sort both walk the whole set on every keystroke.
+  Server time is unaffected, so this is a client-side ceiling, felt first on a
+  phone. Pagination or progressive rendering is the fix, and it has to carry
+  `rel="next"`/`rel="prev"` and paginated sitemap entries so nothing becomes
+  invisible to a crawler.
+
+- **A third of that page is indentation.** Collapsing the whitespace emitted
+  between table cells removes about 33% of the bytes before compression, and
+  costs nothing but care in the templates.
+
+- **Absolute URLs are repeated in every row.** `BASE_URL` is written out 7,515
+  times on that same page, 165 KB of it. Row links could be root-relative
+  without affecting canonical URLs, structured data, or the sitemap, all of
+  which must stay absolute.
+
+- **No skip-to-content link.** Keyboard and screen-reader users tab through
+  the entire header on every page before reaching the listing.
+
+- **The listing search field has no label**, only a placeholder, which screen
+  readers announce inconsistently or not at all.
+
+- **The operating system's dark-mode preference is ignored.** A Night theme
+  already exists; honouring `prefers-color-scheme` on a first visit, before
+  any stored choice, is a small change with an obvious benefit.
+
+- **`index.php` is past the size the single-file design serves well.** At
+  8,279 lines and 151 functions, roughly 775 of those lines are inline admin
+  markup, with Diagnostics alone at 575 and Crawlers at 417. Moving the eight
+  admin screens into `admin/` includes would roughly halve the main file while
+  keeping the copy-a-folder deployment intact. This is maintainability, not
+  behaviour: nothing a reader sees would change.
+
+- **The catalogue cannot be exported from the admin.** `data/metadata.json`
+  holds every title, description, category, tag, and date entered by hand, and
+  is the one asset that cannot be regenerated from the files. Backing it up
+  currently requires FTP. A download button on the Catalogue screen would be
+  small and would protect the thing most worth protecting.
+
 ### Near term
 
 Work that is scoped and would not change existing behaviour.
 
-- **Reconcile and relink buttons in the admin.** The endpoints exist, are
-  CSRF-protected, and are tested, but Diagnostics currently only reports what
-  it would do — running it needs a POST. This is the largest gap between what
-  Folio can do and what you can reach.
 - **Batch OCR.** Today OCR runs one document at a time from the listing. A
   queue that works through everything unprocessed, resumable and bounded, is
   the obvious next step for a large scanned archive.
@@ -445,13 +612,12 @@ Larger pieces that need design work before they are safe to start.
 - **Per-document access beyond PDFs.** `pdf_access` covers PDFs. The same
   gating could reasonably extend to images and other formats, using the
   signing mechanism that already exists.
+- **Chronological browsing.** Documents carry a parsed date as of 1.10.0, and
+  the sort control uses it. Browsing by decade or year, as an archive rather
+  than a folder, is the piece still missing.
 - **A read-only account role.** Every account currently has full authority.
   A role that can edit metadata but not manage accounts or settings would
   suit a library with more than one cataloguer.
-- **Structured dates.** Documents carry a description like "Dewan Siswa,
-  Oktober 1998". A real date field would allow chronological browsing and
-  better structured data, but needs a migration and a way to express
-  uncertain or partial dates, which historical documents very often have.
 
 ### Under consideration
 
@@ -461,9 +627,10 @@ visible, not because they will happen.
 - **Multiple languages in the interface.** The building blocks exist —
   documents already carry a language — but translating the interface is a
   commitment that outlives enthusiasm for it.
-- **An export or backup command.** Producing a single archive of files plus
-  catalogue. Much of this is already achievable with FTP and a copy of
-  `data/`, so the value is convenience rather than capability.
+- **A full export command.** Producing a single archive of files plus
+  catalogue. The catalogue half of this is listed under Known issues as worth
+  doing on its own; bundling the documents alongside it is largely achievable
+  with FTP already, so the remaining value is convenience.
 - **Handwriting recognition.** Tesseract reads printed text. Handwritten
   documents currently need the transcript field filled in by hand. The
   models that do this well are not things a shared host will run.

@@ -123,7 +123,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.8.3');
+define('FOLIO_VERSION', '1.19.0');
 
 defined('SITE_URL')             || define('SITE_URL', '');
 defined('SITE_DESCRIPTION')     || define('SITE_DESCRIPTION', 'A reading library of documents, papers, and images.');
@@ -289,6 +289,7 @@ defined('SITE_ICON')        || define('SITE_ICON', '');
 /** Where OCR results and extracted text are cached. Never inside uploads/. */
 define('TEXT_DIR', __DIR__ . '/data/text');
 define('OCR_DIR',  __DIR__ . '/data/ocr');
+define('COMPRESS_DIR', __DIR__ . '/data/compressed');
 
 /**
  * Site secrets. Set these in config.php. They are optional; without them,
@@ -437,7 +438,12 @@ function send_security_headers(): void
     $img_src    = "'self' data:" . ($extra['img'] !== '' ? ' ' . $extra['img'] : '');
     $connect    = "'self'" . ($extra['connect'] !== '' ? ' ' . $extra['connect'] : '');
 
-    header("Content-Security-Policy: default-src 'self'; img-src $img_src; style-src 'self'; script-src $script_src; connect-src $connect; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'");
+    /* The inlined stylesheet is allowed by the hash of its exact bytes, so no
+       other inline style can run. 'unsafe-inline' would allow every one, and a
+       nonce would change per request and make the page uncacheable. */
+    $style_src = "'self'" . inline_css_hash();
+
+    header("Content-Security-Policy: default-src 'self'; img-src $img_src; style-src $style_src; script-src $script_src; connect-src $connect; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'");
 }
 
 /**
@@ -1013,6 +1019,14 @@ function pdf_full_access(string $rel, array $m): bool
     return pdf_access_of($m) === 'public';
 }
 
+/** The sitemap listing the PDF files themselves. */
+function url_sitemap_pdf(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/sitemap-pdf.xml'
+        : BASE_URL . '?action=sitemap_pdf';
+}
+
 /** URL of one part of a partitioned sitemap. */
 function url_sitemap_part(int $n): string
 {
@@ -1058,9 +1072,59 @@ function slugify(string $s): string
     return $s !== '' ? $s : 'item-' . substr(hash('sha256', $original), 0, 8);
 }
 
-function category_slug(string $cat): string
+/** The pre-1.16.1 form: always suffixed, whether or not anything clashed. */
+function category_slug_legacy(string $cat): string
 {
     return slugify($cat) . '-' . substr(hash('sha256', $cat), 0, 8);
+}
+
+/**
+ * Slug for every category in the library, disambiguated only where needed.
+ *
+ * Two category names can slugify to the same string — "Q&A" and "Q A", or
+ * "Café" and "Cafe" — and both would then claim one URL. Earlier releases
+ * avoided that by suffixing a hash of the name to every category, so a
+ * library that had no clash at all still carried "tracts-2a4f72ad" in its
+ * addresses. The suffix is now added only to the names that actually collide,
+ * and only to them: an unambiguous category is simply "tracts".
+ */
+function category_slug_map(): array
+{
+    static $map = null;
+    if (is_array($map)) {
+        return $map;
+    }
+    global $mime_map;
+    $names = array_keys(category_register(index_all_files($mime_map ?? [])));
+
+    $by_plain = [];
+    foreach ($names as $name) {
+        $by_plain[slugify((string) $name)][] = (string) $name;
+    }
+
+    $map = [];
+    foreach ($by_plain as $plain => $group) {
+        if (count($group) === 1) {
+            $map[$group[0]] = $plain;
+            continue;
+        }
+        // A genuine clash: every name in this group keeps a suffix, so no one
+        // of them silently wins the plain address.
+        foreach ($group as $name) {
+            $map[$name] = category_slug_legacy($name);
+        }
+    }
+    return $map;
+}
+
+function category_slug(string $cat): string
+{
+    $map = category_slug_map();
+    if (isset($map[$cat])) {
+        return $map[$cat];
+    }
+    // Not in the register: nothing to collide with, so the plain form is safe.
+    return slugify($cat);
 }
 
 function url_category(string $cat): string
@@ -1141,6 +1205,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'llms';
     } elseif ($route === 'sitemap.xml') {
         $_GET['action'] = 'sitemap';
+    } elseif ($route === 'sitemap-pdf.xml') {
+        $_GET['action'] = 'sitemap_pdf';
     } elseif (preg_match('#^sitemap-([0-9]+)\.xml$#', $route, $m)) {
         $_GET['action'] = 'sitemap';
         $_GET['part'] = $m[1];
@@ -1544,6 +1610,28 @@ function tool_version(string $name): ?string
     $text = trim($r['out']) !== '' ? $r['out'] : $r['err'];
     $line = trim((string) strtok($text, "\n"));
     return $line === '' ? 'installed' : str_clip($line, 90);
+}
+
+/**
+ * Numeric major version of the installed qpdf, or 0 when it cannot be read.
+ *
+ * qpdf gained --recompress-flate and --compression-level in 10.0. Passing
+ * either to an older build makes it exit immediately with "unknown option",
+ * so the flags are chosen from what is actually installed rather than
+ * assumed. Shared hosts commonly ship 8.x or 9.x.
+ */
+function qpdf_major(): int
+{
+    static $major = null;
+    if ($major !== null) {
+        return $major;
+    }
+    $v = (string) tool_version('qpdf');
+    // "qpdf version 11.9.0" and bare "9.1.1" both appear in the wild.
+    if (preg_match('/(\d+)\.\d+/', $v, $m)) {
+        return $major = (int) $m[1];
+    }
+    return $major = 0;
 }
 
 /** Tesseract language datasets actually installed. */
@@ -2102,6 +2190,12 @@ function pdf_rasterise_page(string $abs, int $width, ?string &$error = null): ?s
         return null;
     }
     $stem = sys_get_temp_dir() . '/folio-pdf-' . bin2hex(random_bytes(8));
+    // Rendering can fail for reasons only the server can see: an encrypted or
+    // damaged document, or one large enough to exhaust the time budget. The
+    // visitor gets a placeholder either way, so the reason is logged rather
+    // than shown — otherwise a library where only some previews work gives
+    // nothing to diagnose.
+
     // -f/-l 1 limits work to the first page: a 400-page scan costs the same
     // as a one-page one.
     $args = ['-png', '-f', '1', '-l', '1', '-scale-to-x', (string) $width, '-scale-to-y', '-1', $abs, $stem];
@@ -2117,6 +2211,7 @@ function pdf_rasterise_page(string $abs, int $width, ?string &$error = null): ?s
         }
     }
     $error = trim((string) strtok(trim($r['err']) ?: 'no output', "\n"));
+    error_log('Folio: could not render page 1 of ' . $abs . ' — ' . $error);
     return null;
 }
 
@@ -2860,6 +2955,207 @@ function file_embedded_date(string $abs): ?int
     return null;
 }
 
+/**
+ * Interpret the date a document carries.
+ *
+ * Historical documents state their date in whatever form they please: a bare
+ * year, a month and year, a full date, sometimes an approximation. Forcing a
+ * date picker on them would either lose that nuance or refuse the document,
+ * so the field is free text and this reads what it can.
+ *
+ * Returns ['display' => as entered, 'iso' => ISO 8601 or '',
+ *          'year' => int|0, 'precision' => 'day'|'month'|'year'|''].
+ */
+function document_date_parse(string $raw): array
+{
+    $raw = trim($raw);
+    $out = ['display' => $raw, 'iso' => '', 'year' => 0, 'precision' => ''];
+    if ($raw === '') {
+        return $out;
+    }
+
+    // Malay month names appear throughout a Malaysian collection, and a
+    // document dated "Oktober 1998" should sort with October, not nowhere.
+    $months = [
+        'jan' => 1, 'feb' => 2, 'mac' => 3, 'mar' => 3, 'apr' => 4,
+        'mei' => 5, 'may' => 5, 'jun' => 6, 'jul' => 7, 'ogo' => 8, 'aug' => 8,
+        'sep' => 9, 'okt' => 10, 'oct' => 10, 'nov' => 11, 'dis' => 12, 'dec' => 12,
+    ];
+
+    // Full ISO or slash/dot date.
+    if (preg_match('/(\d{4})[-\/.](\d{1,2})[-\/.](\d{1,2})/', $raw, $m)) {
+        $y = (int) $m[1]; $mo = (int) $m[2]; $d = (int) $m[3];
+        if ($mo >= 1 && $mo <= 12 && $d >= 1 && $d <= 31) {
+            return ['display' => $raw, 'iso' => sprintf('%04d-%02d-%02d', $y, $mo, $d),
+                    'year' => $y, 'precision' => 'day'];
+        }
+    }
+    // Day-first numeric: "30/11/1991". Day-first is the convention in
+    // Malaysia and most of the world; a value above 12 in the first position
+    // settles it outright, and below that the convention decides.
+    if (preg_match('/(\\d{1,2})[-\\/.](\\d{1,2})[-\\/.](\\d{4})/', $raw, $m)) {
+        $d = (int) $m[1]; $mo = (int) $m[2]; $y = (int) $m[3];
+        if ($d >= 1 && $d <= 31 && $mo >= 1 && $mo <= 12) {
+            return ['display' => $raw, 'iso' => sprintf('%04d-%02d-%02d', $y, $mo, $d),
+                    'year' => $y, 'precision' => 'day'];
+        }
+    }
+    // Day month year, in words: "30 Oktober 1998".
+    if (preg_match('/(\d{1,2})\s+([a-zA-Z]{3,})\s+(\d{4})/', $raw, $m)) {
+        $key = strtolower(substr($m[2], 0, 3));
+        if (isset($months[$key])) {
+            return ['display' => $raw,
+                    'iso' => sprintf('%04d-%02d-%02d', (int) $m[3], $months[$key], (int) $m[1]),
+                    'year' => (int) $m[3], 'precision' => 'day'];
+        }
+    }
+    // Month and year: "Oktober 1998".
+    if (preg_match('/([a-zA-Z]{3,})\s+(\d{4})/', $raw, $m)) {
+        $key = strtolower(substr($m[1], 0, 3));
+        if (isset($months[$key])) {
+            return ['display' => $raw, 'iso' => sprintf('%04d-%02d', (int) $m[2], $months[$key]),
+                    'year' => (int) $m[2], 'precision' => 'month'];
+        }
+    }
+    // A year on its own, including "c. 1985" and "1991/92". Anything from the
+    // first photographs to a little ahead of now.
+    if (preg_match('/(1[89]\d{2}|20\d{2}|21\d{2})/', $raw, $m)) {
+        $y = (int) $m[1];
+        if ($y >= 1800 && $y <= (int) date('Y') + 5) {
+            return ['display' => $raw, 'iso' => (string) $y, 'year' => $y, 'precision' => 'year'];
+        }
+    }
+    return $out;
+}
+
+/**
+ * Make a smaller copy of a PDF, losslessly.
+ *
+ * Scanners often write PDFs that store their page images with little or no
+ * compression, and those files can be enormous for what they contain — a
+ * single certificate arriving as tens of megabytes. qpdf rewrites the
+ * structure and recompresses the streams without touching the images
+ * themselves, so the result is byte-for-byte the same document to a reader
+ * while being a fraction of the size.
+ *
+ * Lossless is the only mode offered. This is an archive: a scan of a birth
+ * certificate should not be quietly degraded to save bandwidth.
+ *
+ * The original is never touched. The copy is written under data/, and it is
+ * for the administrator to decide whether to put it in place over FTP.
+ *
+ * Returns the path to the copy, or null when nothing worth keeping was
+ * produced. $report receives 'before', 'after', 'saved_pct' and 'message'.
+ */
+function pdf_compress(string $rel, string $abs, array &$report = []): ?string
+{
+    $report = ['before' => 0, 'after' => 0, 'saved_pct' => 0, 'message' => ''];
+
+    if (!tool_have('qpdf')) {
+        $report['message'] = 'qpdf is not installed on this server.';
+        return null;
+    }
+    if (!is_file($abs) || strtolower(pathinfo($abs, PATHINFO_EXTENSION)) !== 'pdf') {
+        $report['message'] = 'Not a PDF.';
+        return null;
+    }
+
+    $before = (int) @filesize($abs);
+    $report['before'] = $before;
+    if ($before <= 0) {
+        $report['message'] = 'The file is empty.';
+        return null;
+    }
+
+    $out = derived_path(COMPRESS_DIR, $rel, $abs, 'pdf');
+    if (is_file($out)) {
+        $report['after'] = (int) @filesize($out);
+        $report['saved_pct'] = (int) round(100 - ($report['after'] / $before * 100));
+        $report['message'] = 'Already prepared.';
+        return $out;
+    }
+    $dir = dirname($out);
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        $report['message'] = 'Could not create the cache directory.';
+        return null;
+    }
+
+    $tmp = $out . '.' . bin2hex(random_bytes(6)) . '.tmp.pdf';
+
+    /* Understood by every qpdf still in circulation. */
+    $qpdf_args = [
+        '--object-streams=generate',
+        '--compress-streams=y',
+        '--stream-data=compress',
+        // Linearised output starts rendering before the whole file arrives,
+        // which matters for a large scan opened in a browser.
+        '--linearize',
+    ];
+    /* Added in qpdf 10.0. Older builds abort on an unknown option rather
+       than ignoring it, so they are offered only where they exist. Their
+       absence costs a few percent of the saving, not the feature. */
+    if (qpdf_major() >= 10) {
+        $qpdf_args[] = '--recompress-flate';
+        $qpdf_args[] = '--compression-level=9';
+    }
+    $qpdf_args[] = $abs;
+    $qpdf_args[] = $tmp;
+
+    $r = tool_run('qpdf', $qpdf_args, 300);
+
+    // qpdf exits 3 on warnings while still writing a usable file, so the
+    // output is judged on whether it exists and reads back, not on the code.
+    if (!is_file($tmp) || (int) @filesize($tmp) <= 0) {
+        @unlink($tmp);
+        $first = trim((string) strtok(trim($r['err']) ?: 'no output', "\n"));
+        /* An unknown option means qpdf is older than the flags being sent.
+           Say so, with the version, rather than passing the raw tool error to
+           someone who has no reason to know qpdf's release history. */
+        if (stripos($first, 'unknown option') !== false) {
+            $first = 'this server has qpdf ' . (qpdf_major() ?: 'of an unknown version')
+                   . ', which does not support an option Folio used. Please report this,'
+                   . ' quoting: ' . str_clip($first, 90);
+        }
+        $report['message'] = 'Could not compress: ' . str_clip($first, 220);
+        return null;
+    }
+
+    $after = (int) @filesize($tmp);
+
+    // Verify before offering it. A smaller file that will not open is worse
+    // than no file at all.
+    $check = tool_have('pdfinfo') ? tool_run('pdfinfo', [$tmp], 30) : ['code' => 0];
+    if ($check['code'] !== 0) {
+        @unlink($tmp);
+        $report['message'] = 'The compressed copy did not verify, so it was discarded.';
+        return null;
+    }
+
+    $saved = (int) round(100 - ($after / $before * 100));
+    if ($after >= $before || $saved < 3) {
+        // Already efficiently stored. Keeping a copy that saves nothing only
+        // costs disk and invites confusion about which file is authoritative.
+        @unlink($tmp);
+        $report['after'] = $before;
+        $report['saved_pct'] = 0;
+        $report['message'] = 'Already well compressed — nothing worth saving.';
+        return null;
+    }
+
+    if (!@rename($tmp, $out)) {
+        @unlink($tmp);
+        $report['message'] = 'Could not store the compressed copy.';
+        return null;
+    }
+    @chmod($out, 0644);
+
+    $report['after'] = $after;
+    $report['saved_pct'] = $saved;
+    $report['message'] = human_size($before) . ' to ' . human_size($after)
+                       . ' — ' . $saved . '% smaller.';
+    return $out;
+}
+
 /** SHA-256 of a file, or '' if it cannot be read. */
 function file_fingerprint(string $abs): string
 {
@@ -3083,6 +3379,142 @@ function document_relink(string $document_id, string $rel, string &$error = ''):
  * the icon that ships with Folio. Emitted from one place so a new page type
  * cannot quietly keep pointing at the default.
  */
+/**
+ * A versioned URL for a release-owned asset.
+ *
+ * The stylesheet and scripts are told to cache for a year and never
+ * revalidate, which is right for files that only change on upgrade — but only
+ * if the URL changes with them. Without this, an upgrade ships new markup to
+ * a browser still holding the previous stylesheet, and the page renders with
+ * rules that no longer match: sort buttons drawn as plain boxes, tags still
+ * carrying borders the new CSS removed.
+ */
+/**
+ * URL for a release-owned asset, carrying the version so a year-long cache is
+ * bypassed exactly when the file changes.
+ *
+ * A minified twin is preferred when one exists and is not older than the
+ * source. The mtime comparison is what makes editing safe: change
+ * `style.css` to adjust a theme and it immediately outranks the stale
+ * `style.min.css`, with nothing to rebuild and no setting to remember.
+ * Deleting the `.min.` files reverts to readable sources permanently.
+ */
+define('ASSET_MANIFEST_FILE', __DIR__ . '/assets/manifest.json');
+
+/**
+ * URL for a release-owned asset, carrying the version so a year-long cache is
+ * bypassed exactly when the file changes.
+ *
+ * A minified twin is used when one exists and was built from the source
+ * currently on disk. That last part is decided by comparing the source's byte
+ * length with the length recorded when it was minified, not by comparing
+ * modification times: over FTP, mtimes are set by upload order and by
+ * whatever the client feels like doing, so a perfectly good minified file
+ * could look stale and be ignored for good. A byte length survives upload
+ * unchanged and still changes the moment the file is edited.
+ *
+ * Editing a stylesheet therefore still works with nothing to rebuild: the
+ * length stops matching, and the readable source is served again.
+ */
+function asset_manifest(): array
+{
+    static $map = null;
+    if (is_array($map)) {
+        return $map;
+    }
+    $map = [];
+    if (!is_link(ASSET_MANIFEST_FILE) && is_file(ASSET_MANIFEST_FILE)) {
+        $raw  = @file_get_contents(ASSET_MANIFEST_FILE);
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($data)) {
+            $map = $data;
+        }
+    }
+    return $map;
+}
+
+/**
+ * The stylesheet tag: inlined where that is faster, linked otherwise.
+ * Every page uses this, so the two paths cannot diverge screen by screen.
+ */
+function stylesheet_tag(): string
+{
+    $css = inline_css();
+    if ($css !== null) {
+        return '<style>' . $css . '</style>';
+    }
+    return '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '">';
+}
+
+/**
+ * The stylesheet, inlined when that is the faster choice.
+ *
+ * A linked stylesheet blocks the first paint for a whole extra round trip:
+ * the browser must parse the document, request the file, and wait. On a slow
+ * mobile connection that measured around 270ms of nothing on screen. Folio's
+ * stylesheet compresses to a few kilobytes, so putting it in the document
+ * removes the wait entirely and the page paints on the first response.
+ *
+ * Returns the CSS when it should be inlined, or null to link it as before:
+ * when there is no manifest, when the minified file is missing, or when it
+ * has grown past the point where inlining is worth repeating on every page.
+ */
+function inline_css(): ?string
+{
+    static $css = false;
+    if ($css !== false) {
+        return $css;
+    }
+    $entry = asset_manifest()['assets/css/style.css'] ?? null;
+    if (!is_array($entry) || ($entry['sha256'] ?? '') === '') {
+        return $css = null;
+    }
+    // Beyond this, the bytes repeated on every page outweigh the saved trip.
+    if ((int) ($entry['min_size'] ?? 0) > 60000) {
+        return $css = null;
+    }
+    $abs = __DIR__ . '/' . (string) $entry['min'];
+    $src = __DIR__ . '/assets/css/style.css';
+    if (is_link($abs) || !is_file($abs) || !is_file($src)
+        || (int) ($entry['size'] ?? -1) !== filesize($src)) {
+        // Source edited since the twin was built: link the readable file.
+        return $css = null;
+    }
+    $body = @file_get_contents($abs);
+    return $css = is_string($body) ? $body : null;
+}
+
+/** The CSP source expression for the inlined stylesheet, if there is one. */
+function inline_css_hash(): string
+{
+    if (inline_css() === null) {
+        return '';
+    }
+    $entry = asset_manifest()['assets/css/style.css'] ?? [];
+    $hash  = (string) ($entry['sha256'] ?? '');
+    return $hash === '' ? '' : " 'sha256-" . $hash . "'";
+}
+
+function asset_url(string $path): string
+{
+    $rel = ltrim($path, '/');
+    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+
+    if ($ext === 'css' || $ext === 'js') {
+        $entry = asset_manifest()[$rel] ?? null;
+        if (is_array($entry)) {
+            $min = (string) ($entry['min'] ?? '');
+            $src_abs = __DIR__ . '/' . $rel;
+            $min_abs = __DIR__ . '/' . $min;
+            if ($min !== '' && is_file($min_abs) && is_file($src_abs)
+                && (int) ($entry['size'] ?? -1) === filesize($src_abs)) {
+                $rel = $min;
+            }
+        }
+    }
+    return BASE_URL . $rel . '?v=' . rawurlencode(FOLIO_VERSION);
+}
+
 function site_icon_tags(): string
 {
     static $html = null;
@@ -3343,15 +3775,78 @@ define('PAGES_FILE', __DIR__ . '/data/pages.json');
  *
  * 'type' selects the schema.org page type emitted for that slot.
  */
-function page_slots(): array
+/**
+ * The two pages Folio understands the meaning of.
+ *
+ * About and FAQ are built in because their schema.org types say something a
+ * generic page cannot: an FAQ page carries its questions as structured data,
+ * and search engines treat an About page as identity information. Neither can
+ * be deleted, and both keep their historic addresses.
+ */
+function page_slots_builtin(): array
 {
     return [
-        'about' => ['route' => 'about', 'type' => 'AboutPage', 'default_title' => 'About'],
-        'faq'   => ['route' => 'faq',   'type' => 'FAQPage',   'default_title' => 'FAQ'],
-        'page1' => ['route' => 'p/page1', 'type' => 'WebPage', 'default_title' => 'Page 1'],
-        'page2' => ['route' => 'p/page2', 'type' => 'WebPage', 'default_title' => 'Page 2'],
-        'page3' => ['route' => 'p/page3', 'type' => 'WebPage', 'default_title' => 'Page 3'],
+        'about' => ['type' => 'AboutPage', 'default_title' => 'About', 'builtin' => true],
+        'faq'   => ['type' => 'FAQPage',   'default_title' => 'FAQ',   'builtin' => true],
     ];
+}
+
+/** A page slot identifier: the two built-ins, or a generated custom one. */
+function page_slot_valid(string $slot): bool
+{
+    return isset(page_slots_builtin()[$slot])
+        || (bool) preg_match('/^(page[0-9]+|p-[a-f0-9]{8})$/', $slot);
+}
+
+/**
+ * Every page slot that exists, built-in first and custom ones after.
+ *
+ * The list used to be a fixed five. It is now read from the stored file, so a
+ * library can have as many pages as it wants. Nothing else changed shape:
+ * URLs, menus, the sitemap, and structured data are all still keyed by slot,
+ * and an installation carrying the old page1..page3 records keeps them,
+ * addresses included, because those keys are simply found in the file.
+ */
+function page_slots(): array
+{
+    static $slots = null;
+    if (is_array($slots)) {
+        return $slots;
+    }
+    $slots = page_slots_builtin();
+
+    $stored = [];
+    if (!is_link(PAGES_FILE) && is_file(PAGES_FILE)) {
+        $raw  = @file_get_contents(PAGES_FILE);
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($data)) {
+            $stored = $data;
+        }
+    }
+    foreach (array_keys($stored) as $slot) {
+        $slot = (string) $slot;
+        if (isset($slots[$slot]) || !page_slot_valid($slot)) {
+            continue;
+        }
+        $slots[$slot] = [
+            'type' => 'WebPage',
+            'default_title' => (string) ($stored[$slot]['title'] ?? '') !== ''
+                ? (string) $stored[$slot]['title']
+                : 'Page',
+            'builtin' => false,
+        ];
+    }
+    return $slots;
+}
+
+/** An unused slot identifier for a newly added page. */
+function page_slot_new(): string
+{
+    $existing = page_slots();
+    do {
+        $slot = 'p-' . bin2hex(random_bytes(4));
+    } while (isset($existing[$slot]));
+    return $slot;
 }
 
 /**
@@ -3382,6 +3877,8 @@ function pages_load(): array
             'menu'    => (string) ($rec['menu'] ?? ''),
             'slug'    => (string) ($rec['slug'] ?? ''),
             'body'    => (string) ($rec['body'] ?? ''),
+            'seo_title' => (string) ($rec['seo_title'] ?? ''),
+            'seo_desc'  => (string) ($rec['seo_desc'] ?? ''),
             'updated_at' => (int) ($rec['updated_at'] ?? 0),
         ];
     }
@@ -3394,7 +3891,17 @@ function pages_save(array $pages, string &$error = ''): bool
     $previous = pages_load();
     $clean = [];
     $taken = [];
-    foreach (page_slots() as $slot => $_meta) {
+    /* The caller decides which slots survive: a slot absent from $pages is a
+       page that was deleted. Built-ins are always kept so About and FAQ
+       cannot be removed by a malformed or truncated form post. */
+    $slots = page_slots_builtin();
+    foreach (array_keys($pages) as $slot) {
+        $slot = (string) $slot;
+        if (!isset($slots[$slot]) && page_slot_valid($slot)) {
+            $slots[$slot] = ['type' => 'WebPage', 'default_title' => 'Page', 'builtin' => false];
+        }
+    }
+    foreach ($slots as $slot => $_meta) {
         $rec = is_array($pages[$slot] ?? null) ? $pages[$slot] : [];
 
         /* Pages and documents share one flat namespace, so a page slug is
@@ -3423,7 +3930,7 @@ function pages_save(array $pages, string &$error = ''): bool
                 $error = 'The URL slug "' . $wanted . '" is used by two pages at once.';
                 return false;
             }
-            foreach (page_slots() as $other => $__) {
+            foreach ($slots as $other => $__) {
                 if ($other !== $slot && $other === $wanted) {
                     $error = 'The URL slug "' . $wanted . '" is the name of another page slot.';
                     return false;
@@ -3438,6 +3945,8 @@ function pages_save(array $pages, string &$error = ''): bool
             'menu'    => str_clip(trim((string) ($rec['menu'] ?? '')), 40),
             'slug'    => $wanted,
             'body'    => (string) ($rec['body'] ?? ''),
+            'seo_title' => str_clip(trim((string) ($rec['seo_title'] ?? '')), 60),
+            'seo_desc'  => str_clip(trim((string) ($rec['seo_desc'] ?? '')), 150),
         ];
         // Only stamp slots that actually changed, so saving the form does not
         // report every page as freshly modified to search engines.
@@ -3446,7 +3955,9 @@ function pages_save(array $pages, string &$error = ''): bool
             || ($old['title'] ?? '') !== $next['title']
             || ($old['menu'] ?? '') !== $next['menu']
             || ($old['slug'] ?? '') !== $next['slug']
-            || ($old['body'] ?? '') !== $next['body'];
+            || ($old['body'] ?? '') !== $next['body']
+            || ($old['seo_title'] ?? '') !== $next['seo_title']
+            || ($old['seo_desc'] ?? '') !== $next['seo_desc'];
         $next['updated_at'] = $changed ? time() : (int) ($old['updated_at'] ?? 0);
         $clean[$slot] = $next;
     }
@@ -3475,6 +3986,15 @@ function page_slug(string $slot, array $rec = []): string
     $saved = slug_normalise((string) ($rec['slug'] ?? ''));
     if ($saved !== '') {
         return $saved;
+    }
+    /* A page added from the admin has a generated slot id like "p-3f9a1c22".
+       That is an internal key, not something to put in an address bar, so a
+       slug is derived from the title instead and the id never surfaces. */
+    if (strpos($slot, 'p-') === 0) {
+        $from_title = slug_normalise(slugify((string) ($rec['title'] ?? '')));
+        if ($from_title !== '') {
+            return $from_title;
+        }
     }
     // Nothing saved: About and FAQ keep their historic addresses, and the
     // numbered slots fall back to their slot name so an unconfigured page
@@ -3883,6 +4403,8 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     $transcript = trim((string) ($m['transcript'] ?? ''));
     $detected_mime = detected_mime_type($abs, $ext, $mime_map);
 
+    $doc_date_meta = document_date_parse((string) ($m['doc_date'] ?? ''));
+
     $node = [
         '@type' => $type,
         '@id' => $view . '#file',
@@ -3892,6 +4414,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         'fileFormat' => $detected_mime,
         'contentSize' => human_size($bytes),
         'dateModified' => date('c', $mtime),
+
         'inLanguage' => $language !== '' ? $language : SITE_LANGUAGE,
         'isPartOf' => ['@id' => BASE_URL . '#website'],
 
@@ -3900,6 +4423,18 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         'dcterms:format' => $detected_mime,
         'dcterms:modified' => date('c', $mtime),
     ];
+
+    /* The document's own date. For an archive this is the fact that matters:
+       dateModified only records when the file was last touched, and
+       re-uploading a 1979 certificate does not make it a 2026 document.
+       Emitted only when there is one, so an undated record stays silent
+       rather than publishing an empty claim. */
+    if ($doc_date_meta['iso'] !== '') {
+        $node['dateCreated']      = $doc_date_meta['iso'];
+        $node['datePublished']    = $doc_date_meta['iso'];
+        $node['temporalCoverage'] = $doc_date_meta['iso'];
+        $node['dcterms:date']     = $doc_date_meta['display'];
+    }
     if ($show_pdf_url) {
         $node['contentUrl'] = $raw;
     }
@@ -4072,6 +4607,10 @@ function index_all_files(array $mime_map): array
                 'category' => $m['category'] ?? '',
                 'tags' => $m['tags'] ?? [],
                 'document_type' => $m['document_type'] ?? '',
+
+                'doc_date' => $m['doc_date'] ?? '',
+                'seo_title' => $m['seo_title'] ?? '',
+                'seo_desc' => $m['seo_desc'] ?? '',
                 'language' => $m['language'] ?? '',
                 'pdf_access' => $pdf_access,
                 // Deliberately not the transcript text itself here — this
@@ -4147,6 +4686,63 @@ if (isset($_GET['indexnow_key'])) {
     exit('Not found');
 }
 
+/**
+ * Every public address worth telling a search engine about.
+ *
+ * This is the union of both sitemaps. Earlier releases submitted only the
+ * library root and the document pages, so a new category, a new standalone
+ * page, a new folder, and the PDF files themselves were all announced by the
+ * sitemaps but never pushed — the one mechanism that delivers immediately was
+ * the one missing most of the site.
+ *
+ * Built from the same sources the sitemaps use, in the same order, so the
+ * three cannot drift apart.
+ */
+function indexnow_url_list(array $mime_map): array
+{
+    $all  = index_all_files($mime_map);
+    $urls = [BASE_URL];
+
+    // Document pages, and the folders they sit in.
+    $dirs = [];
+    foreach ($all as $f) {
+        $urls[] = $f['view'];
+        $dir = (string) $f['dir'];
+        while ($dir !== '') {
+            $dirs[$dir] = true;
+            $dir = dirname($dir);
+            $dir = $dir === '.' ? '' : str_replace('\\', '/', $dir);
+        }
+    }
+    foreach (array_keys($dirs) as $dir) {
+        $urls[] = url_dir((string) $dir);
+    }
+
+    // Category archives.
+    foreach (array_keys(category_register($all)) as $cat_name) {
+        $urls[] = url_category((string) $cat_name);
+    }
+
+    // Standalone pages.
+    foreach (pages_menu() as $mslot => $_mrec) {
+        $urls[] = url_page((string) $mslot);
+    }
+
+    // The PDF files themselves, matching the document sitemap's rule.
+    foreach ($all as $f) {
+        if (strtolower((string) $f['ext']) !== 'pdf') {
+            continue;
+        }
+        $rel = (string) $f['rel'];
+        $abs = resolve_path($rel);
+        if ($abs !== null && is_file($abs)) {
+            $urls[] = url_raw($rel);
+        }
+    }
+
+    return array_values(array_unique($urls));
+}
+
 /* ------------------------------------------------------------------ */
 /* Crawlers (admin only): sitemap, llms.txt, indexability, robots      */
 /* ------------------------------------------------------------------ */
@@ -4187,11 +4783,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                     $error = 'The site is marked non-indexable, so URLs are not being submitted.';
                 } else {
                     $host = (string) parse_url(BASE_URL, PHP_URL_HOST);
-                    $urls = [BASE_URL];
-                    foreach (index_all_files($mime_map) as $f) {
-                        $urls[] = $f['view'];
-                    }
-                    $urls = array_values(array_unique($urls));
+                    $urls = indexnow_url_list($mime_map);
 
                     /* IndexNow accepts at most 10,000 URLs per request, so a
                        large library must be split. Each batch is reported on
@@ -4351,6 +4943,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $sitemap_count  = count($all_indexed) + 1; // +1 for the library root
     $sitemap_sample = array_slice(array_map(function ($f) { return $f['view']; }, $all_indexed), 0, 8);
 
+    /* The document sitemap lists the files themselves rather than the pages
+       describing them. Counted with the same rule that endpoint applies, so
+       the number shown here cannot drift from what is actually served. */
+    $pdf_sitemap_url   = url_sitemap_pdf();
+    $pdf_sitemap_count = 0;
+    foreach ($all_indexed as $f) {
+        if (strtolower((string) $f['ext']) !== 'pdf') {
+            continue;
+        }
+        $pdf_abs = resolve_path((string) $f['rel']);
+        if ($pdf_abs !== null && is_file($pdf_abs)) {
+            $pdf_sitemap_count++;
+        }
+    }
+
     /* IndexNow key file URL, if a key exists. */
     $indexnow_key_url = INDEXNOW_KEY !== ''
         ? (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/' . INDEXNOW_KEY . '.txt'
@@ -4367,6 +4974,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $robots .= "\n";
     if (SITEMAP_ENABLED && SITE_INDEXABLE) {
         $robots .= 'Sitemap: ' . $sitemap_url . "\n";
+        // Announced separately so crawlers find the documents themselves, not
+        // only the pages describing them.
+        $robots .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
     }
 
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
@@ -4380,7 +4990,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Crawlers &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -4503,7 +5113,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     <?php endif; ?>
 
     <h2 class="detail-title">Sitemap preview</h2>
-    <p class="detail-desc"><strong><?= (int) $sitemap_count ?></strong> URL<?= $sitemap_count === 1 ? '' : 's' ?> will be included in <a href="<?= e($sitemap_url) ?>">the sitemap</a>.</p>
+    <p class="detail-desc">Folio publishes two sitemaps, and the <code>robots.txt</code> below announces both.</p>
+    <ul class="sitemap-list">
+        <li>
+            <a href="<?= e($sitemap_url) ?>">Page sitemap</a>
+            &mdash; <strong><?= (int) $sitemap_count ?></strong> URL<?= $sitemap_count === 1 ? '' : 's' ?>:
+            the library, its folders, its categories, and a page for every document.
+        </li>
+        <li>
+            <a href="<?= e($pdf_sitemap_url) ?>">Document sitemap</a>
+            &mdash; <strong><?= (int) $pdf_sitemap_count ?></strong> PDF<?= $pdf_sitemap_count === 1 ? '' : 's' ?>:
+            the files themselves, so a search engine indexes what is inside them rather than
+            only the pages describing them.
+        </li>
+    </ul>
     <?php if ($sitemap_sample): ?>
         <p class="detail-desc">First few entries:</p>
         <pre class="hash-out"><code><?php foreach ($sitemap_sample as $u) { echo e($u) . "\n"; } ?></code></pre>
@@ -4523,6 +5146,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     </p>
 
     <h2 class="detail-title">IndexNow</h2>
+    <p class="field-note">
+        Everything in both sitemaps is submitted: the library, its folders, its categories, every
+        document page, every standalone page, and the PDF files themselves.
+    </p>
     <p class="detail-desc">
         IndexNow is a shared protocol (Bing, Yandex, Naver, and others) that pushes URLs to search engines
         instantly instead of waiting for a crawl. Ownership is proven by hosting a text file at your domain
@@ -4541,7 +5168,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             <form method="post" class="inline-form">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                 <input type="hidden" name="op" value="indexnow_submit">
-                <button type="submit" class="btn"<?= SITE_INDEXABLE ? '' : ' disabled' ?>>Submit all URLs to IndexNow</button>
+                <button type="submit" class="btn"<?= SITE_INDEXABLE ? '' : ' disabled' ?>>Submit <?= (int) count(indexnow_url_list($mime_map)) ?> URLs to IndexNow</button>
             </form>
             <form method="post" class="inline-form indexnow-clear-form">
                 <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -4559,7 +5186,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     <pre class="hash-out"><code><?= e($robots) ?></code></pre>
     <p class="detail-facts">The shipped <code>robots.txt</code> in the package also lists AI crawlers individually if you prefer the explicit form.</p>
 </main>
-<script src="<?= e(BASE_URL) ?>assets/js/admin.js"></script>
+<script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script>
 </body>
 </html>
     <?php
@@ -4628,7 +5255,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'analytics') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Analytics &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -4782,7 +5409,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Settings &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -4962,7 +5589,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'users') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Accounts &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -5043,7 +5670,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'users') {
         <div><button type="submit" class="btn">Reset password</button></div>
     </form>
 </main>
-<script src="<?= e(BASE_URL) ?>assets/js/admin.js"></script>
+<script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script>
 </body>
 </html>
     <?php
@@ -5089,7 +5716,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($docs[$key]['label']) ?> &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -5102,9 +5729,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
 <main class="layout">
     <section class="listing">
         <div class="filter-bar">
-            <?php foreach ($docs as $k => $d): ?>
-                <a class="chip chip-cat<?= $k === $key ? ' chip-active' : '' ?>" href="<?= e(BASE_URL) ?>?action=docs&amp;doc=<?= e($k) ?>"><?= e($d['label']) ?></a>
-            <?php endforeach; ?>
+            <div class="filter-chips">
+                <?php foreach ($docs as $k => $d): ?>
+                    <a class="chip chip-cat<?= $k === $key ? ' chip-active' : '' ?>" href="<?= e(BASE_URL) ?>?action=docs&amp;doc=<?= e($k) ?>"><?= e($d['label']) ?></a>
+                <?php endforeach; ?>
+            </div>
         </div>
         <div class="md-content"><?= $body ?></div>
     </section>
@@ -5135,12 +5764,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
         } else {
             $next = [];
             foreach ($slots as $slot => $_meta) {
+                /* A page marked for removal is simply left out of the set
+                   handed to pages_save(), which writes what it is given.
+                   Built-ins cannot be removed. */
+                if (empty($_meta['builtin']) && !empty($_POST['delete'][$slot])) {
+                    continue;
+                }
                 $next[$slot] = [
                     'enabled' => !empty($_POST['enabled'][$slot]),
                     'title'   => (string) ($_POST['title'][$slot] ?? ''),
                     'menu'    => (string) ($_POST['menu'][$slot] ?? ''),
                     'slug'    => (string) ($_POST['slug'][$slot] ?? ''),
                     'body'    => (string) ($_POST['body'][$slot] ?? ''),
+                    'seo_title' => (string) ($_POST['seo_title'][$slot] ?? ''),
+                    'seo_desc'  => (string) ($_POST['seo_desc'][$slot] ?? ''),
+                ];
+            }
+            /* Adding a page creates an empty slot and returns to the form, so
+               the new fields arrive filled in by the browser rather than by
+               JavaScript building a row. */
+            if (($_POST['op'] ?? '') === 'add') {
+                $next[page_slot_new()] = [
+                    'enabled' => false, 'title' => '', 'menu' => '', 'slug' => '', 'body' => '',
+                    'seo_title' => '', 'seo_desc' => '',
                 ];
             }
             $slug_error = '';
@@ -5169,7 +5815,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pages &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -5200,9 +5846,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
     <form method="post" class="pages-form">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <?php foreach ($slots as $slot => $meta): ?>
-            <?php $rec = $pages[$slot] ?? ['enabled' => false, 'title' => '', 'menu' => '', 'body' => '']; ?>
+            <?php $rec = $pages[$slot] ?? ['enabled' => false, 'title' => '', 'menu' => '', 'body' => '', 'seo_title' => '', 'seo_desc' => '']; ?>
             <fieldset class="page-slot">
-                <legend><?= e($meta['default_title']) ?> <span class="page-url"><?= e(str_replace(BASE_URL, '/', url_page($slot))) ?></span></legend>
+                <legend>
+                    <?= e($rec['title'] !== '' ? $rec['title'] : $meta['default_title']) ?>
+                    <span class="page-url"><?= e(str_replace(BASE_URL, '/', url_page($slot))) ?></span>
+                    <?php if (empty($meta['builtin'])): ?>
+                        <label class="page-delete">
+                            <input type="checkbox" name="delete[<?= e($slot) ?>]" value="1">
+                            Delete on save
+                        </label>
+                    <?php endif; ?>
+                </legend>
                 <label class="check-row">
                     <input type="checkbox" name="enabled[<?= e($slot) ?>]" value="1" <?= $rec['enabled'] ? 'checked' : '' ?>>
                     Show this page
@@ -5230,9 +5885,30 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
                     <span>Content <em>(Markdown<?= $slot === 'faq' ? '; use ## for each question' : '' ?>)</em></span>
                     <textarea name="body[<?= e($slot) ?>]" rows="8" spellcheck="true"><?= e($rec['body']) ?></textarea>
                 </label>
+                <label>
+                    <span>Search title</span>
+                    <input type="text" name="seo_title[<?= e($slot) ?>]" maxlength="60"
+                           placeholder="Defaults to the title above"
+                           value="<?= e($rec['seo_title'] ?? '') ?>">
+                    <span class="field-note">Up to 60 characters. Used verbatim as the page title, with no site name appended.</span>
+                </label>
+                <label>
+                    <span>Search description</span>
+                    <textarea name="seo_desc[<?= e($slot) ?>]" maxlength="150" rows="2"
+                              placeholder="Defaults to the opening of the page"><?= e($rec['seo_desc'] ?? '') ?></textarea>
+                    <span class="field-note">Up to 150 characters. The snippet under the link in a search result, and what social cards show.</span>
+                </label>
             </fieldset>
         <?php endforeach; ?>
-        <div><button type="submit" class="btn"<?= $writable ? '' : ' disabled' ?>>Save pages</button></div>
+        <div class="pages-actions">
+            <button type="submit" class="btn"<?= $writable ? '' : ' disabled' ?>>Save pages</button>
+            <button type="submit" name="op" value="add" class="btn btn-ghost"<?= $writable ? '' : ' disabled' ?>>Add a page</button>
+        </div>
+        <p class="field-note">
+            Adding a page saves the form first, so anything typed above is kept. There is no limit
+            on how many pages a library can have. Deleting one removes its content and its address;
+            About and FAQ cannot be deleted because their structured data types are built in.
+        </p>
     </form>
 </main>
 </body>
@@ -5292,7 +5968,7 @@ if (isset($_GET['page'])) {
            . '<meta name="viewport" content="width=device-width, initial-scale=1">'
            . '<meta name="robots" content="noindex">'
            . '<title>Not found &ndash; ' . e(SITE_NAME) . '</title>'
-           . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css"></head>'
+           . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head>'
            . '<body><main class="detail"><h1 class="detail-title">Page not found</h1>'
            . '<p class="detail-desc">There is no page here.</p>'
            . '<p class="detail-actions"><a class="btn" href="' . e(BASE_URL) . '">Back to the library</a></p>'
@@ -5311,6 +5987,21 @@ if (isset($_GET['page'])) {
     $indexable = SITE_INDEXABLE;
     $menu = pages_menu();
 
+    /* Search-result title and description. A standalone page previously had
+       no meta description at all, so search engines invented one from the
+       body. Absent a written description, the opening of the page is used:
+       still derived, but from the top of the page rather than wherever a
+       crawler decided to start. */
+    $seo_title = trim((string) ($rec['seo_title'] ?? ''));
+    $seo_desc  = trim((string) ($rec['seo_desc'] ?? ''));
+    $head_title = $seo_title !== '' ? $seo_title : $title . ' – ' . SITE_NAME;
+    if ($seo_desc !== '') {
+        $page_desc = $seo_desc;
+    } else {
+        $plain = trim(preg_replace('/\s+/', ' ', strip_tags($body_html)) ?? '');
+        $page_desc = $plain !== '' ? str_clip($plain, 150) : SITE_DESCRIPTION;
+    }
+
     /* Structured data for the page. */
     $page_type = $slots[$slot]['type'];
     $page_node = [
@@ -5327,7 +6018,20 @@ if (isset($_GET['page'])) {
             $page_node['mainEntity'] = $faq;
         }
     }
-    $page_ld = [schema_website(), schema_publisher(), $page_node];
+
+    /* Standalone pages carry a breadcrumb like every other public page, so a
+       search result shows the library path rather than a bare URL. */
+    $page_crumb = [
+        '@type' => 'BreadcrumbList',
+        '@id' => $page_url . '#breadcrumb',
+        'itemListElement' => [
+            ['@type' => 'ListItem', 'position' => 1, 'name' => SITE_NAME, 'item' => BASE_URL],
+            ['@type' => 'ListItem', 'position' => 2, 'name' => $title, 'item' => $page_url],
+        ],
+    ];
+    $page_node['breadcrumb'] = ['@id' => $page_url . '#breadcrumb'];
+
+    $page_ld = [schema_website(), schema_publisher(), $page_crumb, $page_node];
 
     header('Content-Type: text/html; charset=UTF-8');
     send_security_headers();
@@ -5340,15 +6044,17 @@ if (isset($_GET['page'])) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title><?= e($title) ?> &ndash; <?= e(SITE_NAME) ?></title>
+<title><?= e($head_title) ?></title>
+<meta name="description" content="<?= e($page_desc) ?>">
 <?php if (!$indexable): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
 <link rel="canonical" href="<?= e($page_url) ?>">
 <meta property="og:type" content="website">
-<meta property="og:title" content="<?= e($title) ?>">
+<meta property="og:title" content="<?= e($seo_title !== '' ? $seo_title : $title) ?>">
+<meta property="og:description" content="<?= e($page_desc) ?>">
 <meta property="og:url" content="<?= e($page_url) ?>">
 <meta name="twitter:card" content="summary">
 <script type="application/ld+json"><?= schema_emit($page_ld) ?></script>
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -5372,8 +6078,8 @@ if (isset($_GET['page'])) {
     <div class="md-content"><?= $body_html ?></div>
 </main>
 <?php render_footer(); ?>
-<script src="<?= e(BASE_URL) ?>assets/js/app.js"></script>
-<?php if (is_admin()): ?><script src="<?= e(BASE_URL) ?>assets/js/admin.js"></script><?php endif; ?>
+<script src="<?= e(asset_url('assets/js/app.js')) ?>" defer></script>
+<?php if (is_admin()): ?><script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script><?php endif; ?>
 </body>
 </html>
     <?php
@@ -5383,6 +6089,167 @@ if (isset($_GET['page'])) {
 /* ------------------------------------------------------------------ */
 /* Diagnostics: environment, addressing, and configuration health     */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Catalogue: reconnect records to files                                */
+/*                                                                      */
+/* Shows what has come adrift and offers the two safe repairs: match by */
+/* content, or attach a record to a file by hand. Neither touches a     */
+/* physical file — FTP owns those.                                      */
+/* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Catalogue: reconnect records to files                                */
+/*                                                                      */
+/* Shows what has come adrift and offers the two safe repairs: match by */
+/* content, or attach a record to a file by hand. Neither touches a     */
+/* physical file — FTP owns those.                                      */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
+    if (!is_admin()) {
+        header('Location: ' . BASE_URL . '?action=login');
+        exit;
+    }
+    $notice = '';
+    $error  = '';
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!csrf_valid()) {
+            $error = 'Invalid security token — reload the page and try again.';
+        } elseif (($_POST['op'] ?? '') === 'reconcile') {
+            @set_time_limit(300);
+            $rep = [];
+            if (reconcile_run(true, $rep)) {
+                $n = count($rep['matched'] ?? []);
+                $notice = $n > 0
+                    ? $n . ' document(s) reconnected to their files. Nothing on disk was changed.'
+                    : 'Nothing could be matched by content. Anything left needs relinking by hand.';
+            } else {
+                $error = 'The catalogue could not be written.';
+            }
+        } elseif (($_POST['op'] ?? '') === 'relink') {
+            $rl_error = '';
+            if (document_relink((string) ($_POST['document_id'] ?? ''),
+                                (string) ($_POST['file'] ?? ''), $rl_error)) {
+                $notice = 'Reconnected. Only the file association changed — the URL, title and '
+                        . 'everything else are as they were.';
+            } else {
+                $error = $rl_error !== '' ? $rl_error : 'That document could not be relinked.';
+            }
+        }
+    }
+
+    $survey  = reconcile_survey();
+    $preview = [];
+    if ($survey['orphans']) {
+        reconcile_run(false, $preview);
+    }
+    $auto = count($preview['matched'] ?? []);
+
+    header('Content-Type: text/html; charset=UTF-8');
+    send_security_headers();
+    ?>
+<!DOCTYPE html>
+<html lang="<?= e(SITE_LANGUAGE) ?>" data-theme="folio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Catalogue &ndash; <?= e(SITE_NAME) ?></title>
+<meta name="robots" content="noindex, nofollow">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
+</head>
+<body>
+<header class="topbar">
+    <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
+    <span class="running-head">Catalogue</span>
+    <nav class="crumbs">
+        <a href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>">Back to the library</a>
+    </nav>
+</header>
+<main class="detail">
+    <div class="md-content">
+        <h1>Catalogue</h1>
+
+        <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
+        <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
+
+        <?php if (!$survey['orphans'] && !$survey['unassociated']): ?>
+            <p>Every document is matched to a file, and every file is catalogued. There is
+               nothing to repair.</p>
+        <?php endif; ?>
+
+        <?php if ($survey['orphans']): ?>
+            <h2>Documents whose file is missing</h2>
+            <p>These records still hold their title, URL, description and everything else. Their
+               file has been renamed, moved, or removed since it was catalogued.</p>
+
+            <?php if ($auto > 0): ?>
+                <form method="post">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="op" value="reconcile">
+                    <p><strong><?= (int) $auto ?></strong> of them can be matched by comparing file
+                       contents. A match is only accepted when exactly one file has the right
+                       contents and exactly one record wants it.</p>
+                    <button class="btn" type="submit">Reconnect <?= (int) $auto ?> document<?= $auto === 1 ? '' : 's' ?></button>
+                </form>
+            <?php else: ?>
+                <p>None can be matched automatically: their contents no longer match any file in
+                   the library, which usually means a document was edited as well as renamed.
+                   Relink those by hand below.</p>
+            <?php endif; ?>
+
+            <table class="diag-table">
+                <?php foreach ($survey['orphans'] as $oid => $orec): ?>
+                    <tr>
+                        <td>
+                            <strong><?= e($orec['title'] !== '' ? $orec['title'] : $orec['slug']) ?></strong><br>
+                            <span class="field-note">was <code><?= e($orec['file_path']) ?></code></span>
+                        </td>
+                        <td>
+                            <?php if ($survey['unassociated']): ?>
+                                <form method="post">
+                                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                                    <input type="hidden" name="op" value="relink">
+                                    <input type="hidden" name="document_id" value="<?= e($oid) ?>">
+                                    <select name="file" required>
+                                        <option value="">Attach to a file&hellip;</option>
+                                        <?php foreach ($survey['unassociated'] as $urel => $_u): ?>
+                                            <option value="<?= e($urel) ?>"><?= e($urel) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                    <button class="btn-small" type="submit">Relink</button>
+                                </form>
+                            <?php else: ?>
+                                <span class="field-note">No uncatalogued file to attach it to.</span>
+                            <?php endif; ?>
+                        </td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        <?php endif; ?>
+
+        <?php if ($survey['unassociated']): ?>
+            <h2>Files not yet catalogued</h2>
+            <p>These are in the library but have no record. Give one a title from the listing to
+               add it, or attach it to a document above.</p>
+            <ul>
+                <?php foreach ($survey['unassociated'] as $urel => $_u): ?>
+                    <li><code><?= e($urel) ?></code></li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+
+        <p class="field-note">Folio never renames, moves, replaces or deletes a file. Everything
+           on this page changes only which file a record points at.</p>
+    </div>
+</main>
+<?php render_footer(); ?>
+</body>
+</html>
+<?php
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     if (!is_admin()) {
         header('Location: ' . BASE_URL . '?action=login');
@@ -5420,6 +6287,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $engine = image_engine();
     $env_checks[] = [
         'label'  => 'image engine',
+        'brief'  => $engine === 'imagick' ? 'Imagick' : ($engine === 'gd' ? 'GD' : ''),
         'status' => $engine === 'none' ? 'warn' : 'ok',
         'note'   => $engine === 'imagick'
             ? 'Imagick — thumbnails, and TIFF, HEIC and AVIF converted for viewing.'
@@ -5434,6 +6302,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $has_finfo = extension_loaded('fileinfo') && class_exists('finfo');
     $env_checks[] = [
         'label'  => 'fileinfo extension',
+        'brief'  => 'Available',
         'status' => $has_finfo ? 'ok' : 'warn',
         'note'   => $has_finfo
             ? 'Available — file types are detected from content, not just the extension.'
@@ -5442,6 +6311,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     ];
     $env_checks[] = [
         'label'  => 'iconv extension',
+        'brief'  => 'Available',
         'status' => function_exists('iconv') ? 'ok' : 'warn',
         'note'   => function_exists('iconv')
             ? 'Available — accented characters are transliterated when building URL slugs.'
@@ -5451,6 +6321,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $opcache_on = function_exists('opcache_get_status') && ini_get('opcache.enable');
     $env_checks[] = [
         'label'  => 'OPcache',
+        'brief'  => 'Enabled',
         'status' => $opcache_on ? 'ok' : 'warn',
         'note'   => $opcache_on
             ? 'Enabled — Folio is one large file, so this saves recompiling it on every request.'
@@ -5477,6 +6348,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         $rewrite = in_array('mod_rewrite', apache_get_modules(), true);
         $url_checks[] = [
             'label'  => 'mod_rewrite',
+            'brief'  => 'Not readable under PHP-FPM or CGI, which is normal',
             'status' => $rewrite ? 'ok' : (PRETTY_URLS ? 'bad' : 'warn'),
             'note'   => $rewrite ? 'Loaded' : 'Not loaded' . (PRETTY_URLS ? ' — clean URLs will 404' : ' — only needed for clean URLs'),
         ];
@@ -5486,6 +6358,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         // an amber flag on a site whose clean URLs work is just noise.
         $url_checks[] = [
             'label'  => 'mod_rewrite',
+            'brief'  => 'Not readable under PHP-FPM or CGI, which is normal',
             'status' => 'ok',
             'note'   => 'Cannot be read from PHP-FPM or CGI, which is normal. It is not a problem:'
                       . ' if your document pages load with clean URLs, mod_rewrite is active.',
@@ -5513,6 +6386,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     if (PRETTY_URLS) {
         $url_checks[] = [
             'label'  => 'Rewrite rules',
+        'brief'  => 'Present, including the PDF access rule',
             'status' => $has_router ? 'ok' : 'warn',
             'note'   => $has_router
                 ? 'Present in .htaccess'
@@ -5565,6 +6439,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $pepper_set = defined('FOLIO_AUTH_PEPPER') && FOLIO_AUTH_PEPPER !== '';
     $cfg_checks[] = [
         'label'  => 'password pepper',
+        'brief'  => 'Set',
         'status' => $pepper_set ? 'ok' : 'warn',
         'note'   => $pepper_set ? 'Set — hashes are peppered' : 'Not set — optional, but recommended (FOLIO_AUTH_PEPPER in config.php)',
     ];
@@ -5576,6 +6451,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     ];
     $cfg_checks[] = [
         'label'  => 'indexability',
+        'brief'  => SITE_INDEXABLE ? 'Public' : 'Not indexed',
         'status' => SITE_INDEXABLE ? 'ok' : 'warn',
         'note'   => SITE_INDEXABLE ? 'Public — search and AI crawlers may index the library' : 'Non-indexable — pages emit noindex; sitemap and llms.txt return 404',
     ];
@@ -5604,6 +6480,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $exclude_patterns = (array) EXCLUDE_PATTERNS;
     $cfg_checks[] = [
         'label'  => 'excluded patterns',
+        'brief'  => 'None',
         'status' => 'ok',
         'note'   => $exclude_patterns
             ? count($exclude_patterns) . ' pattern(s): ' . implode(', ', array_map('strval', $exclude_patterns))
@@ -5619,6 +6496,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $rewrite_env = !empty($_SERVER['FOLIO_REWRITE']) || !empty($_SERVER['REDIRECT_FOLIO_REWRITE']);
     $cfg_checks[] = [
         'label'  => 'Clean URLs',
+        'brief'  => 'Active',
         'status' => PRETTY_URLS ? 'ok' : 'warn',
         'note'   => PRETTY_URLS
             ? 'Active. mod_rewrite is working and the shipped .htaccess is installed.'
@@ -5655,13 +6533,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     if (!TOOLS_ENABLED) {
         $tools_status = 'ok';
         $tools_note   = 'Turned off by TOOLS_ENABLED in config.php. Folio behaves as though none were installed.';
+        $tools_brief  = 'Turned off in config.php';
     } elseif (!$found) {
         $tools_status = 'ok';
+        $tools_brief  = 'None found';
         $tools_note   = 'None found. Everything works without them; OCR, text search over scans, and server-rendered PDF previews are simply unavailable.'
             . ($homes ? ' Searched the system paths plus ' . implode(', ', $homes)
                 . ' (including .local/bin and any virtual environment). Name a tool in TOOL_PATHS if it lives elsewhere.' : '');
     } else {
         $tools_status = 'ok';
+        $tools_brief  = count($found) . ' found' . ($absent ? ', ' . count($absent) . ' missing (' . implode(', ', $absent) . ')' : '');
         $tools_note   = count($found) . ' found: ' . implode(', ', $found)
             . ($absent ? '. Not installed: ' . implode(', ', $absent) . '.' : '.')
             . ($absent && $homes
@@ -5679,6 +6560,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
             ? 'branding/ folder' : '');
     $cfg_checks[] = [
         'label'  => 'site icon',
+        'brief'  => $icon_src !== '' ? 'Your own icon, from the ' . $icon_src : 'Folio default',
         'status' => 'ok',
         'note'   => $icon_src !== ''
             ? 'Your own icon, from the ' . $icon_src . '.'
@@ -5688,7 +6570,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
               . 'would be overwritten by the next update.',
     ];
 
-    $cfg_checks[] = ['label' => 'external utilities', 'status' => $tools_status, 'note' => $tools_note];
+    $cfg_checks[] = [
+        'label'  => 'external utilities',
+        'brief'  => $tools_brief,
+        'status' => $tools_status,
+        'note'   => $tools_note,
+    ];
 
     /* Catalogue health. This is a survey only — it never writes, and never
        hashes a file unless something is already known to be missing, so
@@ -5702,6 +6589,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     } else {
         $cat_status = $n_orphan > 0 ? 'warn' : 'ok';
         $parts = [];
+
+        /* Run the match preview once and use it for both messages below. It
+           was previously computed after the catalogue note, which meant that
+           note promised content matching would reconnect these records even
+           when the preview had already established that it could not. */
+        $recon_preview = [];
+        $m = $a = 0;
+        if ($n_orphan > 0) {
+            reconcile_run(false, $recon_preview);
+            $m = count($recon_preview['matched'] ?? []);
+            $a = count($recon_preview['ambiguous'] ?? []);
+        }
+
         if ($n_orphan > 0) {
             $names = [];
             foreach (array_slice($survey['orphans'], 0, 5, true) as $rec) {
@@ -5709,8 +6609,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
             }
             $parts[] = $n_orphan . ' document(s) whose file is missing: ' . implode('; ', $names)
                      . ($n_orphan > 5 ? ' and others' : '')
-                     . '. If you renamed or moved them over FTP, run reconciliation and Folio will '
-                     . 'match them by content and keep their URLs.';
+                     . '. ' . ($m > 0
+                        ? 'Open Catalogue (?action=catalogue): ' . $m . ' can be matched by content, '
+                          . 'which reconnects them and keeps their existing URLs.'
+                        : 'None can be matched by content, so open Catalogue (?action=catalogue) to '
+                          . 'relink them by hand or remove them.');
         }
         if ($n_new > 0) {
             $parts[] = $n_new . ' file(s) not yet catalogued: '
@@ -5723,21 +6626,32 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $cfg_checks[] = ['label' => 'catalogue', 'status' => $cat_status, 'note' => $cat_note];
 
     if ($n_orphan > 0) {
-        $preview = [];
-        reconcile_run(false, $preview);
-        $m = count($preview['matched'] ?? []);
-        $a = count($preview['ambiguous'] ?? []);
+        $recon = [];
+        if ($m > 0) {
+            $recon[] = $m . ' document(s) can be reconnected automatically by matching file contents.';
+        }
+        if ($a > 0) {
+            $recon[] = $a . ' case(s) are ambiguous and will be left alone: several files share the '
+                     . 'same contents, or several records want the same file. Relink those by hand.';
+        }
+        if ($m === 0 && $a === 0) {
+            /* Orphans exist but no content match was found, so the files were
+               deleted rather than moved, or were replaced by different
+               content. Nothing can be applied; saying "open Catalogue to
+               apply it" here would name an action that does not exist. */
+            $recon[] = 'No document can be matched by content, so these files were deleted rather '
+                     . 'than renamed, or were replaced with different content. Open Catalogue '
+                     . '(?action=catalogue) to relink them to a file by hand, or to remove records '
+                     . 'you no longer want.';
+        } else {
+            $recon[] = 'Open Catalogue (?action=catalogue) to review and apply.';
+        }
+        $recon[] = 'Folio never renames, moves, or deletes anything on disk; only its own catalogue changes.';
+
         $cfg_checks[] = [
             'label'  => 'reconciliation',
             'status' => $a > 0 ? 'warn' : 'ok',
-            'note'   => ($m > 0
-                    ? $m . ' document(s) can be reconnected automatically by matching file contents. '
-                    : 'No document can be matched automatically. ')
-                . ($a > 0
-                    ? $a . ' case(s) are ambiguous and will be left alone: several files share the '
-                      . 'same contents, or several records want the same file. Relink those by hand. '
-                    : '')
-                . 'Folio never renames, moves, or deletes anything on disk; only its own catalogue changes.',
+            'note'   => implode(' ', $recon),
         ];
     }
 
@@ -5761,12 +6675,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
                 . ($usable === '' ? 'No requested language dataset is installed. ' : '')
                 . 'OCR is unavailable until this is resolved; nothing else is affected.';
         }
-        $cfg_checks[] = ['label' => 'OCR', 'status' => $ocr_status, 'note' => $ocr_note];
+        $cfg_checks[] = [
+            'label'  => 'OCR',
+            'brief'  => 'Ready — ' . $usable,
+            'status' => $ocr_status,
+            'note'   => $ocr_note,
+        ];
     }
 
     if (tool_have('pdftocairo') || tool_have('pdftoppm')) {
         $cfg_checks[] = [
             'label'  => 'PDF rasteriser',
+        'brief'  => 'Poppler present',
             'status' => 'ok',
             'note'   => 'Poppler is present, so PDF pages can be rendered for previews and thumbnails.',
         ];
@@ -5783,6 +6703,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         : 'unknown';
     $cfg_checks[] = [
         'label'  => 'PDF flip reader',
+        'brief'  => 'pdf.js ' . $pdfjs_ver,
         'status' => $pdfjs_ok ? 'ok' : 'bad',
         'note'   => $pdfjs_ok
             ? 'pdf.js ' . $pdfjs_ver . ' present in lib/pdfjs/. If the reader does not start, confirm your server sends .mjs as JavaScript and .wasm as application/wasm.'
@@ -5792,6 +6713,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $parsedown_ok = is_file(__DIR__ . '/lib/parsedown/Parsedown.php');
     $cfg_checks[] = [
         'label'  => 'Markdown rendering',
+        'brief'  => 'Parsedown ' . $parsedown_ver,
         'status' => $parsedown_ok ? 'ok' : 'bad',
         'note'   => $parsedown_ok
             ? 'Parsedown ' . $parsedown_ver . ' present in lib/parsedown/.'
@@ -5801,6 +6723,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     $pdf_signing_key_set = FOLIO_URL_SIGNING_KEY !== '';
     $cfg_checks[] = [
         'label'  => 'PDF URL signing key',
+        'brief'  => 'Set',
         'status' => $pdf_signing_key_set ? 'ok' : 'warn',
         'note'   => $pdf_signing_key_set
             ? 'Set — "viewer" pdf_access links can be signed'
@@ -5847,6 +6770,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     }
     $cfg_checks[] = [
         'label'  => 'Blurred preview for hidden PDFs',
+        'brief'  => 'Available',
         'status' => $imagick_ok && $ghostscript_ok ? 'ok' : 'warn',
         'note'   => $imagick_ok && $ghostscript_ok
             ? 'Available — automatic blurred first-page previews can be generated.'
@@ -5893,7 +6817,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Diagnostics &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -5914,18 +6838,66 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         <p class="msg msg-ok">All checks passed.</p>
     <?php endif; ?>
 
-    <?php foreach ($groups as [$g_label, $g_checks]): ?>
-        <h2 class="detail-title"><?= e($g_label) ?></h2>
-        <table class="accounts diag-table">
-            <?php foreach ($g_checks as $c): ?>
-                <tr>
-                    <td><?= e((string) $c['label']) ?></td>
-                    <td><?= $badge((string) $c['status']) ?></td>
-                    <td class="detail-facts"><?= e((string) $c['note']) ?></td>
-                </tr>
+    <?php
+    /* Anything not OK, gathered first: the reason to open this page is almost
+       always to find what is wrong, not to read thirty-five passing rows. */
+    $attention = [];
+    foreach ($groups as [$g_label, $g_checks]) {
+        foreach ($g_checks as $c) {
+            if ($c['status'] !== 'ok') {
+                $c['group'] = $g_label;
+                $attention[] = $c;
+            }
+        }
+    }
+    $tabs = [];
+    if ($attention) {
+        $tabs[] = ['Needs attention', $attention, count($attention)];
+    }
+    foreach ($groups as [$g_label, $g_checks]) {
+        $tabs[] = [$g_label, $g_checks, count($g_checks)];
+    }
+
+    /* A passing check states the finding and stops. The guidance about how to
+       change or fix a thing is only useful when something is wrong, so it is
+       carried in 'note' and shown then; 'brief' is the resting state. */
+    $note_of = function (array $c): string {
+        return ($c['status'] === 'ok' && isset($c['brief']) && $c['brief'] !== '')
+            ? (string) $c['brief']
+            : (string) $c['note'];
+    };
+    ?>
+
+    <div class="diag-tabs" id="diag-tabs">
+        <div class="diag-tablist" role="tablist">
+            <?php foreach ($tabs as $i => [$t_label, $t_checks, $t_count]): ?>
+                <button type="button" role="tab"
+                        class="diag-tab<?= $i === 0 ? ' is-active' : '' ?><?= $t_label === 'Needs attention' ? ' diag-tab-alert' : '' ?>"
+                        data-diag-tab="<?= (int) $i ?>"
+                        aria-selected="<?= $i === 0 ? 'true' : 'false' ?>">
+                    <?= e($t_label) ?> <span class="diag-tab-count"><?= (int) $t_count ?></span>
+                </button>
             <?php endforeach; ?>
-        </table>
-    <?php endforeach; ?>
+        </div>
+
+        <?php foreach ($tabs as $i => [$t_label, $t_checks, $t_count]): ?>
+            <section class="diag-panel<?= $i === 0 ? ' is-active' : '' ?>" data-diag-panel="<?= (int) $i ?>" role="tabpanel">
+                <h2 class="detail-title diag-panel-heading"><?= e($t_label) ?></h2>
+                <table class="accounts diag-table">
+                    <?php foreach ($t_checks as $c): ?>
+                        <tr class="diag-row diag-row-<?= e((string) $c['status']) ?>">
+                            <td>
+                                <?= e((string) $c['label']) ?>
+                                <?php if (isset($c['group'])): ?><span class="diag-row-group"><?= e((string) $c['group']) ?></span><?php endif; ?>
+                            </td>
+                            <td><?= $badge((string) $c['status']) ?></td>
+                            <td class="detail-facts"><?= e($note_of($c)) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+            </section>
+        <?php endforeach; ?>
+    </div>
 
     <h2 class="detail-title">Clean-URL rewrite probe</h2>
     <p class="detail-desc">
@@ -5985,7 +6957,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'render') {
        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
        . '<meta name="robots" content="noindex">'
        . site_icon_tags()
-              . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css">'
+              . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css?v=' . rawurlencode(FOLIO_VERSION) . '">'
        . '</head><body class="md-body"><div class="md-content">'
        . render_markdown($abs)
        . '</div></body></html>';
@@ -6037,11 +7009,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'thumb') {
 
     $cache = thumb_build($rel_thumb, $abs, $width);
     if ($cache === null) {
-        // No engine, unsupported format, or a conversion that failed. The
-        // original is always a correct answer, so send the visitor there
-        // rather than showing them a broken image.
-        header('Location: ' . url_raw($rel_thumb), true, 302);
-        exit;
+        // No engine, unsupported format, or a conversion that failed.
+        //
+        // Redirecting to the original is only right when the original is
+        // itself something an <img> can display. For a PDF it is not: the
+        // browser receives a PDF where it expected an image and draws a
+        // broken-image icon — the very thing this fallback exists to avoid.
+        // A 404 lets the caller fall back to its own placeholder instead.
+        $thumb_ext = strtolower(pathinfo($rel_thumb, PATHINFO_EXTENSION));
+        if (in_array($thumb_ext, ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'], true)) {
+            header('Location: ' . url_raw($rel_thumb), true, 302);
+            exit;
+        }
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=UTF-8');
+        exit('No preview available');
     }
 
     $etag = '"' . substr(basename($cache), 0, 32) . '"';
@@ -6082,7 +7064,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'flipbook') {
     $back_url   = url_view($rel_flip);
 
     header('Content-Type: text/html; charset=UTF-8');
-    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'");
+    header("Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self'" . inline_css_hash() . "; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self'; connect-src 'self'; frame-ancestors 'self'; form-action 'self'; base-uri 'self'; object-src 'none'");
     header('X-Content-Type-Options: nosniff');
     header('Referrer-Policy: strict-origin-when-cross-origin');
     header('X-Frame-Options: SAMEORIGIN');
@@ -6094,7 +7076,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'flipbook') {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title><?= e($flip_title) ?> &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 <link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/flipbook.css">
 </head>
 <body class="flip-body">
@@ -6112,7 +7094,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'flipbook') {
 <main class="flip-stage" id="flip-stage" data-pdf-url="<?= e($flip_url) ?>" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/">
     <p class="flip-status" id="flip-status">Loading&hellip;</p>
 </main>
-<script type="module" src="<?= e(BASE_URL) ?>assets/js/flipbook.js"></script>
+<script type="module" src="<?= e(asset_url('assets/js/flipbook.js')) ?>"></script>
 </body>
 </html>
     <?php
@@ -6181,11 +7163,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
             header('Content-Disposition: attachment; filename="' . str_replace(['"', "\r", "\n"], '', basename($abs)) . '"');
             header("Content-Security-Policy: default-src 'none'; sandbox");
             header('X-Robots-Tag: noindex, nofollow');
+        } elseif (in_array($ext, ['pdf', 'txt', 'md'], true)) {
+            // Stated explicitly rather than left to the default. Documents are
+            // the content of the library: a scanned certificate a search engine
+            // cannot see is a document nobody will find, and following the
+            // links inside a PDF is how a crawler discovers the rest.
+            header('X-Robots-Tag: index, follow');
         }
-        // Documents are deliberately left indexable. They are the content of
-        // the library, and a scanned certificate a search engine cannot see is
-        // a document nobody will find. The detail page carries the canonical
-        // URL, so the record and the file do not compete.
         if ($ext === 'svg') {
             header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
         }
@@ -6229,6 +7213,59 @@ if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
 /* ------------------------------------------------------------------ */
 /* XML sitemap: directories, file pages, and category archives         */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* PDF sitemap                                                          */
+/*                                                                      */
+/* A sitemap of the document files themselves, separate from the one    */
+/* listing record pages. Google indexes PDFs as documents in their own  */
+/* right, and a scanned certificate that is never crawled is a document */
+/* nobody finds. Every PDF in the library is listed.                    */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'sitemap_pdf') {
+    if (!SITEMAP_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    $all = index_all_files($mime_map);
+    $entries = [];
+    foreach ($all as $f) {
+        if (strtolower((string) $f['ext']) !== 'pdf') {
+            continue;
+        }
+        $rel = (string) $f['rel'];
+        // Every PDF in the library is listed. Files matching EXCLUDE_PATTERNS
+        // never reach this loop at all: index_all_files() has already dropped
+        // them, and they return 404 on every route, so listing them would only
+        // send crawlers to a dead address.
+        $abs = resolve_path($rel);
+        if ($abs === null || !is_file($abs)) {
+            continue;
+        }
+        $entries[] = [
+            'loc'     => url_raw($rel),
+            'lastmod' => (int) $f['lastmod'],
+            'page'    => url_view($rel),
+            'title'   => (string) $f['title'],
+        ];
+    }
+
+    header('Content-Type: application/xml; charset=UTF-8');
+    send_public_cache_headers(900);
+    echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+    echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+    foreach ($entries as $e) {
+        echo "  <url>\n";
+        echo '    <loc>' . htmlspecialchars($e['loc'], ENT_XML1) . "</loc>\n";
+        if ($e['lastmod'] > 0) {
+            echo '    <lastmod>' . date('c', $e['lastmod']) . "</lastmod>\n";
+        }
+        echo "  </url>\n";
+    }
+    echo '</urlset>';
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
     if (!SITEMAP_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
@@ -6506,7 +7543,7 @@ if (($_GET['action'] ?? '') === 'logout' || ($_POST['action'] ?? '') === 'logout
            . '<meta name="viewport" content="width=device-width, initial-scale=1">'
            . '<meta name="robots" content="noindex">'
            . '<title>Log out &ndash; ' . e(SITE_NAME) . '</title>'
-           . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css"></head>'
+           . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head>'
            . '<body><main class="detail"><h1 class="detail-title">Confirm sign out</h1>'
            . '<p class="detail-desc">Signing out needs to be confirmed here rather than through a '
            . 'plain link, so that another site cannot end your session for you.</p>'
@@ -6596,7 +7633,7 @@ if (($_GET['action'] ?? '') === 'login'
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Log in &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="noindex, nofollow">
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -6687,6 +7724,77 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST'
     ]));
 }
 
+/* ------------------------------------------------------------------ */
+/* Compress a PDF                                                       */
+/*                                                                      */
+/* Produces a smaller copy and reports the saving. It does not replace  */
+/* anything: the original stays exactly as uploaded, and putting the    */
+/* smaller file in its place is done over FTP, deliberately.            */
+/* ------------------------------------------------------------------ */
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'compress') {
+    header('Content-Type: application/json');
+    if (!is_admin()) {
+        http_response_code(403);
+        exit(json_encode(['ok' => false, 'error' => 'Not authorised']));
+    }
+    if (!csrf_valid()) {
+        http_response_code(403);
+        exit(json_encode(['ok' => false, 'error' => 'Invalid security token — reload the page']));
+    }
+    $rel_c = (string) ($_POST['file'] ?? '');
+    $abs_c = resolve_path($rel_c);
+    if ($abs_c === null || !is_file($abs_c)) {
+        http_response_code(404);
+        exit(json_encode(['ok' => false, 'error' => 'File not found']));
+    }
+    $rel_c = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs_c, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if (is_excluded(basename($rel_c), $rel_c)) {
+        http_response_code(404);
+        exit(json_encode(['ok' => false, 'error' => 'File not found']));
+    }
+
+    @set_time_limit(360);
+    $report = [];
+    $made = pdf_compress($rel_c, $abs_c, $report);
+    exit(json_encode([
+        'ok'        => $made !== null,
+        'error'     => $made === null ? $report['message'] : null,
+        'message'   => $made !== null ? $report['message'] : null,
+        'saved_pct' => $report['saved_pct'],
+        'download'  => $made !== null
+            ? BASE_URL . '?action=compressed&file=' . rawurlencode($rel_c)
+            : null,
+    ]));
+}
+
+/* Deliver a prepared compressed copy, for the administrator to download and
+   put in place over FTP. Admin-only: it is not a second public address for
+   the document. */
+if (isset($_GET['action']) && $_GET['action'] === 'compressed') {
+    if (!is_admin()) {
+        http_response_code(403);
+        exit('Not authorised');
+    }
+    $rel_d = (string) ($_GET['file'] ?? '');
+    $abs_d = resolve_path($rel_d);
+    if ($abs_d === null || !is_file($abs_d)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel_d = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs_d, strlen((string) realpath(BASE_DIR))), '/\\'));
+    $copy = derived_path(COMPRESS_DIR, $rel_d, $abs_d, 'pdf');
+    if (!is_file($copy)) {
+        http_response_code(404);
+        exit('No compressed copy has been prepared for this document.');
+    }
+    header('Content-Type: application/pdf');
+    header('Content-Length: ' . (string) filesize($copy));
+    header('Content-Disposition: attachment; filename="' . basename($rel_d) . '"');
+    header('X-Robots-Tag: noindex, nofollow');
+    readfile($copy);
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ocr') {
     header('Content-Type: application/json');
     if (!is_admin()) {
@@ -6762,6 +7870,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     $tags_raw = (string) ($_POST['tags'] ?? '');
     $transcript = trim((string) ($_POST['transcript'] ?? ''));
     $language   = trim((string) ($_POST['language'] ?? ''));
+    $doc_date   = str_clip(trim((string) ($_POST['doc_date'] ?? '')), 60);
+    /* Search-result title and description, kept apart from the ones shown on
+       the page. A title that reads well above a document is often not the one
+       that reads well in a result list, and a description written for a
+       reader is often longer than a result will show. The limits are the
+       lengths Google displays before truncating. */
+    $seo_title = str_clip(trim((string) ($_POST['seo_title'] ?? '')), 60);
+    $seo_desc  = str_clip(trim((string) ($_POST['seo_desc'] ?? '')), 150);
     if (function_exists('mb_substr')) {
         $title      = mb_substr($title, 0, 200);
         $desc       = mb_substr($desc, 0, 500);
@@ -6813,11 +7929,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $cat, $tags, $document_type, $transcript, $pdf_access, $language, $placeholder_image
+        $rel, $title, $desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $language, $placeholder_image,
+        $seo_title, $seo_desc
     ): array {
+        // Every field is checked here: a record is only cleared when the
+        // administrator has genuinely emptied all of them. Omitting one would
+        // both discard it on save and stop an otherwise-empty record being
+        // cleared.
         if ($title === '' && $desc === '' && $cat === '' && !$tags
-            && $document_type === '' && $transcript === '' && $pdf_access === 'public' && $language === ''
-            && $placeholder_image === ''
+            && $document_type === '' && $doc_date === '' && $transcript === ''
+            && $pdf_access === 'public' && $language === ''
+            && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
         ) {
             $meta = meta_put_record($meta, $rel, null);
         } else {
@@ -6829,6 +7951,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'category' => $cat,
                 'tags' => $tags,
                 'document_type' => $document_type,
+                'doc_date' => $doc_date,
+                'seo_title' => $seo_title,
+                'seo_desc' => $seo_desc,
                 'transcript' => $transcript,
                 'pdf_access' => $pdf_access,
                 'language' => $language,
@@ -6886,11 +8011,15 @@ if (isset($_GET['cat'])) {
             $cat_name = $name;
             break;
         }
-        if (slugify($name) === $slug) {
+        /* Addresses issued before 1.16.1 carried a hash suffix on every
+           category. They are indexed and sit in existing sitemaps, so they
+           redirect to the current address rather than 404. The bare slugified
+           name is matched too, for links predating the suffix entirely. */
+        if (category_slug_legacy($name) === $slug || slugify($name) === $slug) {
             $legacy_matches[] = $name;
         }
     }
-    if ($cat_name === '' && count($legacy_matches) === 1) {
+    if ($cat_name === '' && count(array_unique($legacy_matches)) === 1) {
         header('Location: ' . url_category($legacy_matches[0]), true, 301);
         exit;
     }
@@ -6903,7 +8032,7 @@ if (isset($_GET['cat'])) {
            . '<title>Category not found &ndash; ' . e(SITE_NAME) . '</title>'
            . '<meta name="robots" content="noindex">'
            . site_icon_tags()
-                      . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css"></head><body>'
+                      . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head><body>'
            . '<header class="topbar"><h1><a class="site-home" href="' . e(BASE_URL) . '">' . e(SITE_NAME) . '</a></h1></header>'
            . '<main class="detail"><h2 class="detail-title">No such category</h2>'
            . '<p class="detail-desc">That category does not exist in this library.</p>'
@@ -6986,7 +8115,7 @@ if (isset($_GET['cat'])) {
 <meta property="og:url" content="<?= e($cat_url) ?>">
 <meta name="twitter:card" content="summary">
 <script type="application/ld+json"><?= schema_emit($cat_ld) ?></script>
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -7000,9 +8129,11 @@ if (isset($_GET['cat'])) {
 <main class="layout">
     <section class="listing">
         <div class="filter-bar">
-            <?php foreach (array_keys($reg) as $name): ?>
-                <a class="chip chip-cat<?= $name === $cat_name ? ' chip-active' : '' ?>" href="<?= e(url_category($name)) ?>"><?= e($name) ?> <span class="chip-count"><?= (int) $reg[$name] ?></span></a>
-            <?php endforeach; ?>
+            <div class="filter-chips">
+                <?php foreach (array_keys($reg) as $name): ?>
+                    <a class="chip chip-cat<?= $name === $cat_name ? ' chip-active' : '' ?>" href="<?= e(url_category($name)) ?>"><?= e($name) ?> <span class="chip-count"><?= (int) $reg[$name] ?></span></a>
+                <?php endforeach; ?>
+            </div>
         </div>
         <h2 class="archive-title"><?= e($cat_name) ?></h2>
         <p class="archive-note"><?= count($cat_files) ?> document<?= count($cat_files) === 1 ? '' : 's' ?><?php if ($latest > 0): ?>, most recent <?= e(date('j F Y', $latest)) ?><?php endif; ?></p>
@@ -7012,7 +8143,7 @@ if (isset($_GET['cat'])) {
             <?php foreach ($cat_files as $f): ?>
                 <?php $label = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME); ?>
                 <tr class="row-file">
-                    <td>
+                    <td data-sort-name="<?= e(mb_strtolower($label !== '' ? $label : $f['name'])) ?>">
                         <div class="file-meta">
                             <a class="file-title" href="<?= e($f['view']) ?>"><?= e($label) ?></a>
                             <?php if ($f['desc'] !== ''): ?><span class="file-desc"><?= e($f['desc']) ?></span><?php endif; ?>
@@ -7099,7 +8230,7 @@ if (isset($_GET['view'])) {
             . '<title>Not found &ndash; ' . e(SITE_NAME) . '</title>'
             . '<meta name="robots" content="noindex">'
             . site_icon_tags()
-                        . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css"></head><body>'
+                        . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head><body>'
             . '<main class="detail"><h2 class="detail-title">Not found</h2>'
             . '<p class="detail-desc">No such document in this library.</p>'
             . '<p class="detail-actions"><a class="btn" href="' . e(BASE_URL) . '">Back to the library</a></p>'
@@ -7138,9 +8269,19 @@ if (isset($_GET['view'])) {
         }
     }
     $view  = url_view($rel);
-    $meta_desc = $desc !== ''
-        ? $desc
-        : trim($title . ($cat !== '' ? ' — ' . $cat : '') . ' (' . strtoupper($ext) . ', ' . $size . ')');
+    /* Search-result title and description. When set they are used verbatim
+       and the site name is not appended, because the field exists precisely
+       so the whole tag can be controlled. Empty falls back to what the page
+       itself shows, which is what every earlier release did. */
+    $seo_title = trim((string) ($m['seo_title'] ?? ''));
+    $seo_desc  = trim((string) ($m['seo_desc'] ?? ''));
+
+    $head_title = $seo_title !== '' ? $seo_title : $title . ' – ' . SITE_NAME;
+    $meta_desc  = $seo_desc !== ''
+        ? $seo_desc
+        : ($desc !== ''
+            ? $desc
+            : trim($title . ($cat !== '' ? ' — ' . $cat : '') . ' (' . strtoupper($ext) . ', ' . $size . ')'));
 
     $file_node = schema_file($rel, $abs, $meta, $mime_map, true);
     $page_node = [
@@ -7174,13 +8315,13 @@ if (isset($_GET['view'])) {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title><?= e($title) ?> &ndash; <?= e(SITE_NAME) ?></title>
+<title><?= e($head_title) ?></title>
 <meta name="description" content="<?= e($meta_desc) ?>">
 <link rel="canonical" href="<?= e($view) ?>">
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="<?= $kind === 'image' ? 'website' : 'article' ?>">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
-<meta property="og:title" content="<?= e($title) ?>">
+<meta property="og:title" content="<?= e($seo_title !== '' ? $seo_title : $title) ?>">
 <meta property="og:description" content="<?= e($meta_desc) ?>">
 <meta property="og:url" content="<?= e($view) ?>">
 <?php if ($kind === 'image'): ?>
@@ -7193,7 +8334,7 @@ if (isset($_GET['view'])) {
 <meta name="twitter:title" content="<?= e($title) ?>">
 <meta name="twitter:description" content="<?= e($meta_desc) ?>">
 <script type="application/ld+json"><?= schema_emit($ld) ?></script>
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -7220,12 +8361,21 @@ if (isset($_GET['view'])) {
             <?php foreach ($tags as $t): ?><span class="chip chip-tag">#<?= e($t) ?></span><?php endforeach; ?>
         </p>
         <?php endif; ?>
-        <?php if ($document_type_label !== ''): ?>
-        <div class="document-type">
-            <span class="label">Document type</span>
-            <span><?= e($document_type_label) ?></span>
-        </div>
-        <?php endif; ?>
+        <?php
+        /* One line of facts, above the document rather than stranded between
+           it and the buttons. The document's own date is shown when it has
+           one: for an archive the file's modification time says when the scan
+           was made, which is rarely what the reader wants to know. */
+        $doc_date  = document_date_parse((string) ($m['doc_date'] ?? ''));
+        $facts     = [];
+        if ($document_type_label !== '') { $facts[] = e($document_type_label); }
+        $facts[]   = e(strtoupper($ext));
+        $facts[]   = e($size);
+        $facts[]   = $doc_date['display'] !== ''
+            ? e($doc_date['display'])
+            : 'Updated ' . e(date('j F Y', $mtime));
+        ?>
+        <p class="detail-facts detail-facts-lead"><?= implode(' <span class="sep">&middot;</span> ', $facts) ?></p>
         <figure class="detail-media">
             <?php if ($pdf_is_hidden): ?>
                 <?php if ($hidden_preview_url !== ''): ?>
@@ -7248,9 +8398,6 @@ if (isset($_GET['view'])) {
                         <canvas class="pdf-preview-canvas" aria-label="First page of <?= e($title) ?>"></canvas>
                         <p class="pdf-preview-status">Loading preview&hellip;</p>
                     </div>
-                    <p class="pdf-preview-actions">
-                        <a class="btn btn-ghost" href="<?= e(url_flipbook($rel)) ?>">Read in flip view</a>
-                    </p>
                 </div>
             <?php elseif ($kind === 'md'): ?>
                 <div class="md-content"><?= render_markdown($abs) ?></div>
@@ -7258,11 +8405,9 @@ if (isset($_GET['view'])) {
                 <p><a class="btn" href="<?= e($raw) ?>">Download file</a></p>
             <?php endif; ?>
         </figure>
-        <p class="detail-facts">
-            <?= e(strtoupper($ext)) ?> &middot; <?= e($size) ?> &middot; Updated <?= e(date('j F Y', $mtime)) ?>
-        </p>
         <p class="detail-actions">
-            <?php if ($kind !== 'other' && !$pdf_is_hidden): ?><button id="btn-print" class="btn">Print</button><?php endif; ?>
+            <?php if ($kind === 'pdf' && !$pdf_is_hidden): ?><a class="btn" href="<?= e(url_flipbook($rel)) ?>">Flip view</a><?php endif; ?>
+            <?php if ($kind !== 'other' && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
             <?php if ($pdf_full_access): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
         </p>
         <?php if ($transcript !== ''): ?>
@@ -7277,7 +8422,7 @@ if (isset($_GET['view'])) {
 <?php if (!$pdf_is_hidden): ?>
 <iframe id="print-frame" class="print-frame" title="print helper" data-kind="<?= e($kind) ?>" data-url="<?= e($raw) ?>"></iframe>
 <?php endif; ?>
-<script src="<?= e(BASE_URL) ?>assets/js/view.js"></script>
+<script src="<?= e(asset_url('assets/js/view.js')) ?>" defer></script>
 </body>
 </html>
     <?php
@@ -7295,7 +8440,7 @@ if ($abs_dir === null || !is_dir($abs_dir)) {
     send_security_headers();
     exit('<!DOCTYPE html><html lang="' . e(SITE_LANGUAGE) . '"><head><meta charset="utf-8">'
         . '<meta name="robots" content="noindex"><title>Folder not found &ndash; ' . e(SITE_NAME) . '</title>'
-        . '<link rel="stylesheet" href="' . e(BASE_URL) . 'assets/css/style.css"></head><body>'
+        . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head><body>'
         . '<main class="detail"><h2 class="detail-title">Folder not found</h2>'
         . '<p class="detail-actions"><a class="btn" href="' . e(BASE_URL) . '">Back to the library</a></p>'
         . '</main></body></html>');
@@ -7336,7 +8481,12 @@ foreach (scandir($abs_dir) as $entry) {
             'rel'  => $rel_entry,
             'ext'  => $ext,
             'size' => human_size((int) filesize($abs_entry)),
+            // Raw values for sorting. "1.5 MB" and "9 B" do not compare as
+            // strings, and a displayed date like "Oktober 1998" cannot be
+            // ordered without its machine form.
+            'bytes' => (int) filesize($abs_entry),
             'mtime' => date('Y-m-d H:i', (int) filemtime($abs_entry)),
+            'mtime_ts' => (int) filemtime($abs_entry),
             'previewable' => $previewable,
             'kind' => $ext === 'pdf' ? 'pdf' : ($ext === 'md' ? 'md' : (isset($mime_map[$ext]) && $ext !== 'txt' ? 'image' : 'other')),
             'title' => $m['title'] ?? '',
@@ -7345,6 +8495,10 @@ foreach (scandir($abs_dir) as $entry) {
             'category' => $m['category'] ?? '',
             'tags'  => $m['tags'] ?? [],
             'document_type' => $m['document_type'] ?? '',
+
+            'doc_date' => $m['doc_date'] ?? '',
+            'seo_title' => $m['seo_title'] ?? '',
+            'seo_desc' => $m['seo_desc'] ?? '',
             'transcript' => $m['transcript'] ?? '',
             'pdf_access' => $pdf_access,
             'language' => $m['language'] ?? '',
@@ -7448,7 +8602,7 @@ $listing_ld = [
 <?php if (SITEMAP_ENABLED): ?>
 <link rel="sitemap" type="application/xml" href="<?= e(PRETTY_URLS ? BASE_URL . 'sitemap.xml' : BASE_URL . '?action=sitemap') ?>">
 <?php endif; ?>
-<?= site_icon_tags() ?><link rel="stylesheet" href="<?= e(BASE_URL) ?>assets/css/style.css">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
 <header class="topbar">
@@ -7468,6 +8622,12 @@ $listing_ld = [
         <?php endforeach; ?>
     </nav>
     <?php endif; ?>
+    <?php if (count($files) >= 3): ?>
+    <button type="button" class="nav-search-open" id="nav-search-open"
+            aria-label="Search this folder" aria-expanded="false" aria-controls="search-overlay">
+        <span class="nav-search-glyph" aria-hidden="true"></span>
+    </button>
+    <?php endif; ?>
     <div class="theme-picker" role="group" aria-label="Colour scheme">
         <button data-set-theme="folio" title="Folio"></button>
         <button data-set-theme="ledger" title="Ledger"></button>
@@ -7479,7 +8639,8 @@ $listing_ld = [
         <a class="admin-link" href="<?= e(BASE_URL) ?>?action=crawlers">Crawlers</a>
         <a class="admin-link" href="<?= e(BASE_URL) ?>?action=analytics">Analytics</a>
         <a class="admin-link" href="<?= e(BASE_URL) ?>?action=users">Accounts</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
+        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=catalogue">Catalogue</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
         <a class="admin-link" href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
         <a class="admin-link" href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
         <form method="post" action="<?= e(BASE_URL) ?>" class="logout-form">
@@ -7513,20 +8674,24 @@ $listing_ld = [
         <?php endif; ?>
         <?php if ($cat_register || count($files) >= 3): ?>
         <div class="filter-bar" id="filter-bar">
-            <?php foreach ($cat_register as $c => $n): ?>
-                <a class="chip chip-cat" data-filter-cat="<?= e($c) ?>" href="<?= e(url_category($c)) ?>"><?= e($c) ?> <span class="chip-count"><?= (int) $n ?></span></a>
-            <?php endforeach; ?>
-            <button class="chip chip-clear" id="filter-clear" hidden>&times; Clear filter</button>
-            <?php if (count($files) >= 3): ?>
-            <label class="listing-search-label" for="listing-search">
-                <input type="search" id="listing-search" class="listing-search" placeholder="Search this folder" autocomplete="off" spellcheck="false">
-            </label>
+            <?php if ($cat_register): ?>
+            <div class="filter-chips">
+                <?php foreach ($cat_register as $c => $n): ?>
+                    <a class="chip chip-cat" data-filter-cat="<?= e($c) ?>" href="<?= e(url_category($c)) ?>"><?= e($c) ?> <span class="chip-count"><?= (int) $n ?></span></a>
+                <?php endforeach; ?>
+                <button class="chip chip-clear" id="filter-clear" hidden>&times; Clear filter</button>
+            </div>
             <?php endif; ?>
         </div>
         <?php endif; ?>
         <table>
             <thead>
-                <tr><th>Name</th><th>Size</th><th>Modified</th><th></th></tr>
+                <tr>
+                    <th aria-sort="none" data-sort-key="name"><button type="button" class="col-sort">Name<span class="sort-mark" aria-hidden="true"></span></button></th>
+                    <th aria-sort="none" data-sort-key="size"><button type="button" class="col-sort">Size<span class="sort-mark" aria-hidden="true"></span></button></th>
+                    <th aria-sort="none" data-sort-key="date"><button type="button" class="col-sort">Date<span class="sort-mark" aria-hidden="true"></span></button></th>
+                    <th></th>
+                </tr>
             </thead>
             <tbody>
             <?php if ($rel_dir !== ''): ?>
@@ -7541,22 +8706,30 @@ $listing_ld = [
             <?php endforeach; ?>
             <?php foreach ($files as $f): ?>
                 <?php $label = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME); ?>
-                <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($f['kind'] === 'image' ? url_thumb($f['rel'], 320) : ($f['kind'] === 'pdf' ? $f['hotlink'] : '')) ?>" data-hover-title="<?= e($label) ?>" data-hover-meta="<?= e($f['size'] . ' &middot; ' . $f['mtime']) ?>">
-                    <td>
+                <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($f['kind'] === 'image'
+                        ? url_thumb($f['rel'], 320)
+                        : ($f['kind'] === 'pdf'
+                            ? (image_can_derive($f['rel']) ? url_thumb($f['rel'], 320) : $f['hotlink'])
+                            : '')) ?>" data-hover-thumb="<?= ($f['kind'] === 'pdf' && image_can_derive($f['rel'])) ? '1' : '' ?>" data-hover-title="<?= e($label) ?>" data-hover-meta="<?= e($f['size'] . ' &middot; ' . $f['mtime']) ?>">
+                    <td data-sort-name="<?= e(function_exists('mb_strtolower') ? mb_strtolower($label) : strtolower($label)) ?>">
                         <div class="file-meta">
                             <a class="file-title" href="<?= e($f['view']) ?>"><?= e($label) ?></a>
                             <?php if ($f['desc'] !== ''): ?>
                                 <span class="file-desc"><?= e($f['desc']) ?></span>
                             <?php endif; ?>
                             <?php if ($f['category'] !== '' || $f['tags']): ?>
-                                <span class="file-chips">
-                                    <?php if ($f['category'] !== ''): ?>
+                                <?php if ($f['category'] !== ''): ?>
+                                <span class="file-cats">
                                         <a class="chip chip-cat chip-mini" data-filter-cat="<?= e($f['category']) ?>" href="<?= e(url_category($f['category'])) ?>"><?= e($f['category']) ?></a>
-                                    <?php endif; ?>
+                                </span>
+                                <?php endif; ?>
+                                <?php if ($f['tags']): ?>
+                                <span class="file-tags">
                                     <?php foreach ($f['tags'] as $t): ?>
                                         <button class="chip chip-tag chip-mini" data-filter-tag="<?= e($t) ?>">#<?= e($t) ?></button>
                                     <?php endforeach; ?>
                                 </span>
+                                <?php endif; ?>
                             <?php endif; ?>
                         </div>
                         <?php if (is_admin()): ?>
@@ -7578,6 +8751,36 @@ $listing_ld = [
                                 </select>
                             </label>
                             <input type="text" name="language" maxlength="35" placeholder="Language (e.g. en, ms, ar)" value="<?= e($f['language']) ?>">
+                            <label class="meta-form-label">
+                                Date of the document
+                                <input type="text" name="doc_date" maxlength="60"
+                                       placeholder="1996, Oktober 1998, 30/11/1991"
+                                       value="<?= e($f['doc_date']) ?>">
+                                <span class="field-note">
+                                    When the document itself is from — not when the file was
+                                    uploaded. A year alone is fine, and so is an approximation.
+                                </span>
+                            </label>
+                            <label class="meta-form-label">
+                                Search title
+                                <input type="text" name="seo_title" maxlength="60"
+                                       placeholder="Defaults to the title above"
+                                       value="<?= e($f['seo_title']) ?>">
+                                <span class="field-note">
+                                    Up to 60 characters, which is roughly what a search result shows
+                                    before truncating. Set it and it becomes the whole page title, with
+                                    no site name appended; leave it empty to keep the current behaviour.
+                                </span>
+                            </label>
+                            <label class="meta-form-label">
+                                Search description
+                                <textarea name="seo_desc" maxlength="150" rows="2"
+                                          placeholder="Defaults to the description above"><?= e($f['seo_desc']) ?></textarea>
+                                <span class="field-note">
+                                    Up to 150 characters. This is the snippet under the link in a
+                                    search result, and it is what social cards show too.
+                                </span>
+                            </label>
                             <label class="meta-form-label">
                                 URL slug
                                 <input type="text" name="slug" maxlength="160" placeholder="url-slug" value="<?= e($f['slug']) ?>">
@@ -7610,8 +8813,9 @@ $listing_ld = [
                         </form>
                         <?php endif; ?>
                     </td>
-                    <td class="col-size" data-label="Size"><?= e($f['size']) ?></td>
-                    <td class="col-modified" data-label="Modified"><?= e($f['mtime']) ?></td>
+                    <td class="col-size" data-label="Size" data-sort-size="<?= (int) $f['bytes'] ?>"><?= e($f['size']) ?></td>
+                    <?php $fd = document_date_parse((string) ($f['doc_date'] ?? '')); ?>
+                    <td class="col-modified" data-label="Date" data-sort-date="<?= e($fd['iso'] !== '' ? str_pad($fd['iso'], 10, '-01') : date('Y-m-d', (int) $f['mtime_ts'])) ?>" data-sort-dated="<?= $fd['iso'] !== '' ? '1' : '0' ?>"><?php if ($fd['display'] !== ''): ?><?php if ($fd['iso'] !== ''): ?><time datetime="<?= e($fd['iso']) ?>"><?= e($fd['display']) ?></time><?php else: ?><?= e($fd['display']) ?><?php endif; ?><?php else: ?><span class="file-date-fallback" title="No document date recorded; this is when the file was last changed."><?= e($f['mtime']) ?></span><?php endif; ?></td>
                     <td class="row-actions">
                         <?php if ($f['previewable']): ?>
                             <button class="btn-small file-link" data-file="<?= e($f['rel']) ?>" data-kind="<?= e($f['kind']) ?>" data-raw-url="<?= e($f['hotlink']) ?>" data-render-url="<?= e($f['render']) ?>">Preview</button>
@@ -7626,6 +8830,11 @@ $listing_ld = [
                             <button class="btn-small btn-ghost ocr-run"
                                     data-file="<?= e($f['rel']) ?>"
                                     title="Make this scanned PDF searchable. Takes a while; the original is not changed.">OCR</button>
+                        <?php endif; ?>
+                        <?php if (is_admin() && $f['kind'] === 'pdf' && tool_have('qpdf')): ?>
+                            <button class="btn-small btn-ghost pdf-compress"
+                                    data-file="<?= e($f['rel']) ?>"
+                                    title="Make a smaller copy of this PDF without losing quality. Your file is not changed; you download the copy and replace it over FTP if you want it.">Compress</button>
                         <?php endif; ?>
                         <?php if ($f['hotlink'] !== ''): ?>
                             <button class="btn-small btn-ghost copy-link" data-hotlink="<?= e($f['hotlink']) ?>" title="Copy direct link">Link</button>
@@ -7664,6 +8873,23 @@ $listing_ld = [
         </div>
     </aside>
 </main>
+<?php if (count($files) >= 3): ?>
+<div class="search-overlay" id="search-overlay" hidden>
+    <div class="search-overlay-panel" role="dialog" aria-modal="true" aria-label="Search this folder">
+        <label class="search-overlay-label" for="listing-search">
+            <span class="nav-search-glyph" aria-hidden="true"></span>
+            <!-- Deliberately type="text", not type="search": a search input clears
+                 itself on Escape at a level preventDefault cannot reach, which
+                 wiped the filter when the reader only meant to dismiss the panel. -->
+            <input type="text" inputmode="search" id="listing-search" class="listing-search"
+                   placeholder="Search this folder&hellip;" autocomplete="off" spellcheck="false">
+        </label>
+        <button type="button" class="search-overlay-close" id="search-overlay-close" aria-label="Close search">&times;</button>
+        <p class="search-overlay-hint">Type to filter. <kbd>Esc</kbd> closes.</p>
+    </div>
+</div>
+<?php endif; ?>
+
 <?php render_footer(); ?>
 
 <iframe id="print-frame" class="print-frame" title="print helper"></iframe>
@@ -7674,7 +8900,7 @@ $listing_ld = [
     <?php endforeach; ?>
 </datalist>
 <?php endif; ?>
-<script src="<?= e(BASE_URL) ?>assets/js/app.js"></script>
-<?php if (is_admin()): ?><script src="<?= e(BASE_URL) ?>assets/js/admin.js"></script><?php endif; ?>
+<script src="<?= e(asset_url('assets/js/app.js')) ?>" defer></script>
+<?php if (is_admin()): ?><script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script><?php endif; ?>
 </body>
 </html>

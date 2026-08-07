@@ -3,6 +3,634 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.19.0 — 6 August 2026
+
+### Changed
+
+- **The stylesheet is delivered inside the document.** A linked stylesheet
+  blocks the first paint for an entire extra round trip: parse the document,
+  request the file, wait. PageSpeed measured that at 120ms on desktop and
+  270ms on a throttled mobile connection, on a page that otherwise paints in
+  half a second. The stylesheet is now inlined, so the page paints from the
+  first response and there is nothing to wait for.
+
+  It is allowed by a **Content-Security-Policy hash** of its exact bytes, not
+  by `'unsafe-inline'`, which would permit every inline style on the page, and
+  not by a nonce, which changes per request and would make public pages
+  uncacheable. The hash is computed by `tools/minify.js` and recorded in the
+  manifest, so no work happens per request.
+
+  The trade is a few compressed kilobytes repeated per page instead of one
+  cached request. It is worth it here because Folio's pages are publicly
+  cacheable, so a proxy stores the whole document including its styles.
+
+- **It degrades to a linked stylesheet whenever inlining is not safe**: when
+  the source has been edited since the twin was built, when the minified file
+  is missing, when there is no manifest, or when the stylesheet grows past
+  60 KB and repeating it stops paying. Every one of those paths was tested,
+  and none of them can leave a page unstyled.
+
+- The fourteen places that emitted a stylesheet tag now call one function, so
+  the inline and linked paths cannot diverge screen by screen.
+
+## 1.18.3 — 6 August 2026
+
+### Fixed
+
+- **Chip rows on two screens rendered as full-width stacked bars.** The
+  documentation viewer and the category archive placed their chips directly
+  inside `.filter-bar`, which became a vertical flex container when the search
+  field moved into it. Each chip then became a column item and stretched the
+  full width. The library listing had been updated to wrap its chips in a
+  `.filter-chips` row; these two were missed and had been wrong ever since.
+
+  Both now use the same row container. Found by auditing every `.filter-bar`
+  in the file rather than fixing the one in the screenshot: the category
+  archive is a public page, so every visitor was seeing it too.
+
+## 1.18.2 — 6 August 2026
+
+### Fixed
+
+- **Minified assets were not being served.** 1.14.0 shipped minified twins and
+  chose between them and the readable sources by comparing modification times.
+  That comparison cannot survive an upload: FTP sets mtimes by upload order and
+  by whatever the client decides, so a perfectly good `style.min.css` can look
+  older than its source and be passed over indefinitely. A live site was
+  serving the full 11 KiB stylesheet with the minified one sitting beside it
+  unused.
+
+  The choice is now made from `assets/manifest.json`, written by
+  `tools/minify.js`, which records the byte length of the source each twin was
+  built from. A byte length survives upload unchanged and still changes the
+  moment the file is edited, so editing a stylesheet still takes precedence
+  with nothing to rebuild, and an installation with no manifest falls back to
+  readable sources rather than breaking.
+
+- **Chips were too small to tap reliably.** Category and tag chips stood about
+  fifteen pixels tall against the twenty-four a finger needs, which is what
+  cost the Accessibility score. They now meet the minimum on touch devices,
+  with more space between them. Scoped to coarse pointers, so the desktop
+  appearance is unchanged.
+
+## 1.18.1 — 6 August 2026
+
+### Fixed
+
+- **IndexNow submitted only part of the site.** It sent the library root and
+  the document pages, and nothing else: folder listings, category archives,
+  standalone pages, and every PDF file were announced by the sitemaps but
+  never pushed. The mechanism that delivers immediately was the one carrying
+  the least.
+
+  The submission is now the union of both sitemaps, built from the same
+  sources they use so the three cannot drift apart. Verified by set
+  comparison: nothing in either sitemap goes unsubmitted, and nothing is
+  submitted that is not in one.
+
+- The button now states how many URLs it will send, and the screen says what
+  is covered, so the gap could not sit unnoticed again.
+
+## 1.18.0 — 6 August 2026
+
+### Added
+
+- **A search title and search description for every document and every
+  standalone page.** The title above a document is written for someone
+  reading the page; the one that works in a result list is often different,
+  and usually shorter. The two are now separate fields, in the Edit panel and
+  on the Pages screen.
+
+  Limits are 60 characters for the title and 150 for the description, which is
+  roughly what a result shows before truncating. Both are enforced when saved,
+  not only in the browser.
+
+  A search title is used as the whole `<title>`, with no site name appended,
+  since controlling the entire tag is the point of the field. Both feed
+  `og:title` and `og:description` too, so social cards match. Left empty,
+  every page behaves exactly as it did before.
+
+### Fixed
+
+- **Standalone pages emitted no meta description at all.** About, FAQ and the
+  rest had none, so a search engine composed its own snippet from wherever in
+  the body it chose. They now carry one: the written description when there is
+  one, and otherwise the opening 150 characters of the page, which is at least
+  the beginning rather than an arbitrary middle.
+
+## 1.17.0 — 6 August 2026
+
+### Added
+
+- **A library can have as many standalone pages as it wants.** There were five
+  slots: About, FAQ, and three numbered ones. Wanting a sixth meant editing
+  the source. The Pages screen now has **Add a page** and a per-page **Delete
+  on save**, with no ceiling.
+
+  About and FAQ stay built in and cannot be deleted, because their schema.org
+  types say something a generic page cannot: an FAQ page carries its questions
+  as structured data, and an About page is read as identity information.
+  Everything added is a `WebPage`.
+
+  A new page derives its address from its title when no slug is given, so the
+  internal slot identifier never appears in a URL. New pages join the sitemap,
+  the header, and the footer exactly as the fixed slots always did.
+
+### Compatibility
+
+- **Existing installations need no migration.** The slot list is now read from
+  `data/pages.json` rather than hardcoded, so an installation carrying
+  `page1`, `page2` and `page3` keeps them, their content, and their addresses.
+  Verified against a pre-1.17 file: all three slots still list in the admin,
+  and their pages still resolve and still appear in the sitemap.
+
+## 1.16.1 — 6 August 2026
+
+### Changed
+
+- **Category addresses drop the hash suffix.** Every category carried one —
+  `/category/tracts-2a4f72ad/`, `/category/language-literature-a6888cfe/` —
+  because two names can slugify to the same string, "Q&A" and "Q A" among
+  them, and both would otherwise claim one URL. Guarding against that by
+  suffixing every category made a rare problem everyone's problem.
+
+  The suffix is now added only to names that actually collide, and to every
+  member of the colliding group so none of them silently wins the plain
+  address. A library with no clash has clean addresses: `/category/tracts/`.
+
+### Fixed
+
+- **Addresses issued before this release still work.** The hashed form is
+  recognised and 301-redirects to the current address, so links already
+  indexed, bookmarked, or sitting in a submitted sitemap do not break. The
+  bare slugified name redirects too, for links predating the suffix entirely.
+
+## 1.16.0 — 6 August 2026
+
+### Changed
+
+- **Diagnostics is tabbed, and opens on what is wrong.** Thirty-eight checks
+  in one column meant reading the whole page to find the one line that
+  mattered. Anything not passing is now gathered into a **Needs attention**
+  tab shown first, labelled with the section each row came from; Environment,
+  Addressing and Configuration follow. When everything passes there is no
+  attention tab at all.
+
+- **A passing check states its finding and stops.** Notes carried the guidance
+  for fixing a thing even when there was nothing to fix: `OPcache` explained
+  why Folio benefits from it, `site icon` gave five sentences on branding
+  folders, `external utilities` listed nine absolute paths. Guidance now
+  appears when a check is not passing, which is when it is useful. Across a
+  healthy install the passing rows fell from several thousand characters to
+  roughly six hundred: *Imagick*, *Enabled*, *pdf.js 5.4.149*,
+  *9 found, 1 missing (unpaper)*.
+
+  Nothing was deleted. Every explanation still appears the moment its check
+  needs attention.
+
+- Tabs are keyboard-navigable with the arrow keys, and without JavaScript
+  every panel stays visible so the page degrades to labelled sections rather
+  than hiding its own contents.
+
+## 1.15.2 — 6 August 2026
+
+### Fixed
+
+- **Diagnostics contradicted itself about reconciliation.** When no document
+  could be matched by content it reported "No document can be matched
+  automatically. Open Catalogue to apply it." — naming an action that did not
+  exist, since there was nothing to apply. The closing sentence was appended
+  unconditionally. It now says what is actually true: the files were deleted
+  rather than renamed, or were replaced with different content, and the way
+  forward is to relink by hand or remove the records.
+
+- **The catalogue note promised content matching would work before checking
+  whether it could.** It always said "Folio will match them by content and
+  keep their URLs", even where the match preview had already found nothing.
+  Both notes are now built from a single preview, so they cannot disagree,
+  and the preview is computed once rather than twice.
+
+## 1.15.1 — 6 August 2026
+
+### Fixed
+
+- **Compression failed outright on hosts running qpdf older than 10.0**, with
+  the raw error `unknown option --recompress-flate`. Folio passed
+  `--recompress-flate` and `--compression-level` unconditionally, and both
+  arrived in qpdf 10.0; an older qpdf rejects an unknown option rather than
+  ignoring it, so nothing was compressed at all. Shared hosts commonly ship
+  8.x or 9.x.
+
+  The flag list is now built from the installed version. Everything qpdf has
+  understood for years is always sent; the two newer flags are added only
+  where they exist. Their absence costs a few percent of the saving rather
+  than the feature: on a test document both flag sets produced byte-identical
+  output.
+
+- **The failure message no longer hands the reader a tool's internal error.**
+  An unknown-option failure now names the qpdf version on the server and asks
+  for a report, rather than showing a command-line flag to someone with no
+  reason to know qpdf's release history.
+
+## 1.15.0 — 6 August 2026
+
+### Changed
+
+- **The document page had its buttons in two places.** "Read in flip view"
+  sat under the preview while Print and Direct link sat below a rule further
+  down, with a line of file facts wedged between them. That split was an
+  accident of 1.2.0, which removed a duplicate download button and left the
+  remaining one stranded inside the preview. All three actions are now one
+  row beneath the document.
+
+- **The document sitemap is now visible in the admin.** `robots.txt` has
+  announced `sitemap-pdf.xml` since 1.9.0, but the Crawlers screen never
+  mentioned it: you were publishing a sitemap you could not see, count, or
+  click. The Sitemap preview lists both, each with the number of URLs it
+  carries and a line saying what it is for. The PDF count is computed with
+  the same rule the endpoint applies, so the two cannot drift apart.
+
+- **Standalone pages carry a `BreadcrumbList`.** Every other public page type
+  had one; About, FAQ and Privacy did not, so a search result showed a bare
+  URL rather than the library path. Found by auditing structured data across
+  every page type: everything else was complete, including a typed node per
+  file kind and Dublin Core alongside schema.org.
+
+- **The flip reader button is labelled "Flip view" on the document page**, as
+  it already was on every listing row. It read "Read in flip view", which was
+  both longer than the two buttons beside it and a different name for the same
+  thing one screen away.
+
+- **Metadata is grouped above the document instead of scattered around it.**
+  The page ran title, description, chips, a labelled `Document type` block,
+  the document, a facts line, then buttons. Type, format, size and date are
+  now a single quiet line sitting with the chips, so everything describing
+  the document comes before it and everything acting on it comes after.
+
+- **The document's own date is shown at last.** 1.10.0 added a date field and
+  emitted it in the structured data, but the page still displayed the file's
+  modification time — so a magazine from 1998 read "Updated 29 July 2026",
+  the exact confusion that field was added to remove. The recorded date is
+  used when there is one, falling back to the file date when there is not.
+
+## 1.14.0 — 6 August 2026
+
+### Changed
+
+- **Stylesheets and scripts ship minified.** PageSpeed had flagged this since
+  the first report and it was declined twice on the grounds that Folio has no
+  build step. That reasoning was wrong: the constraint is that *installing*
+  Folio is copying a folder, and it says nothing about what the maintainer
+  runs before packaging. The minified files ship already built, so nothing
+  about installation changes and Node is never needed to run Folio.
+
+  Transferred, which is what a visitor actually waits for: the stylesheet
+  falls from 10.0 KiB to 5.8 KiB and `app.js` from 7.2 KiB to 3.6 KiB, a 41%
+  and 49% reduction on top of compression. Uncompressed, where parse time
+  lives, the six files fall from 104 KiB to 52 KiB.
+
+- **Editing a stylesheet still works, with nothing to rebuild.** Folio serves
+  a minified file only when it is not older than its source. Change
+  `style.css` to adjust a theme and it immediately outranks the stale
+  `style.min.css` — no setting, no flag, no build. Deleting the `.min.` files
+  reverts to readable sources permanently. This keeps the promise made in the
+  roadmap, that the stylesheet is editable directly rather than through a
+  package format.
+
+### Added
+
+- `tools/minify.js`, the script that builds the minified twins, so a release
+  is reproducible rather than depending on something done by hand once. It
+  uses clean-css and terser rather than a hand-written regex, and exits
+  non-zero if any file fails.
+
+## 1.13.2 — 6 August 2026
+
+### Documentation
+
+- **A Known issues section in the roadmap**, recording what a review of this
+  release actually measured rather than what it assumed. The largest item is
+  that a folder of 1,500 documents renders every row at once, producing a
+  2.8 MB page of some 15,000 elements: compression hides it in transit, but
+  the browser still parses all of it and the in-page search and sort walk the
+  whole set on every keystroke. Server time is unaffected. Alongside it: a
+  third of that page is indentation whitespace, `BASE_URL` is repeated 7,515
+  times on it, there is no skip-to-content link, the search field has no
+  label, `prefers-color-scheme` is ignored, `index.php` has grown to 8,279
+  lines with 775 of them inline admin markup, and the catalogue cannot be
+  exported without FTP.
+- **Structured dates removed from the roadmap**, having shipped in 1.10.0
+  including the partial and uncertain dates the entry said needed design.
+  Chronological browsing, the part still outstanding, is listed in its place.
+
+- **The upgrade guide skipped thirteen releases.** It documented 1.2.0 through
+  1.6.0 and then stopped, leaving no path for anyone on 1.7.0 or later. The
+  span from 1.7.0 to 1.13.1 is now covered in one section, since those
+  releases shipped over two days and share a single procedure.
+
+  It states plainly the two things people skip: `.htaccess` is mandatory
+  rather than optional, because restricted PDFs, `/sitemap-pdf.xml`, and the
+  compression and caching rules all depend on rules it gained between 1.9.0
+  and 1.11.x, and a site missing them looks perfectly fine while silently
+  serving restricted files without a check; and `uploads/.htaccess` carries
+  the 1.8.3 fix for a fault that could return 403 for every document.
+
+  It also covers the new `branding/` folder, the one cache-clearing reload
+  1.13.1 needs, the licence change in 1.8.0, and the Catalogue screen added in
+  1.13.0.
+
+- `tests/asset-version-check.php` and `tests/wired-check.php` were missing from
+  the file inventory in `docs/ssot.md`, which claims to be authoritative.
+
+## 1.13.1 — 5 August 2026
+
+### Fixed
+
+- **An upgrade could leave the site styled by the previous stylesheet.**
+  1.9.2 told browsers to cache `style.css` and the scripts for a year and
+  never revalidate — correct for files that only change on upgrade, but only
+  if the URL changes with them. It did not. A browser that had visited before
+  kept the old stylesheet and applied it to the new markup: sort buttons drew
+  as plain boxes, tags kept borders the new rules removed, and the header lost
+  its styling entirely.
+
+  Every release-owned asset is now linked with `?v=` and the version number,
+  so an upgrade is a new URL and the cache is bypassed exactly when it should
+  be. The year-long cache stays, and is now safe.
+
+  A regression test fails the build if an asset is linked without a version.
+
+**If a page still looks wrong after upgrading**, it is the old file in your
+browser cache: reload once with Ctrl-Shift-R, or open a private window. From
+this release on it corrects itself.
+
+## 1.13.0 — 5 August 2026
+
+### Added
+
+- **A Catalogue screen**, at `?action=catalogue`. Reconciliation and relinking
+  have worked since 1.6.0 but could only be reached by sending a POST by hand,
+  which meant a library with records adrift from their files had no way to
+  repair itself. This was the largest gap between what Folio could do and what
+  an administrator could reach.
+
+  The screen lists documents whose file has gone missing and files that are
+  not yet catalogued, and offers the two safe repairs:
+
+  **Reconnect automatically.** Matches records to files by comparing contents.
+  A match is only accepted when exactly one file has the right contents and
+  exactly one record wants it — anything ambiguous is left alone rather than
+  guessed at.
+
+  **Relink by hand.** For the cases content cannot settle, such as a document
+  that was edited as well as renamed. You choose the file; only the path and
+  fingerprint change.
+
+  Either way the document keeps its URL, title, description, tags, date,
+  transcript and access setting. Nothing on disk is renamed, moved, replaced
+  or deleted — the screen says so, and it remains true.
+
+  Linked from the admin bar and from the Diagnostics rows that report the
+  problem.
+
+## 1.12.0 — 5 August 2026
+
+### Added
+
+- **Compress a PDF.** Scanners often write PDFs that store their page images
+  with little or no compression, so a single certificate can arrive as tens of
+  megabytes. A **Compress** button on each PDF row prepares a smaller copy
+  with qpdf: the structure is rewritten and the streams recompressed, and the
+  images themselves are left alone. Measured on an unoptimised scan, 42.1 MB
+  became 57.4 KB.
+
+  **Lossless only.** This is an archive, and a scan of a birth certificate
+  should not be quietly degraded to save bandwidth. The result is the same
+  document to any reader.
+
+  **Your file is not replaced.** The copy is written under `data/compressed/`
+  and offered as a download; putting it in place is done over FTP, as with
+  everything else in the library. The button reports the saving so you can
+  decide whether it is worth doing.
+
+  A copy is only kept if it saves at least 3% and if `pdfinfo` can still read
+  it — a smaller file that will not open is worse than no file. An
+  already-efficient document is reported as such rather than duplicated.
+
+  Both the preparation and the download are administrator-only.
+
+## 1.11.4 — 5 August 2026
+
+### Fixed
+
+- **A PDF whose preview could not be generated showed a broken-image icon.**
+  When rendering failed, the thumbnail route redirected to the original file.
+  That is the right answer for an image, and exactly wrong for a PDF: the
+  browser received a PDF where it expected an image and drew the broken icon
+  the fallback existed to avoid. It now returns 404 for anything an `<img>`
+  cannot display, and the hover card shows its document placeholder instead.
+
+- **A failed render said nothing.** A library where only some previews work
+  gave nothing to diagnose. The reason is now written to the error log —
+  `Syntax Error: Couldn't find trailer dictionary`, `Document stream is
+  empty`, a timeout — naming the file each time.
+
+Encrypted, truncated and empty PDFs are the usual causes; all three now
+degrade to a placeholder rather than a broken image. A document that renders
+is unaffected.
+
+## 1.11.3 — 5 August 2026
+
+### Changed
+
+- **The browser's own PDF toolbar no longer sits on top of the preview.**
+  Clicking Preview on a PDF embeds it, and Chrome and Edge draw their own
+  download, print and menu buttons over Folio's — duplicating actions already
+  beside the document and, on a restricted document, implying they are
+  available. The embed now asks for those controls to be dropped.
+
+  This is presentation, not protection. Firefox and Safari ignore the
+  parameters, and the file's own URL is reachable regardless. A document that
+  must not be downloaded needs `pdf_access` set to viewer or hidden, which is
+  enforced on the server rather than requested of the browser.
+
+## 1.11.2 — 5 August 2026
+
+### Changed
+
+- **Category and tags are visually distinct.** They sat in one row styled
+  almost identically — a bordered chip each, differing only by a `#` and some
+  letter-spacing — so a document with six tags showed seven near-identical
+  boxes and nothing said which was which.
+
+  They are two different kinds of fact. A document belongs to exactly one
+  category, and that is how the library is navigated; tags are annotations,
+  and there may be many. Giving them equal weight said they were the same
+  thing.
+
+  The category now sits on its own line as a tinted, bordered link. Tags sit
+  beneath it with no box at all — plain muted words that read as a line of
+  text rather than a row of competing buttons. Both still filter on click.
+
+## 1.11.1 — 5 August 2026
+
+### Changed
+
+- **Search is a nav icon and an overlay, not a bar across the listing.** The
+  field sat in the filter bar, where it had to be wide enough to look
+  deliberate and so dominated a row that is otherwise small chips — on a wide
+  screen it stretched most of the page for no reason. It is now a magnifier
+  in the header. Clicking it opens a panel; the categories get their row back.
+
+  Escape and the close button dismiss it, clicking the backdrop dismisses it,
+  and `/` opens it from anywhere on the page. Focus moves into the field on
+  open and returns to where it came from on close, and stays inside the panel
+  while it is open.
+
+  **Closing keeps the results.** Dismissing the panel and losing the filtered
+  list at the same time is not what a reader is asking for; clearing is done
+  by deleting the text.
+
+## 1.11.0 — 5 August 2026
+
+### Added
+
+- **Sortable columns.** Name, Size and Date each sort ascending on the first
+  click and descending on the second. The active column shows an arrow, and
+  the header is a real button, so it works by keyboard and is announced
+  correctly with `aria-sort`.
+
+  Each column sorts on a stored value rather than on what is displayed:
+  `1.5 MB` and `900 B` do not compare as strings, and `Oktober 1998` has no
+  order without its machine-readable form. Names use the browser's own
+  collator, so accented and non-English titles order sensibly.
+
+  A document with no date of its own sorts after those that have one, in both
+  directions. The fallback shown for those rows is a file timestamp — a
+  different kind of fact — and letting it mix in among real dates would imply
+  an ordering that is not real.
+
+  Sorting reorders rows; it does not decide which are visible. The category
+  chips and the search box still own that, so a sort applied to a filtered
+  view keeps exactly the same set of documents. The chosen order is remembered
+  for the session, so moving between folders does not silently reset it.
+
+## 1.10.1 — 5 August 2026
+
+### Changed
+
+- **The filter bar is laid out properly.** Category chips and the search box
+  shared one wrapping flex container, with the search pushed right by
+  `margin-left: auto`. That meant the search landed at the end of whatever row
+  the chips happened to stop on, and moved every time a category was added or
+  the window resized. They are now two rows: search across the full width with
+  a magnifier, categories beneath it.
+- The search field is full width rather than a fixed 15rem, with a visible
+  search icon, and no longer needs a separate mobile rule to behave.
+- **The date column shows the document's date**, not the file's modification
+  time. `2026-08-04` on a 1980 birth certificate answered a question nobody
+  was asking. Where no document date is recorded the file time is still shown,
+  muted, with a tooltip saying what it is.
+
+## 1.10.0 — 5 August 2026
+
+### Added
+
+- **A date field for each document.** Folio recorded when a file was last
+  modified, which for an archive is nearly meaningless: it says when the scan
+  was uploaded, not when the certificate was issued. Re-uploading a 1979
+  document made it look like a 2026 one.
+
+  The field is free text, because historical documents state their dates in
+  whatever form they please. `1996`, `Oktober 1998`, `30/11/1991`,
+  `1991-11-30` and `c. 1985` are all understood, including Malay month names,
+  and day-first numeric dates are read as day-first. What cannot be parsed is
+  still displayed exactly as entered.
+
+- **Dates in the structured data.** A parsed date is emitted as
+  `dateCreated`, `datePublished`, `temporalCoverage` and `dcterms:date`,
+  alongside the existing `dateModified`. Search engines could previously only
+  see the file's modification time, so every document in the collection looked
+  contemporary. A document with no date makes no claim at all rather than
+  publishing an empty one.
+
+- The listing shows the document's date beneath its description, as a proper
+  `<time>` element with a machine-readable value where one could be derived.
+
+## 1.9.2 — 5 August 2026
+
+Fixes for the issues PageSpeed Insights reports on a live installation.
+
+### Fixed
+
+- **Nothing was compressed.** `.htaccess` carried no `mod_deflate` or
+  `mod_brotli` rules, so the stylesheet and script were sent uncompressed on
+  every visit — 54 KB where 13 KB would do. Both compress by **77%**. Rules
+  are now included for HTML, CSS, JavaScript, JSON, XML and SVG, and skip
+  formats that are already compressed.
+
+- **Assets had no cache lifetime.** Every page view re-fetched
+  `style.css` and `app.js` because nothing set an expiry. They are
+  release-owned and change only on upgrade, so they now carry a one-year
+  `immutable` cache. Documents get an hour; HTML stays uncached.
+
+- **Scripts were render-blocking.** `app.js`, `admin.js` and `view.js` now
+  load with `defer`, taking them off the critical rendering path. PageSpeed
+  estimated 340 ms desktop, 760 ms mobile.
+
+- **Three of the four themes failed WCAG AA contrast.** The muted `--quiet`
+  colour, used by the header links, category counts and footer, measured
+  4.22, 4.04 and 3.97 against its background where 4.5 is required. Darkened
+  by a few percent — visually almost identical — to 4.60, 4.68 and 4.73. The
+  night theme already passed.
+
+- **The theme-picker buttons were 13px**, well under the 24px minimum tap
+  target, and four sat side by side. The button is now 24×24 while the
+  coloured dot stays 13px: the tap area grew, the design did not change.
+  Keyboard focus is now visible on them too.
+
+## 1.9.1 — 5 August 2026
+
+### Fixed
+
+- **Hovering a PDF row downloaded the whole document.** Image rows used a
+  cached thumbnail, but PDF rows were given the file itself and rendered page
+  one in the browser with pdf.js. On a 6 MB scan that meant waiting several
+  seconds and transferring the entire document — every hover, for a preview a
+  few hundred pixels wide.
+
+  Where the server can render PDF pages, the hover card now loads the same
+  cached WebP derivative the rest of Folio uses. Measured on a large scan:
+  176,506,623 bytes down to 1,190. The client-side renderer remains as the
+  fallback for servers without Poppler.
+
+## 1.9.0 — 4 August 2026
+
+Getting the documents themselves into search results.
+
+### Added
+
+- **A sitemap for the document files**, at `/sitemap-pdf.xml`, listing every
+  PDF in the library with its modification date. Search engines index PDFs as
+  documents in their own right, so this is what gets a scanned certificate
+  found rather than only the page describing it. It is announced in
+  `robots.txt` alongside the main sitemap.
+
+  Every PDF in the library is listed, whatever its access setting: the
+  sitemap's job is discovery, and access control governs delivery. Files
+  matching `EXCLUDE_PATTERNS` are not listed, because they are not part of the
+  library and return 404 on every route.
+
+### Changed
+
+- **PDFs are now served `index, follow` explicitly**, rather than being left
+  to the default. Following the links inside a document is how a crawler
+  reaches the rest of a collection from it. The same applies to `.txt` and
+  `.md`.
+
+Formats a browser would execute are unaffected: HTML, XHTML, XML, MHTML and
+anything unrecognised are still forced to download with `noindex, nofollow`.
+
 ## 1.8.3 — 4 August 2026
 
 ### Fixed

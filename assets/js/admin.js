@@ -175,4 +175,109 @@
             });
         });
     }());
+
+    /* ---- Compress a PDF ----------------------------------------------
+     *
+     * Produces a smaller copy and offers it for download. Nothing on the
+     * server is replaced, so the button reports a result rather than
+     * announcing a change.
+     */
+    (function () {
+        var buttons = document.querySelectorAll(".pdf-compress");
+        if (!buttons.length) { return; }
+
+        var tokenField = document.querySelector('input[name="csrf"]');
+        var token = tokenField ? tokenField.value : "";
+
+        Array.prototype.forEach.call(buttons, function (btn) {
+            btn.addEventListener("click", function () {
+                if (btn.disabled) { return; }
+                var file = btn.getAttribute("data-file") || "";
+                if (!file) { return; }
+
+                var original = btn.textContent;
+                btn.disabled = true;
+                var started = Date.now();
+                var ticker = window.setInterval(function () {
+                    btn.textContent = "Compressing… "
+                        + Math.round((Date.now() - started) / 1000) + "s";
+                }, 1000);
+                btn.textContent = "Compressing…";
+
+                var body = new URLSearchParams();
+                body.append("action", "compress");
+                body.append("csrf", token);
+                body.append("file", file);
+
+                window.fetch(window.location.pathname, {
+                    method: "POST",
+                    credentials: "same-origin",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body: body.toString()
+                })
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        window.clearInterval(ticker);
+                        btn.disabled = false;
+                        if (data && data.ok && data.download) {
+                            btn.textContent = "\u2212" + data.saved_pct + "%";
+                            btn.classList.add("ocr-done");
+                            window.alert(data.message
+                                + "\n\nYour file has not been changed. The smaller copy will "
+                                + "download now; replace the original over FTP if you want to "
+                                + "keep it.");
+                            window.location.href = data.download;
+                        } else {
+                            btn.textContent = original;
+                            window.alert((data && data.error) || "Could not compress this document.");
+                        }
+                    })
+                    .catch(function () {
+                        window.clearInterval(ticker);
+                        btn.disabled = false;
+                        btn.textContent = original;
+                        window.alert("The server could not be reached. Your file has not been changed.");
+                    });
+            });
+        });
+    }());
 }());
+
+/* ---- Diagnostics tabs ------------------------------------------------
+ * Progressive enhancement: without JavaScript every panel stays visible and
+ * the page reads as it always did, just in labelled sections.
+ */
+(function () {
+    var host = document.getElementById("diag-tabs");
+    if (!host) { return; }
+    host.classList.add("diag-tabs-live");
+
+    var tabs = host.querySelectorAll("[data-diag-tab]");
+    var panels = host.querySelectorAll("[data-diag-panel]");
+
+    function select(index) {
+        Array.prototype.forEach.call(tabs, function (t) {
+            var on = t.getAttribute("data-diag-tab") === index;
+            t.classList.toggle("is-active", on);
+            t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        Array.prototype.forEach.call(panels, function (p) {
+            p.classList.toggle("is-active", p.getAttribute("data-diag-panel") === index);
+        });
+    }
+
+    Array.prototype.forEach.call(tabs, function (t) {
+        t.addEventListener("click", function () {
+            select(t.getAttribute("data-diag-tab"));
+        });
+        t.addEventListener("keydown", function (ev) {
+            if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") { return; }
+            ev.preventDefault();
+            var list = Array.prototype.slice.call(tabs);
+            var at = list.indexOf(t);
+            var next = list[(at + (ev.key === "ArrowRight" ? 1 : list.length - 1)) % list.length];
+            next.focus();
+            select(next.getAttribute("data-diag-tab"));
+        });
+    });
+})();

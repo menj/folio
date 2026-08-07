@@ -97,6 +97,7 @@ printf '%%PDF-1.4\n' > "${APP}/uploads/Foo!.pdf"
 printf 'jpeg placeholder\n' > "${APP}/uploads/foo.jpg"
 printf '<!doctype html><script>document.body.textContent="active"</script>\n' > "${APP}/uploads/evil.html"
 printf 'plain text\n' > "${APP}/uploads/notes.txt"
+printf '%%PDF-1.4\n' > "${APP}/uploads/public-doc.pdf"
 printf 'jpeg placeholder\n' > "${APP}/uploads/private.secret.jpg"
 mkdir -p "${APP}/uploads/_drafts"
 printf 'jpeg placeholder\n' > "${APP}/uploads/_drafts/hidden.jpg"
@@ -725,6 +726,44 @@ for ICON_PATH in favicon.ico favicon.svg apple-touch-icon.png; do
     esac
 done
 pass 'root icon requests are answered with a real icon'
+
+# Assets are cached for a year and told never to revalidate, which is only
+# safe if the URL changes when the file does. Otherwise an upgrade ships new
+# markup to a browser still holding the previous stylesheet.
+curl -sS "${BASE}" -o "${TMP}/assets.html"
+php "${APP}/tests/asset-version-check.php" "${TMP}/assets.html" 2>"${TMP}/assets.err" \
+    || fail "release assets are not versioned: $(cat "${TMP}/assets.err")"
+pass 'release assets are versioned so an upgrade is not served stale CSS'
+
+# The PDF sitemap invites crawlers to the document files themselves. It must
+# never advertise a file the crawler would then be refused, and must never
+# list an excluded one: a sitemap entry that 404s is worse than no entry.
+curl -sS "${BASE}?action=sitemap_pdf" -o "${TMP}/pdf-sitemap.xml"
+grep -Fq '<urlset' "${TMP}/pdf-sitemap.xml" || fail 'the PDF sitemap was not served'
+# foo.pdf is hidden and Foo!.pdf is viewer-only, both set earlier in this run.
+# Neither may be advertised: a crawler invited to them would be refused.
+grep -Fq 'public-doc.pdf' "${TMP}/pdf-sitemap.xml" \
+    || fail 'a public PDF is missing from the PDF sitemap'
+# Every PDF in the library is listed, including ones with a pdf_access
+# setting: the sitemap's job is to get documents crawled, and the access
+# setting governs delivery, not discovery.
+grep -Fq '/foo.pdf' "${TMP}/pdf-sitemap.xml" \
+    || fail 'a PDF with an access setting was left out of the PDF sitemap'
+! grep -Fq 'private.secret' "${TMP}/pdf-sitemap.xml" \
+    || fail 'an excluded file appeared in the PDF sitemap'
+! grep -Fq '_drafts' "${TMP}/pdf-sitemap.xml" \
+    || fail 'an excluded folder appeared in the PDF sitemap'
+# Only PDFs belong in it.
+! grep -Fq 'notes.txt' "${TMP}/pdf-sitemap.xml" \
+    || fail 'a non-PDF appeared in the PDF sitemap'
+# Documents must be followable: a crawler that will not follow links inside a
+# PDF cannot reach the rest of the collection from it.
+PDF_ROBOTS="$(curl -sS -D - -o /dev/null "${BASE}?action=raw&serve=1&file=public-doc.pdf" | tr -d '\r')"
+grep -qiE '^X-Robots-Tag:.*nofollow' <<<"${PDF_ROBOTS}" \
+    && fail 'a PDF was served nofollow'
+grep -qiE '^X-Robots-Tag:.*noindex' <<<"${PDF_ROBOTS}" \
+    && fail 'a PDF was served noindex'
+pass 'PDF sitemap lists only reachable documents, served index and follow'
 
 # Canonical slugs, aliases, and redirects. A document's public address must
 # survive the file being renamed or moved, so it is stored rather than derived.

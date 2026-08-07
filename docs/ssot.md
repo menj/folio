@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.8.3. Update this file in the same commit as any change it describes.
+Version 1.19.0. Update this file in the same commit as any change it describes.
 
 ## Version
 
@@ -15,11 +15,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.8.3');` |
-| `changelog.md` | `## 1.8.3 — 4 August 2026` |
-| `readme.txt` | `Stable tag: 1.8.3` |
-| `readme.md` | `1.8.3.` under `## Version` |
-| `security.md` | `The current supported release is **1.8.3**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.13.1');` |
+| `changelog.md` | `## 1.13.1 — 5 August 2026` |
+| `readme.txt` | `Stable tag: 1.13.1` |
+| `readme.md` | `1.13.1.` under `## Version` |
+| `security.md` | `The current supported release is **1.13.1**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -57,6 +57,10 @@ docs/install.md           installation guide
 docs/upgrading.md         upgrade, migration, removal
 docs/.htaccess            denies web access to docs/
 assets/css/style.css      stylesheet, themes, all layout
+assets/css/*.min.css      minified twins, built by tools/minify.js
+assets/manifest.json      records which source each minified twin was built from
+assets/js/*.min.js        minified twins, built by tools/minify.js
+tools/minify.js           builds the minified twins; maintainers only
 assets/css/flipbook.css   flip reader only
 assets/js/app.js          listing behaviour
 assets/js/view.js         detail page behaviour
@@ -68,10 +72,13 @@ lib/pdfjs/                PDF.js, Apache 2.0
 
 tests/smoke.sh            regression suite
 tests/readme.md           how to run it
+tests/asset-version-check.php   asserts every asset is linked with ?v=
+tests/wired-check.php     asserts every advertised utility is actually called
 uploads/.htaccess         hardening for the served uploads folder
 uploads/readme.txt        keeps the folder present in git and on GitHub
 data/readme.txt           keeps the folder present in git and on GitHub
 data/thumbs/              generated image derivatives; safe to delete
+data/compressed/          prepared smaller copies of PDFs; safe to delete
 data/.htaccess            denies web access to data/
 ```
 
@@ -196,11 +203,12 @@ Public:
 | `/` or `?dir=` | folder listing |
 | `?view=` | document detail page |
 | `?cat=` | category archive |
-| `?page=` | standalone page |
+| `?page=` | standalone page, any number of them |
 | `?action=render` | Markdown to HTML, `.md` only |
 | `?action=raw` | streams a file's bytes (`serve=1`) or 301s to the direct file URL; the sole enforcement point for `pdf_access` on PDFs — see § PDF access control |
 | `?action=pdf_preview` | blurred first-page JPEG for a `hidden` PDF, generated on demand and cached; never the original file |
 | `?action=flipbook` | flip reader, PDF only; refuses `hidden` PDFs outright |
+| `?action=sitemap_pdf` | the document files themselves |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
 | `?action=llms` | llms.txt for AI crawlers |
 | `?indexnow_key=` | IndexNow ownership file |
@@ -218,6 +226,9 @@ Admin, all requiring a session:
 | `?action=pages` | standalone pages |
 | `?action=docs` | documentation viewer |
 | `?action=diagnostics` | environment report |
+| `?action=catalogue` | admin: reconnect records to files |
+| `?action=compress` | POST, admin: prepare a smaller copy of a PDF |
+| `?action=compressed` | admin: download that copy |
 | `?action=thumb` | cached image derivative; only the offered widths |
 | `?action=ocr` | POST, admin: make one scanned PDF searchable |
 | `?action=reconcile` | POST, admin: match records to renamed or moved files |
@@ -491,6 +502,9 @@ Rules that must hold. A change breaking any of these is a defect.
 20. An ambiguous reconciliation is never resolved automatically.
 21. Every bundled dependency must be licence-compatible with GPL-3. A
     GPL-2-only, proprietary, or non-commercial component cannot ship.
+22. Release-owned assets are linked with the version in the URL. They are
+    cached for a year without revalidation, so an unversioned link means an
+    upgraded site is rendered against the previous stylesheet.
 
 ## Documentation set
 
@@ -637,7 +651,7 @@ permanent metadata.
 
 ## Testing
 
-`tests/smoke.sh` provisions a temporary installation and asserts twenty-seven
+`tests/smoke.sh` provisions a temporary installation and asserts twenty-nine
 behaviours, covering caching, host validation, symlink containment, slug
 collisions, file delivery, metadata writes, JSON-LD escaping, session
 revocation, CSRF on logout, installer headers, sitemap generation, and PDF
