@@ -3,6 +3,59 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.19.3 — 6 August 2026
+
+### Fixed
+
+- **The inline PDF viewer ignored the shape of the document.** Its height was
+  fixed, which suits an A4 page and leaves a screenful of empty dark viewer
+  under anything wider: a birth certificate, a landscape results slip, a
+  scanned card. The page was fine; the frame around it was not.
+
+  The viewer now takes its height from the first page's own proportions.
+  `pdfinfo` already reported the page size, so this only had to be carried to
+  the browser: a wide certificate that previously reserved a full portrait
+  frame now takes roughly half of it, with nothing empty below.
+
+  The height is capped at 82% of the window so a very tall page cannot push
+  the buttons out of view, and floored so a very wide one stays readable. When
+  the page size cannot be read — no `pdfinfo`, or a file it cannot parse — the
+  previous fixed height is used, so nothing depends on the tool being there.
+
+- The measurement is cached in `data/aspect.json`, keyed on each file's size
+  and modification time, so `pdfinfo` runs once per document rather than on
+  every page view, and a replaced file is measured again.
+
+## 1.19.2 — 6 August 2026
+
+### Fixed
+
+- **Print did the same thing as Direct link on a PDF page.** Both opened the
+  raw file: two buttons side by side with one behaviour between them.
+
+  The cause was a stale assumption. When the inline PDF viewer was removed in
+  1.0.1 there was nothing left on the page to print, so Print was changed to
+  hand the file to the browser. 1.15.0 restored the viewer, and this was never
+  changed back. Print now prints the document where it sits, which is what the
+  button is for.
+
+  Where there is no viewer to print — mobile, where the preview is a rendered
+  first page rather than an embedded document — the file is still handed to the
+  browser, and a viewer that refuses to print falls back the same way.
+
+## 1.19.1 — 6 August 2026
+
+### Added
+
+- **Project metadata**: author MENJ (<https://menj.blog>) and the repository at
+  <https://github.com/menj/folio>, recorded in the file header, in
+  `readme.txt` and `readme.md`, and in `docs/ssot.md`. `FOLIO_AUTHOR`,
+  `FOLIO_AUTHOR_URI` and `FOLIO_REPO_URI` hold the values so nothing else
+  repeats them.
+- Diagnostics names the author and links the repository beside the version, so
+  anyone administering an installation can find where to report a problem.
+- `Contributors` in `readme.txt` was the placeholder `folio`; it is now `menj`.
+
 ## 1.19.0 — 6 August 2026
 
 ### Changed

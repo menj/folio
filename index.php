@@ -6,6 +6,9 @@
  * Drop this folder into your web root. Set BASE_DIR below to the folder
  * you want to browse. Defaults to an "uploads" directory beside this script.
  *
+ * Author:     MENJ <https://menj.blog>
+ * Repository: https://github.com/menj/folio
+ *
  * Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
  *
  * This program is free software: you can redistribute it and/or modify it
@@ -123,7 +126,10 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.19.0');
+define('FOLIO_VERSION', '1.19.3');
+define('FOLIO_AUTHOR', 'MENJ');
+define('FOLIO_AUTHOR_URI', 'https://menj.blog');
+define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
 
 defined('SITE_URL')             || define('SITE_URL', '');
 defined('SITE_DESCRIPTION')     || define('SITE_DESCRIPTION', 'A reading library of documents, papers, and images.');
@@ -1731,6 +1737,56 @@ function pdf_info(string $abs): ?array
         }
     }
     return $out;
+}
+
+/**
+ * Width-to-height ratio of a PDF's first page, or 0.0 when unknown.
+ *
+ * The inline viewer used a fixed height, which suits a portrait page and
+ * wastes a screen of empty grey under a wide certificate. Knowing the page
+ * shape lets the viewer take the height the document actually needs.
+ *
+ * pdfinfo already reports the page size, so this only caches the answer:
+ * the ratio of a file cannot change unless the file does, and the cache is
+ * keyed on the file's size and modification time.
+ */
+function pdf_aspect_ratio(string $rel, string $abs): float
+{
+    static $memo = [];
+    if (isset($memo[$rel])) {
+        return $memo[$rel];
+    }
+    if (!is_file($abs)) {
+        return $memo[$rel] = 0.0;
+    }
+    $stamp = filesize($abs) . '-' . filemtime($abs);
+    $cache = __DIR__ . '/data/aspect.json';
+    $store = [];
+    if (!is_link($cache) && is_file($cache)) {
+        $raw = @file_get_contents($cache);
+        $dec = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($dec)) {
+            $store = $dec;
+        }
+    }
+    if (isset($store[$rel]['stamp']) && $store[$rel]['stamp'] === $stamp) {
+        return $memo[$rel] = (float) $store[$rel]['ratio'];
+    }
+
+    $info  = pdf_info($abs);
+    $ratio = 0.0;
+    if (is_array($info) && $info['height'] > 0 && $info['width'] > 0) {
+        $ratio = round($info['width'] / $info['height'], 4);
+    }
+    $store[$rel] = ['stamp' => $stamp, 'ratio' => $ratio];
+    $dir = dirname($cache);
+    if (is_dir($dir) && is_writable($dir)) {
+        $tmp = $cache . '.' . bin2hex(random_bytes(4)) . '.tmp';
+        if (@file_put_contents($tmp, json_encode($store), LOCK_EX) !== false) {
+            @rename($tmp, $cache);
+        }
+    }
+    return $memo[$rel] = $ratio;
 }
 
 /**
@@ -6489,8 +6545,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
 
     $cfg_checks[] = [
         'label'  => 'Folio version',
+        'brief'  => FOLIO_VERSION,
         'status' => 'ok',
-        'note'   => FOLIO_VERSION,
+        'note'   => FOLIO_VERSION . ' by ' . FOLIO_AUTHOR . ' (' . FOLIO_AUTHOR_URI . '). '
+                  . 'Source and issues: ' . FOLIO_REPO_URI,
     ];
 
     $rewrite_env = !empty($_SERVER['FOLIO_REWRITE']) || !empty($_SERVER['REDIRECT_FOLIO_REWRITE']);
@@ -8393,7 +8451,7 @@ if (isset($_GET['view'])) {
                     </figcaption>
                 <?php endif; ?>
             <?php elseif ($kind === 'pdf'): ?>
-                <div class="pdf-preview" data-pdf-url="<?= e($raw) ?>" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/" data-flip-url="<?= e(url_flipbook($rel)) ?>" data-pdf-title="<?= e($title) ?>">
+                <div class="pdf-preview" data-pdf-url="<?= e($raw) ?>" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/" data-flip-url="<?= e(url_flipbook($rel)) ?>" data-pdf-title="<?= e($title) ?>" data-pdf-aspect="<?= e((string) pdf_aspect_ratio($rel, $abs)) ?>">
                     <div class="pdf-preview-canvas-wrap">
                         <canvas class="pdf-preview-canvas" aria-label="First page of <?= e($title) ?>"></canvas>
                         <p class="pdf-preview-status">Loading preview&hellip;</p>

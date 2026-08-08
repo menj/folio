@@ -3,7 +3,19 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.19.0. Update this file in the same commit as any change it describes.
+Version 1.19.3. Update this file in the same commit as any change it describes.
+
+## Project
+
+| | |
+| --- | --- |
+| Name | Folio |
+| Author | MENJ, <https://menj.blog> |
+| Repository | <https://github.com/menj/folio> |
+| Licence | GNU General Public License v3.0 or later |
+
+`FOLIO_AUTHOR`, `FOLIO_AUTHOR_URI` and `FOLIO_REPO_URI` in `index.php` hold
+these values, so nothing else needs to repeat them.
 
 ## Version
 
@@ -101,6 +113,7 @@ data/metadata.json        titles, descriptions, categories, tags, document_type,
                           transcript, pdf_access, language, placeholder_image
 data/metadata.lock        write lock
 data/pages.json           standalone page content
+data/aspect.json          cached PDF page shapes; safe to delete
 data/previews/            generated, cached blurred previews for hidden PDFs
 uploads/                  documents
 uploads/.folio-pdf-probe.pdf  generated dummy file for the PDF-routing preflight

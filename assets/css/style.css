@@ -632,6 +632,9 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     min-height: 0;
     display: block;
 }
+/* Height is set from script to match the document's page shape; this is the
+   fallback for when the shape is unknown — no pdfinfo on the server, or a
+   file it could not read. */
 .pdf-frame {
     display: block;
     width: 100%;
@@ -640,7 +643,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     background: var(--leaf);
 }
 @media (max-width: 40rem) {
-    .pdf-frame { height: 70vh; }
+    .pdf-frame:not([style*="height"]) { height: 70vh; }
 }
 
 .pdf-preview-canvas {

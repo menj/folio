@@ -42,6 +42,21 @@
         frame.src = pdfUrl + (pdfUrl.indexOf("#") === -1 ? "#" : "&")
                   + "toolbar=0&navpanes=0&statusbar=0&view=FitH";
         frame.title = host.getAttribute("data-pdf-title") || "PDF preview";
+
+        /* Take the height from the document's own page shape. A fixed height
+           suits a portrait page and leaves a screenful of empty viewer under a
+           wide certificate. Set from script rather than in the markup because
+           the Content-Security-Policy forbids inline style attributes; a style
+           assigned this way is unaffected.
+           Capped so a very tall page cannot push the buttons off screen, and
+           floored so a very wide one stays readable. */
+        var aspect = parseFloat(host.getAttribute("data-pdf-aspect") || "0");
+        if (aspect > 0.05 && aspect < 20) {
+            var width = wrap.getBoundingClientRect().width || 900;
+            var maxH  = Math.round(window.innerHeight * 0.82);
+            frame.style.height = Math.max(260, Math.min(width / aspect, maxH)) + "px";
+        }
+
         while (wrap.firstChild) {
             wrap.removeChild(wrap.firstChild);
         }
@@ -156,10 +171,23 @@
             };
             frameEl.src = cfg.url;
         } else {
-            /* PDFs no longer have an inline iframe to print, so hand the file
-               to the browser's own viewer. Desktop opens the PDF in a new tab
-               with print controls; mobile downloads it. Both are what the
-               person meant by "print". */
+            /* A PDF shown in the browser's own viewer can be printed where it
+               sits, which is what the button is for. Only when there is no
+               viewer on the page — mobile, where the preview is a rendered
+               first page — is there nothing to print, and the file is handed
+               to the browser instead.
+               Without this the button did exactly what "Direct link" beside
+               it already did. */
+            var frame = document.querySelector(".pdf-frame");
+            if (frame && frame.contentWindow) {
+                try {
+                    frame.contentWindow.focus();
+                    frame.contentWindow.print();
+                    return;
+                } catch (e) {
+                    /* Cross-origin or a viewer that refuses: fall through. */
+                }
+            }
             window.open(cfg.url, "_blank", "noopener");
         }
     });

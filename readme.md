@@ -2,6 +2,12 @@
 
 **Folio** is a single-script PHP reading library for a web folder. It lists files uploaded over FTP, serves crawlable detail pages for each file, previews and prints PDFs and images, and lets an authenticated admin assign titles, descriptions, categories, and tags. No database is required.
 
+| | |
+| --- | --- |
+| Author | MENJ &nbsp;·&nbsp; <https://menj.blog> |
+| Repository | <https://github.com/menj/folio> |
+| Licence | GPL-3.0-or-later |
+
 ## Features
 
 * Directory listing with subfolder navigation and breadcrumbs
