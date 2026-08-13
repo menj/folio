@@ -183,7 +183,7 @@ defined('MATOMO_COOKIELESS')    || define('MATOMO_COOKIELESS', false);
 defined('GA4_MEASUREMENT_ID')   || define('GA4_MEASUREMENT_ID', '');
 defined('GA4_ANONYMIZE_IP')     || define('GA4_ANONYMIZE_IP', true);
 defined('ANALYTICS_ADMIN')      || define('ANALYTICS_ADMIN', false);
-defined('AUDIO_PLAYLIST')       || define('AUDIO_PLAYLIST', false);
+defined('AUDIO_PLAYLIST')       || define('AUDIO_PLAYLIST', true);
 
 /* IndexNow rejects requests carrying more than 10,000 URLs. */
 define('INDEXNOW_MAX_URLS_PER_REQUEST', 10000);
@@ -4205,10 +4205,7 @@ function render_footer(): void
             <span class="footer-sep">&middot;</span>
             <span class="footer-year"><?= e($year) ?></span>
         </p>
-        <p class="footer-colophon">
-            Powered by
-            <a href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?><span class="footer-sep">&middot;</span><span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?>
-        </p>
+        <p class="footer-colophon">Powered by <a href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?> <span class="footer-sep">&middot;</span> <span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?></p>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>
             <?php foreach ($pages as $slot => $rec): ?>
@@ -8969,22 +8966,7 @@ $listing_ld = [
         <button data-set-theme="garden" title="Garden"></button>
         <button data-set-theme="night" title="Night"></button>
     </div>
-    <?php if (is_admin()): ?>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=settings">Settings</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=crawlers">Crawlers</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=analytics">Analytics</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=users">Accounts</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=catalogue">Catalogue</a>
-            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
-        <a class="admin-link" href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
-        <form method="post" action="<?= e(BASE_URL) ?>" class="logout-form">
-            <input type="hidden" name="action" value="logout">
-            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-            <button type="submit" class="admin-link logout-button">Log out</button>
-        </form>
-    <?php else: ?>
-        <?php if (SHOW_ADMIN_LINK): ?>
+    <?php if (!is_admin() && SHOW_ADMIN_LINK): ?>
         <details class="login-box"<?= $login_error !== '' ? ' open' : '' ?>>
             <summary class="admin-link">Admin</summary>
             <form method="post" action="<?= e(BASE_URL) ?>" class="login-form">
@@ -8998,9 +8980,30 @@ $listing_ld = [
                 <button type="submit" class="btn">Log in</button>
             </form>
         </details>
-        <?php endif; ?>
     <?php endif; ?>
 </header>
+<?php if (is_admin()): ?>
+<nav class="admin-bar" aria-label="Admin">
+    <div class="admin-bar-inner">
+        <span class="admin-bar-label">Admin</span>
+        <div class="admin-bar-links">
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=settings">Settings</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=crawlers">Crawlers</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=analytics">Analytics</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=users">Accounts</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=catalogue">Catalogue</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
+        </div>
+        <form method="post" action="<?= e(BASE_URL) ?>" class="logout-form">
+            <input type="hidden" name="action" value="logout">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <button type="submit" class="admin-link logout-button">Log out</button>
+        </form>
+    </div>
+</nav>
+<?php endif; ?>
 
 <main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
     <section class="listing">
@@ -9070,7 +9073,7 @@ $listing_ld = [
                         ? url_thumb($f['rel'], 320)
                         : ($f['kind'] === 'pdf'
                             ? (image_can_derive($f['rel']) ? url_thumb($f['rel'], 320) : $f['hotlink'])
-                            : '')) ?>" data-hover-thumb="<?= ($f['kind'] === 'pdf' && image_can_derive($f['rel'])) ? '1' : '' ?>" data-hover-title="<?= e($label) ?>" data-hover-meta="<?= e($f['size'] . ' &middot; ' . $f['mtime']) ?>">
+                            : '')) ?>" data-hover-thumb="<?= ($f['kind'] === 'pdf' && image_can_derive($f['rel'])) ? '1' : '' ?>" data-hover-title="<?= e($label) ?>">
                     <td data-sort-name="<?= e(function_exists('mb_strtolower') ? mb_strtolower($label) : strtolower($label)) ?>">
                         <div class="file-meta">
                             <a class="file-title" href="<?= e(root_relative($f['view'])) ?>"><?= e($label) ?></a>
@@ -9263,10 +9266,6 @@ $listing_ld = [
     <aside class="hover-card" id="hover-card" aria-hidden="true" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/">
         <div class="hover-card-inner">
             <div class="hover-card-media" id="hover-card-media"></div>
-            <div class="hover-card-caption">
-                <span class="hover-card-title" id="hover-card-title"></span>
-                <span class="hover-card-meta" id="hover-card-meta"></span>
-            </div>
         </div>
     </aside>
 </main>

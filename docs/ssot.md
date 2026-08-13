@@ -158,7 +158,7 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `PUBLISHER_NAME` | empty | Settings |
 | `PUBLISHER_URL` | empty | Settings |
 | `SHOW_ADMIN_LINK` | `true` | Settings |
-| `AUDIO_PLAYLIST` | `false` | Settings |
+| `AUDIO_PLAYLIST` | `true` | Settings |
 
 ### Addressing
 

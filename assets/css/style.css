@@ -719,6 +719,42 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
 }
 .admin-link:hover { color: var(--accent); }
 
+/* Admin toolbar: a dedicated second row under the header, so the admin
+   screens' links do not crowd the public navigation into wrapping. Its own
+   quiet band, with the links in the middle and Log out held to the right. On
+   narrow screens the links scroll sideways rather than stacking. */
+.admin-bar {
+    background: var(--leaf);
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--sans);
+}
+.admin-bar-inner {
+    max-width: 1500px;
+    margin: 0 auto;
+    padding: 0.5rem 1.5rem;
+    display: flex;
+    align-items: center;
+    gap: 1.25rem;
+}
+.admin-bar-label {
+    font-size: 0.62rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    opacity: 0.7;
+    flex: none;
+}
+.admin-bar-links {
+    display: flex;
+    align-items: center;
+    gap: 1.15rem;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: thin;
+}
+.admin-bar .logout-form { flex: none; }
+
 /* Touch targets: on coarse pointers (phones, tablets) the interactive
    header links, chips and tags are enlarged to a 24px minimum hit area and
    their labels lifted off the sub-12px floor. Desktop density is untouched. */
@@ -1205,23 +1241,15 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     /* Edit form fields should never exceed the viewport. */
     .meta-form input { width: 100%; box-sizing: border-box; }
 
-    /* Header: let the admin menu form its own tidy row rather than crowding
-       the title line. */
+    /* Header: the login "Admin" summary is the only admin-link left in the
+       topbar (the admin toolbar is its own row below). */
     .topbar { row-gap: 0.5rem; }
     .topbar h1 { font-size: 0.95rem; flex: 1 1 auto; }
     .topbar .crumbs { flex: 1 1 100%; order: 5; }
     .topbar .theme-picker { order: 2; }
-    .topbar .admin-link {
-        order: 6;
-        padding: 0.15rem 0;
-    }
-    /* First admin link starts the menu row on its own line. */
-    .topbar .admin-link:first-of-type {
-        flex-basis: 100%;
-        margin-top: 0.4rem;
-        padding-top: 0.5rem;
-        border-top: 1px solid var(--rule);
-    }
+    .topbar .admin-link { order: 6; padding: 0.15rem 0; }
+    /* The admin toolbar keeps its horizontal scroll; tighten its padding. */
+    .admin-bar-inner { padding: 0.5rem 1rem; gap: 0.9rem; }
 }
 
 @media print {
@@ -1576,26 +1604,6 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     color: color-mix(in srgb, var(--ink) 45%, transparent);
     letter-spacing: 0.1em;
 }
-.hover-card-caption {
-    margin-top: 0.85rem;
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-}
-.hover-card-title {
-    font-family: var(--serif);
-    font-size: 1.05rem;
-    color: var(--ink);
-    line-height: 1.25;
-}
-.hover-card-meta {
-    font-family: var(--sans);
-    font-size: 0.72rem;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-    color: var(--quiet);
-}
-
 /* No hover cards on touch / narrow screens: the stacked card layout already
    shows everything, and hover is meaningless there. */
 @media (max-width: 899px), (hover: none) {
@@ -1655,6 +1663,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     flex: 1 1 100%;
     order: 3;
     opacity: 0.85;
+    white-space: nowrap;
 }
 .footer-version { font-variant-numeric: tabular-nums; }
 .footer-site {

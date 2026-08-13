@@ -15,12 +15,13 @@ the operating system's dark-mode preference on a first visit.
 
 ### Added
 
-- **An optional audio playlist.** Turned on from Settings, a folder holding
-  more than one audio file plays as a queue: the tracks in listing order, with
-  auto-advance to the next when one ends, previous and next controls, repeat
-  and shuffle toggles, and a track list with the current one marked. It works
-  on the document page and in the listing preview pane, and stays folder-scoped
-  so there is no playlist to store or manage. Off by default.
+- **An audio playlist, on by default.** A folder holding more than one audio
+  file plays as a queue: the tracks in listing order, with auto-advance to the
+  next when one ends, previous and next controls, repeat and shuffle toggles,
+  and a track list with the current one marked. It works on the document page
+  and in the listing preview pane, and stays folder-scoped so there is no
+  playlist to store or manage. On by default (`AUDIO_PLAYLIST`), and an admin
+  can turn it off in Settings.
 
 - **Audio and video play in the page.** Files that were preview-and-download
   only now open in a player styled to the active theme, on the document page
@@ -49,6 +50,20 @@ the operating system's dark-mode preference on a first visit.
   element carries `id="folio-main"` as its target.
 
 ### Changed
+
+- **The logged-in header no longer crowds.** The eight admin screen links plus
+  Log out were sharing the single header row with the site title, page nav,
+  search, and theme picker, which forced the public navigation to wrap and read
+  as a mess. The admin tools now sit in their own quiet toolbar directly under
+  the header — labelled *Admin*, links in the middle, Log out held to the
+  right — and on a narrow screen that toolbar scrolls sideways rather than
+  stacking. The public header is unchanged for a logged-out visitor.
+
+- **The hover preview card shows only the image.** The title and the
+  size · date line under it were removed: the listing row beside the card
+  already carries all of that, so repeating it in the floating preview was
+  noise over the image. The unused `data-hover-meta` attribute is no longer
+  emitted on each row, and the caption's markup, styles, and script are gone.
 
 - **The footer credits the project, and shows the version when logged in.** A
   new colophon line reads *Powered by Folio*, linking the project repository, so

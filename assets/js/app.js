@@ -392,8 +392,6 @@
         if (!canHover) { return; }
 
         var mediaBox = document.getElementById("hover-card-media");
-        var titleEl = document.getElementById("hover-card-title");
-        var metaEl = document.getElementById("hover-card-meta");
         var rows = document.querySelectorAll(".row-file");
         var hideTimer = null;
         var lastKey = null;
@@ -506,11 +504,8 @@
                 var kind = row.getAttribute("data-hover-kind") || "other";
                 var url = row.getAttribute("data-hover-url") || "";
                 var title = row.getAttribute("data-hover-title") || "";
-                var meta = row.getAttribute("data-hover-meta") || "";
                 var served = row.getAttribute("data-hover-thumb") === "1";
                 buildMedia(kind, url, title, served);
-                titleEl.textContent = title;
-                metaEl.innerHTML = meta;
             }
             card.classList.add("is-visible");
             card.setAttribute("aria-hidden", "false");
