@@ -28,6 +28,23 @@ A folder that previously held metadata in `uploads/.sfm-meta.json` is read
 once for migration; Folio writes all future changes to `data/metadata.json`.
 Keep the legacy file until the migrated metadata has been verified.
 
+## Upgrading to 1.25.0
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
+Clear your browser cache once so the new stylesheet loads. Nothing else to do.
+
+The folder listing now sends fewer bytes — its in-page links are root-relative
+and the template's indentation whitespace is collapsed — but every page looks
+and behaves exactly as before, and canonical URLs, structured data, sitemap
+entries, and IndexNow remain fully absolute. The in-page media player's seek
+bar and playlist rows are larger on touch screens; on a desktop nothing moves.
+
+### Removed from Known issues
+
+The roadmap listed the repeated `BASE_URL` on every listing row, and the
+indentation whitespace between cells, as outstanding page-weight issues. Both
+are done, and the entries have been removed.
+
 ## Upgrading to 1.16.1
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
@@ -539,7 +556,8 @@ cannot be built without breaking one of them, the feature does not get built.
 5. **Public URLs are permanent.** Once a document has an address, Folio's job
    is to keep it working — through renames, moves, and slug changes.
 6. **Delete a cache and nothing is lost.** `data/thumbs/`, `data/text/`,
-   `data/ocr/`, and `data/previews/` are all disposable.
+   `data/ocr/`, `data/previews/`, `data/compressed/`, and `data/aspect.json`
+   are all disposable and rebuild on demand.
 
 ### Known issues
 
@@ -547,46 +565,175 @@ Measured on this release rather than assumed. These are defects or gaps with a
 known cause, listed ahead of new work because they affect libraries that exist
 today.
 
-- **A large folder renders every row at once.** A folder holding 1,500
-  documents emits a 2.8 MB page of roughly 15,000 elements. Compression hides
-  it in transit — 83 KB on the wire — but the browser still parses all of it,
-  and the in-page search and sort both walk the whole set on every keystroke.
-  Server time is unaffected, so this is a client-side ceiling, felt first on a
-  phone. Pagination or progressive rendering is the fix, and it has to carry
-  `rel="next"`/`rel="prev"` and paginated sitemap entries so nothing becomes
-  invisible to a crawler.
-
-- **A third of that page is indentation.** Collapsing the whitespace emitted
-  between table cells removes about 33% of the bytes before compression, and
-  costs nothing but care in the templates.
-
-- **Absolute URLs are repeated in every row.** `BASE_URL` is written out 7,515
-  times on that same page, 165 KB of it. Row links could be root-relative
-  without affecting canonical URLs, structured data, or the sitemap, all of
-  which must stay absolute.
-
-- **No skip-to-content link.** Keyboard and screen-reader users tab through
-  the entire header on every page before reaching the listing.
-
-- **The listing search field has no label**, only a placeholder, which screen
-  readers announce inconsistently or not at all.
-
-- **The operating system's dark-mode preference is ignored.** A Night theme
-  already exists; honouring `prefers-color-scheme` on a first visit, before
-  any stored choice, is a small change with an obvious benefit.
+- **In-page search covers the page, not the folder, once a folder is
+  paginated.** The field says so — it reads *Search this page* rather than
+  *Search this folder* — but a reader with two thousand documents wants to
+  search all of them. A folder-scoped server search would fix it, and is the
+  smaller half of the global search listed under Medium term.
 
 - **`index.php` is past the size the single-file design serves well.** At
-  8,279 lines and 151 functions, roughly 775 of those lines are inline admin
-  markup, with Diagnostics alone at 575 and Crawlers at 417. Moving the eight
-  admin screens into `admin/` includes would roughly halve the main file while
-  keeping the copy-a-folder deployment intact. This is maintainability, not
-  behaviour: nothing a reader sees would change.
+  9,302 lines and 170 functions it has grown by roughly 340 lines since this
+  was first noted, and the admin screens are the bulk of it. Moving them into
+  `admin/` includes would roughly halve the main file while keeping the
+  copy-a-folder deployment intact. This is maintainability, not behaviour:
+  nothing a reader sees would change. The figures here are re-measured each
+  time the list is reviewed, because a number that quietly goes stale is worse
+  than no number.
 
 - **The catalogue cannot be exported from the admin.** `data/metadata.json`
   holds every title, description, category, tag, and date entered by hand, and
   is the one asset that cannot be regenerated from the files. Backing it up
   currently requires FTP. A download button on the Catalogue screen would be
   small and would protect the thing most worth protecting.
+
+### The archive: a phased plan
+
+menj.bio is a documentary biographical archive: its records are primary
+documents, and the work here strengthens the archive as an archive rather than
+turning it into a personal site. The features are general, so any Folio library
+used as an archive gains from them.
+
+Two foundations already exist and the plan builds on them. `doc_date` is free
+text that `document_date_parse()` reads as a bare year, "Oktober 1998",
+"c. 1985", day-first numeric, and Malay month names, returning an ISO value, a
+year, and a precision. And every record carries a stable `document_id` apart
+from its slug, so a link or a timeline entry survives a rename. Every phase
+obeys the principles above: files on disk are never touched, no database
+appears, adding a field stays backward compatible, and new links reference
+`document_id` and render through the current slug.
+
+The order runs foundations first. The timeline is the centrepiece and the most
+dependent piece, since it is only as good as its date coverage and an event
+holding several documents is the related-records feature seen from another
+angle. So dates and description come before relationships, and the timeline
+comes last.
+
+- **Phase A, dates.** Keep the date a document was created apart from the date
+  it was digitised and the date it entered the archive. Relabels `doc_date` as
+  the document date, keeping the stored key so no record churns; adds
+  `digitised_date` and `added_at`; and makes the default listing sort the
+  document date. See decision 1 for undated records.
+
+- **Phase B, standardised metadata.** Describe every record the same way. Adds
+  issuing organisation, place, provenance, archive identifier, and a Collection
+  axis beside category, the last with its own archive page reusing the
+  category-archive pattern. The new fields map onto the schema.org and Dublin
+  Core graph Folio already emits: issuing organisation to `sourceOrganization`,
+  place to `contentLocation`, provenance to `dcterms:provenance`, archive
+  identifier to `identifier`, and Collection to `isPartOf`.
+
+- **Phase C, related records.** Connect documents that belong to the same
+  event, qualification, or publication. Each link is stored once against a
+  `document_id` with its inverse computed at read time, so the two sides cannot
+  drift, and a disposable index under `data/` caches the reverse lookup only if
+  a library grows large enough to need it. The connection type is separate from
+  what a document is, which stays in the document type field. The types and
+  their inverses are `part_of` and `has_part`, `supersedes` and
+  `superseded_by`, `references` and `referenced_by`, and a symmetric
+  `related_to`. See decision 3.
+
+- **Phase D, timeline.** Present the records as a life history. A timeline view
+  buckets records by the year of their document date, links each entry to its
+  record, and folds an event's related documents in beneath the principal one.
+  An event is modelled with the Phase C relationships, so no separate event
+  type is introduced. Named periods layer on top of the year buckets later, and
+  undated records are listed together at the end so nothing disappears. This is
+  the Chronological browsing goal, now given a shape.
+
+Four decisions gate the work, each with a proposed answer, settled before the
+phase it gates.
+
+1. **Default sort.** Moving the default from name to document date changes a
+   shipped default, which is a minor. Proposed: dated records in date order,
+   then undated records after them by name.
+2. **`added_at` cannot be backfilled.** Existing records were never stamped.
+   Proposed: leave older records blank rather than inventing a date. The
+   alternative is to read the file modification time as the added date and
+   label it a guess.
+3. **Relationship type versus document type.** The source examples mix a
+   connection (`parent_record`, `supporting_document`) with what a document is
+   (certificate, transcript, results slip). Proposed: the small type set above,
+   with the role kept in the document type field.
+4. **Where the richer form lives.** The full field set is too tall for the
+   inline row editor. Proposed: a dedicated per-document edit screen grouped
+   into identity, dates, provenance, and relationships.
+
+### Redaction: a phased plan
+
+An archive of real documents needs to publish a passport or an identity card
+while hiding the number, the address, and the photograph. This is planned, and
+there is exactly one honest way to build it. The obvious way is a fake, so the
+constraint is written down first.
+
+**Client-side boxes are not redaction.** Drawing black rectangles over the
+image with CSS or canvas leaves the original bytes one right-click, one
+network-tab look, or one devtools deletion away. Folio serves image bytes
+directly from the web server, so anything painted in the browser hides nothing.
+Folio will not ship that and call it redaction.
+
+**The real model is gate the original, publish a rendered copy.** The censored
+regions are burned into the pixels on the server, and the original stops being
+publicly reachable. Everything below follows from that.
+
+- The admin marks rectangles on the document from the dashboard. They are
+  stored as fractions of the page, so they hold at any resolution and survive
+  a re-render.
+- Folio renders a redacted copy: rasterise the image or the PDF page, paint
+  solid opaque boxes over the marked regions, strip embedded metadata, and
+  cache the result under `data/` as a disposable derivative.
+- Every public path serves only the redacted copy: the detail view, the
+  preview pane, the hover and listing thumbnails, the sitemap image, the
+  structured-data image, and the direct link. The original becomes
+  access-controlled the way a hidden PDF already is, so it is never served
+  whole to the public.
+
+That last point is the whole feature. Redaction is only as strong as the
+weakest route that serves original bytes, so this is really "extend the
+`pdf_access` gate to images and route every serve path through the rendered
+copy," with a marking tool on top. It is the concrete form of the "per-document
+access beyond PDFs" item below.
+
+**Two rules that cannot bend.**
+
+- **It fails closed.** Redaction depends on an image engine (Imagick or GD,
+  both already used for thumbnails) and, for PDFs, on Poppler. When the engine
+  is missing or a render fails, the safe behaviour is to refuse to show the
+  document, never to fall back to the unredacted original.
+- **A redacted PDF is shown as page images, not the embedded file.** Painting
+  over a PDF page leaves the text underneath extractable, which is the exact
+  way "redacted" government files have leaked. So a redacted PDF is served as
+  rendered page images, the embedded viewer and flip reader are off for it, and
+  the original PDF stays gated. Selectable text is lost on redacted documents.
+  That is the price of the boxes being real.
+
+The phases build the safe core before the convenience.
+
+- **Phase R1, gate images.** Extend the `pdf_access` states (public, viewer,
+  hidden) to image files, so an original can be marked non-public and served
+  only through the signed, access-controlled path. No redaction yet; this is
+  the gate the rest stands on, and it fails closed when signing is not
+  configured, exactly as PDF gating already does.
+
+- **Phase R2, render and cache.** Given a file and a set of rectangles,
+  produce the redacted derivative: rasterise, paint opaque boxes, strip
+  metadata, cache under `data/`. Invalidate the cache when the rectangles or
+  the source change. Refuse when the engine is absent.
+
+- **Phase R3, route every serve path.** Point the detail view, preview,
+  thumbnails, hover, sitemap image, and structured-data image at the
+  derivative for a redacted record, and gate the original behind the R1
+  access control. Audit each path so none serves the source.
+
+- **Phase R4, the marking tool.** A dashboard editor to draw, move, and delete
+  rectangles on the document, stored as page fractions. This comes last on
+  purpose: the serving and gating must be proven safe before a tool makes it
+  easy to rely on them.
+
+Decisions to settle before R1: whether redaction reuses the `pdf_access`
+field and its three states directly or gets its own flag beside it; and
+whether a document can be partially public, meaning the redacted copy is
+public while the original is gated, which is the passport case and the reason
+the feature exists.
 
 ### Near term
 
@@ -612,9 +759,6 @@ Larger pieces that need design work before they are safe to start.
 - **Per-document access beyond PDFs.** `pdf_access` covers PDFs. The same
   gating could reasonably extend to images and other formats, using the
   signing mechanism that already exists.
-- **Chronological browsing.** Documents carry a parsed date as of 1.10.0, and
-  the sort control uses it. Browsing by decade or year, as an archive rather
-  than a folder, is the piece still missing.
 - **A read-only account role.** Every account currently has full authority.
   A role that can edit metadata but not manage accounts or settings would
   suit a library with more than one cataloguer.

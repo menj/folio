@@ -60,8 +60,46 @@
         while (wrap.firstChild) {
             wrap.removeChild(wrap.firstChild);
         }
+
+        /* Until the file arrives the browser's viewer is an empty dark
+           rectangle, which reads as broken rather than busy. A large scan can
+           sit like that for a long time. Cover it with a quiet note on the
+           page colour, naming the size so the wait is explicable, and reveal
+           the viewer only once it has actually loaded. */
+        var note = document.createElement("p");
+        note.className = "pdf-loading";
+        var size = host.getAttribute("data-pdf-size") || "";
+        note.textContent = size !== ""
+            ? "Loading the document (" + size + ")\u2026"
+            : "Loading the document\u2026";
+
+        frame.classList.add("is-loading");
+        wrap.appendChild(note);
         wrap.appendChild(frame);
         host.classList.add("pdf-preview-inline");
+
+        var settled = false;
+        var reveal = function () {
+            if (settled) { return; }
+            settled = true;
+            window.clearTimeout(slow);
+            window.clearTimeout(giveUp);
+            frame.classList.remove("is-loading");
+            if (note.parentNode) { note.parentNode.removeChild(note); }
+        };
+        frame.addEventListener("load", reveal);
+
+        /* Say something after a while rather than leaving the same line
+           sitting there, and stop hiding the viewer eventually: some browsers
+           never fire load for an embedded PDF, and a viewer the reader can see
+           beats a note that never goes away. */
+        var slow = window.setTimeout(function () {
+            if (!settled) {
+                note.textContent = "Still loading" + (size !== "" ? " (" + size + ")" : "")
+                    + "\u2026 large scans can take a moment.";
+            }
+        }, 6000);
+        var giveUp = window.setTimeout(reveal, 20000);
     }
 
     function renderPdfPreview(host) {

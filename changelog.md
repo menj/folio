@@ -3,6 +3,230 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.25.0 — 13 August 2026
+
+Mobile media ergonomics and a lighter listing. The in-page player is easier to
+operate by touch, and the folder listing ships noticeably fewer bytes without
+changing a single visible thing.
+
+### Changed
+
+- **The media player is easier to use by touch.** On coarse pointers the seek
+  bar's hit area grows from 16px to 28px and its knob from 12px to 18px, so it
+  can be grabbed and dragged with a fingertip, and playlist track rows are given
+  a 24px-minimum tap height. The visible track, the buffered and played fills,
+  and the desktop layout are unchanged — the rules are gated behind
+  `@media (pointer: coarse)`.
+
+- **The folder listing is smaller on the wire.** Two changes with no visible
+  effect. In-page row links (document titles, category chips, folder rows, the
+  flip-view button) are now root-relative rather than repeating the full site
+  address on every row, which on a large folder removed tens of thousands of
+  copies of the base URL. And the indentation whitespace the template injects
+  between cells is collapsed at render time, which is masked around any
+  `<textarea>` so the admin transcript field keeps its formatting. Canonical
+  tags, structured data, sitemap entries, and IndexNow stay fully absolute, as
+  they must.
+
+## 1.24.0 — 13 August 2026
+
+In-page media. Audio and video now play in the page, and a folder's audio can
+play as a playlist. Both add capability and one changes what a shipped file
+kind does, which makes this a minor.
+
+### Added
+
+- **An optional audio playlist.** Turned on from Settings, a folder holding
+  more than one audio file plays as a queue: the tracks in listing order, with
+  auto-advance to the next when one ends, previous and next controls, repeat
+  and shuffle toggles, and a track list with the current one marked. It works
+  on the document page and in the listing preview pane, and stays folder-scoped
+  so there is no playlist to store or manage. Off by default.
+
+- **Audio and video play in the page.** Files that were preview-and-download
+  only now open in a player styled to the active theme, on the document page
+  and in the listing preview pane, for both audio and video. The transport has
+  play and pause, a seek bar with a buffered indicator, a time readout, volume
+  and mute, and full screen for video, and is keyboard operable. Supported
+  extensions are `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.ogg`, `.oga`,
+  `.opus`, and `.weba` for audio, and `.mp4`, `.m4v`, `.webm`, `.ogv`, and
+  `.mov` for video.
+
+- **The web server delivers media directly, so seeking works.** Media
+  extensions are on the direct-serve path and declared in the uploads rules
+  with the right type and without the download-and-sandbox headers other
+  formats get, which lets the browser request byte ranges and seek. Playback
+  needs no new dependency, no database, and no build step, and the file on
+  disk is never touched.
+
+- **A no-JavaScript fallback.** The page ships the browser's own player, and
+  the theme enhances it only when scripts run, so a reader without JavaScript
+  still gets working playback.
+
+### Changed
+
+- **File-kind detection is centralised.** A single `file_kind()` decides what
+  every file is, replacing three copies of the same logic that would otherwise
+  need the audio and video rules added in three places.
+
+## 1.23.0 — 13 August 2026
+
+Three accessibility and theming items from the roadmap's Known issues.
+Honouring the operating system's dark-mode preference changes a shipped
+default on first visit, which makes the release a minor.
+
+### Added
+
+- **A skip-to-content link.** Every page with the standard header now opens
+  with a link that jumps a keyboard or screen-reader user straight to the main
+  content, past the header and its navigation. It stays off screen until it
+  receives focus, so nothing changes visually for a pointer user. The main
+  element carries `id="folio-main"` as its target.
+
+### Changed
+
+- **The operating system's dark-mode preference is honoured on a first
+  visit.** With no stored choice, a reader whose system asks for dark now
+  opens on the Night theme. A saved choice still wins, and the theme picker
+  behaves exactly as before once anything is chosen.
+
+- **The listing search field has an accessible name.** Its label held only a
+  decorative glyph, so a screen reader announced an empty label and fell back
+  to the placeholder. The field now carries an `aria-label` matching its scope,
+  *Search this folder* or *Search this page* on a paginated folder.
+
+### Documentation
+
+- **The roadmap gained a phased plan for the archive features** in
+  `docs/upgrading.md`, covering separated dates, standardised archival
+  metadata, related records, and a chronological timeline, with the build
+  order, the structured-data mappings, and the decisions each phase depends on.
+
+## 1.22.0 — 13 August 2026
+
+### Changed
+
+- **Mobile touch targets.** On coarse pointers (phones and tablets) the header
+  links, breadcrumb links, pager links, filter chips and category/tag chips now
+  meet a 24px minimum hit area, and their labels are lifted off the sub-12px
+  floor (chips 0.8rem, category/tag chips 0.75rem, sort marks to 1em). Desktop
+  layout and density are unchanged — the rules are gated behind
+  `@media (pointer: coarse)`.
+
+## 1.21.0 — 6 August 2026
+
+### Added
+
+- **Large folders are paginated.** A folder of 1,500 documents emitted a
+  2.7 MB page of some 15,000 elements; it now sends 505 KB. Below `PER_PAGE`
+  (200 by default, 0 to disable) nothing changes at all: the folder renders
+  whole and the browser sorts, filters and searches it instantly, as before.
+
+  **Sorting moves to the server when a folder is paginated**, and this is the
+  part that mattered. Sorting is done in the browser over the rows it holds,
+  so paginating without changing it would have quietly reduced "sort by size"
+  to "sort the hundred in front of you". A reader who asks for the largest
+  file is entitled to the largest file. Verified against 1,500 files with
+  random sizes: descending opens on the true maximum, ascending on the true
+  minimum.
+
+  Each page carries its own canonical, with `rel="prev"` and `rel="next"`.
+  Every document already has its own sitemap entry, so nothing became less
+  visible to a crawler.
+
+- **llms.txt now names the files, not only the pages.** Each public PDF
+  carries its direct address beside its page, because a reader that can parse
+  a PDF should be told where the PDF is. Access-restricted files deliberately
+  do not: the line above them already explains why, and naming a URL that
+  answers 403 helps nobody. The machine-readable section lists both sitemaps.
+
+- **A link to llms.txt in the footer**, beside the sitemap, on the same terms:
+  shown when the file is enabled and the library is indexable.
+
+### Changed
+
+- The listing search field reads *Search this page* on a paginated folder
+  rather than *Search this folder*, because that is what it does. Searching a
+  whole paginated folder needs the server, and is now recorded as a known
+  issue rather than implied by a label.
+
+## 1.20.1 — 6 August 2026
+
+### Documentation
+
+- **The roadmap's Known issues were re-measured against this release.** The
+  entry for `index.php` still quoted 8,279 lines and 151 functions; it is now
+  8,964 and 163, having grown by roughly 700 lines since the note was written.
+  A figure that quietly goes stale is worse than no figure, so the list now
+  says it is re-measured whenever it is reviewed.
+
+- **The search-field entry was wrong about the cause.** It said the field had
+  no label. It has one — `<label for="listing-search">` — but the label's only
+  content is a decorative glyph marked `aria-hidden`, so a screen reader finds
+  an empty label and falls back to the placeholder. The fix is different from
+  the one implied, so the entry now describes what is actually there.
+
+- Principle 6, on disposable caches, listed four directories and had not been
+  updated for `data/compressed/` or `data/aspect.json`. Both are disposable
+  and both are now named.
+
+The three payload measurements were re-checked on a 1,500-document folder and
+hold: 2.7 MB, 33% indentation, `BASE_URL` written 7,514 times.
+
+## 1.20.0 — 6 August 2026
+
+### Changed
+
+- **The loading note carries an animated sweep.** A thin rule in the accent
+  travels beneath the words while a document loads. It is indeterminate on
+  purpose: the wait cannot be measured, and a bar that fills to a number it
+  invented is worse than one that simply says *working*. Under
+  `prefers-reduced-motion` it holds still as a hairline and the words carry
+  the message.
+
+- **Corners follow a scale rather than a habit.** The interface used 2px, 3px
+  and 6px in different places, which reads as assembled rather than
+  considered. There are now three named radii — 4px for chips, 7px for
+  buttons and inputs, 10px for documents and panels — and everything uses
+  them.
+
+- **Documents sit on the page instead of being printed into it.** The PDF
+  viewer, page renders, images, the hover card and the search panel carry a
+  soft two-layer shadow. Each theme defines its own: on Night a drop shadow
+  reads as a smudge, so its depth is darker and tighter.
+
+- **Controls answer when touched.** Buttons lift a single pixel on hover and
+  settle on press, with a hairline of light along the top edge the way a
+  pressed key catches it. Inputs take an accent ring on focus. Chips get the
+  softer corner and an eased colour change but no lift: they are apparatus,
+  not buttons, and should stay quiet.
+
+- Focus rings are now deliberate — accent, offset, and following the same
+  radius scale — rather than whatever the browser supplies.
+
+Every transition is short and eased, and all of them are switched off under
+`prefers-reduced-motion`. No gradients on surfaces, and no colour that is not
+already in the theme: the library still reads as paper.
+
+## 1.19.4 — 6 August 2026
+
+### Fixed
+
+- **A loading document looked like a broken one.** The browser's PDF viewer
+  is an empty dark rectangle until the file arrives, and a large scan can sit
+  like that for a long time with nothing to say it is working. A reader has no
+  way to tell a slow document from a failed one.
+
+  The viewer is now covered until it is ready by a quiet note on the page
+  colour, naming the size so the wait is explicable: *Loading the document
+  (846 KB)…*. The frame keeps its space while hidden, so nothing shifts when
+  the document appears.
+
+  After six seconds the note acknowledges the wait rather than repeating
+  itself. After twenty it reveals the viewer regardless: some browsers never
+  report an embedded PDF as loaded, and a viewer the reader can see is better
+  than a note that never leaves.
+
 ## 1.19.3 — 6 August 2026
 
 ### Fixed

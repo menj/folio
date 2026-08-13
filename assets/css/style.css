@@ -8,6 +8,16 @@
    ------------------------------------------------------------------ */
 
 :root,
+/* Shape and depth, shared by every theme. Radii were 2px, 3px and 6px in
+   different places; naming them makes the interface look considered rather
+   than assembled. */
+:root {
+    --radius-sm: 4px;    /* chips, small controls */
+    --radius:    7px;    /* buttons, inputs, cards */
+    --radius-lg: 10px;   /* documents, panels, the viewer */
+    --lift:      cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+
 html[data-theme="folio"] {
     --paper:   #f3f2ee;   /* bone, cooled */
     --leaf:    #fbfaf8;   /* the page itself */
@@ -16,6 +26,9 @@ html[data-theme="folio"] {
     --accent:  #6e1d1d;   /* oxblood */
     --rule:    #ddd9d2;   /* hairline */
     --gutter:  rgba(38, 38, 42, 0.09);
+    --shadow:  0 1px 2px rgba(38, 38, 42, 0.05), 0 6px 18px rgba(38, 38, 42, 0.07);
+    --shadow-lift: 0 2px 4px rgba(38, 38, 42, 0.07), 0 12px 28px rgba(38, 38, 42, 0.11);
+    --sheen:   rgba(255, 255, 255, 0.55);
 }
 
 html[data-theme="ledger"] {
@@ -26,6 +39,9 @@ html[data-theme="ledger"] {
     --accent: #1d4b6e;
     --rule:   #dbe0e6;
     --gutter: rgba(30, 37, 48, 0.09);
+    --shadow:  0 1px 2px rgba(30, 37, 48, 0.05), 0 6px 18px rgba(30, 37, 48, 0.08);
+    --shadow-lift: 0 2px 4px rgba(30, 37, 48, 0.08), 0 12px 28px rgba(30, 37, 48, 0.12);
+    --sheen:   rgba(255, 255, 255, 0.6);
 }
 
 html[data-theme="garden"] {
@@ -36,6 +52,9 @@ html[data-theme="garden"] {
     --accent: #2f5d3a;
     --rule:   #d9e0d8;
     --gutter: rgba(30, 42, 33, 0.09);
+    --shadow:  0 1px 2px rgba(28, 42, 32, 0.05), 0 6px 18px rgba(28, 42, 32, 0.08);
+    --shadow-lift: 0 2px 4px rgba(28, 42, 32, 0.08), 0 12px 28px rgba(28, 42, 32, 0.12);
+    --sheen:   rgba(255, 255, 255, 0.55);
 }
 
 html[data-theme="night"] {
@@ -46,6 +65,9 @@ html[data-theme="night"] {
     --accent: #c08a6a;
     --rule:   #33333a;
     --gutter: rgba(0, 0, 0, 0.4);
+    --shadow:  0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 24px rgba(0, 0, 0, 0.45);
+    --shadow-lift: 0 2px 6px rgba(0, 0, 0, 0.55), 0 16px 36px rgba(0, 0, 0, 0.5);
+    --sheen:   rgba(255, 255, 255, 0.06);
 }
 
 /* ---- Type ------------------------------------------------------- */
@@ -79,6 +101,274 @@ body {
 .btn, .btn-small, .meta-form input, .login-form input,
 .meta-filename, .crumbs, .login-error {
     font-family: var(--sans);
+}
+
+/* ---- Skip link -------------------------------------------------- */
+
+.skip-link {
+    position: absolute;
+    left: 0.5rem;
+    top: -3rem;
+    z-index: 100;
+    padding: 0.5rem 0.85rem;
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    background: var(--accent);
+    color: #fff;
+    border-radius: var(--radius);
+    text-decoration: none;
+    transition: top 0.15s var(--lift);
+}
+
+.skip-link:focus { top: 0.5rem; }
+
+/* ---- Media player ----------------------------------------------- */
+
+.folio-media {
+    position: relative;
+    width: 100%;
+    background: var(--ink);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+.folio-media.fm-audio {
+    background: var(--leaf);
+    border: 1px solid var(--rule);
+}
+
+.folio-media .fm-el {
+    display: block;
+    width: 100%;
+}
+
+.fm-video .fm-el {
+    max-height: 70vh;
+    background: #000;
+    cursor: pointer;
+}
+
+.fm-audio .fm-el {
+    height: 0;
+}
+
+/* Transport bar */
+.fm-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    font-family: var(--sans);
+}
+
+.fm-audio .fm-bar {
+    color: var(--ink);
+}
+
+.fm-video .fm-bar {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    color: #fff;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+    transition: opacity 0.25s var(--lift);
+}
+
+.fm-video.fm-idle .fm-bar { opacity: 0; }
+.fm-video.fm-idle .fm-el { cursor: none; }
+
+.fm-btn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+}
+
+.fm-btn svg {
+    width: 22px;
+    height: 22px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.fm-play svg, .fm-mute svg { fill: currentColor; stroke: none; }
+
+@media (hover: hover) {
+    .fm-btn:hover { background: rgba(127, 127, 127, 0.18); }
+}
+
+.fm-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.fm-video .fm-btn:focus-visible { outline-color: #fff; }
+
+/* Scrubber */
+.fm-scrub {
+    position: relative;
+    flex: 1 1 auto;
+    height: 16px;
+    cursor: pointer;
+    touch-action: none;
+}
+
+.fm-scrub::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 50%;
+    height: 4px;
+    transform: translateY(-50%);
+    border-radius: 2px;
+    background: rgba(127, 127, 127, 0.35);
+}
+
+.fm-buffered, .fm-played {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    height: 4px;
+    transform: translateY(-50%);
+    border-radius: 2px;
+    width: 0;
+}
+
+.fm-buffered { background: rgba(127, 127, 127, 0.45); }
+.fm-played { background: var(--accent); }
+
+.fm-video .fm-played { background: #fff; }
+
+.fm-knob {
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 12px;
+    height: 12px;
+    margin-left: -6px;
+    transform: translateY(-50%);
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--leaf);
+}
+
+.fm-video .fm-knob {
+    background: #fff;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
+}
+
+.fm-scrub:focus-visible { outline: none; }
+.fm-scrub:focus-visible .fm-knob {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+.fm-video .fm-scrub:focus-visible .fm-knob { outline-color: #fff; }
+
+.fm-time {
+    flex: none;
+    font-size: 0.8rem;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.02em;
+    opacity: 0.9;
+}
+
+.fm-vol {
+    flex: none;
+    width: 76px;
+    accent-color: var(--accent);
+}
+
+.fm-video .fm-vol { accent-color: #fff; }
+
+@media (max-width: 600px) {
+    .fm-vol { display: none; }
+    .fm-time { font-size: 0.75rem; }
+}
+
+.fm-video:fullscreen { width: 100vw; height: 100vh; }
+.fm-video:fullscreen .fm-el { max-height: 100vh; height: 100vh; object-fit: contain; }
+
+/* Playlist */
+.fm-btn.fm-on { color: var(--accent); }
+.fm-video .fm-btn.fm-on { color: #fff; opacity: 1; }
+
+.fm-list {
+    list-style: none;
+    margin: 0;
+    padding: 0.35rem;
+    max-height: 15rem;
+    overflow-y: auto;
+    border-top: 1px solid var(--rule);
+    background: var(--leaf);
+    font-family: var(--sans);
+}
+
+.fm-list li { margin: 0; }
+
+.fm-track {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 0.5rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 0.9rem;
+    cursor: pointer;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+@media (hover: hover) {
+    .fm-track:hover { background: rgba(127, 127, 127, 0.12); }
+}
+
+.fm-track:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+.fm-track.fm-current {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+.fm-track.fm-current::before {
+    content: "\25B8\00a0\00a0";
+}
+
+/* On coarse pointers the scrubber is hard to grab and drag: a 16px-tall
+   strip with a 12px knob is below a comfortable touch target. The visible
+   track and buffered/played fills are unchanged; only the hit area and the
+   knob grow, and playlist rows are given a 24px-minimum tap height. Desktop
+   density is untouched — everything here is gated behind pointer: coarse. */
+@media (pointer: coarse) {
+    .fm-scrub { height: 28px; }
+    .fm-knob {
+        width: 18px;
+        height: 18px;
+        margin-left: -9px;
+    }
+    .fm-track {
+        min-height: 24px;
+        padding-block: 0.6rem;
+    }
 }
 
 /* ---- Running head ----------------------------------------------- */
@@ -257,7 +547,7 @@ td a:hover { color: var(--accent); }
     font-size: 0.7rem;
     letter-spacing: 0.06em;
     padding: 0.12rem 0.6rem;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--rule);
     background: transparent;
     color: var(--quiet);
@@ -332,7 +622,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     width: min(38rem, 100%);
     background: var(--leaf);
     border: 1px solid var(--rule);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     box-shadow: 0 18px 50px -20px rgba(0, 0, 0, 0.45);
     padding: 1rem 1.1rem 0.8rem;
 }
@@ -385,7 +675,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     font-family: var(--mono);
     font-size: 0.9em;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0 0.25em;
 }
 
@@ -400,7 +690,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     border: 1px solid var(--accent);
     background: var(--accent);
     color: var(--leaf);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     padding: 0.32rem 0.9rem;
     font-size: 0.8rem;
@@ -429,6 +719,33 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
 }
 .admin-link:hover { color: var(--accent); }
 
+/* Touch targets: on coarse pointers (phones, tablets) the interactive
+   header links, chips and tags are enlarged to a 24px minimum hit area and
+   their labels lifted off the sub-12px floor. Desktop density is untouched. */
+@media (pointer: coarse) {
+    .admin-link,
+    .crumbs a,
+    .page-nav a {
+        display: inline-flex;
+        align-items: center;
+        min-height: 24px;
+        font-size: 0.78rem;
+    }
+    a.chip,
+    .chip {
+        min-height: 24px;
+        font-size: 0.8rem;
+        padding-block: 0.3rem;
+    }
+    .chip-cat,
+    .chip-mini,
+    .file-cats .chip-cat,
+    .file-tags .chip-tag {
+        font-size: 0.75rem;
+    }
+    .sort-mark { font-size: 1em; }
+}
+
 /* Logging out is a POST so that another origin cannot trigger it. The form
    and its button are styled to sit inline with the other header links. */
 .logout-form { display: inline; margin: 0; }
@@ -454,7 +771,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     top: 1.7rem;
     background: var(--leaf);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.7rem;
     display: flex;
     flex-direction: column;
@@ -471,7 +788,7 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     font-size: 0.85rem;
     padding: 0.35rem 0.5rem;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--paper);
     color: var(--ink);
 }
@@ -632,6 +949,66 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     min-height: 0;
     display: block;
 }
+/* While the file is in flight the viewer is hidden behind a note on the page
+   colour, so the reader sees paper and a sentence rather than a dark
+   rectangle. The frame keeps its space, so nothing shifts when it appears. */
+.pdf-loading {
+    position: absolute;
+    inset: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.9rem;
+    text-align: center;
+    padding: 1.5rem;
+    background: var(--leaf);
+    border-radius: var(--radius-lg);
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    color: var(--quiet);
+    z-index: 1;
+}
+
+/* An indeterminate sweep rather than a spinner: the length of the wait is
+   unknown, and a bar that travels says "working" without pretending to know
+   how far along it is. A hairline, in the accent, at reading pace. */
+.pdf-loading::after {
+    content: "";
+    display: block;
+    width: min(11rem, 55%);
+    height: 2px;
+    border-radius: 2px;
+    background: linear-gradient(90deg,
+        transparent 0%,
+        var(--accent) 35%,
+        var(--accent) 65%,
+        transparent 100%);
+    background-size: 220% 100%;
+    animation: folio-sweep 1.5s var(--lift) infinite;
+    opacity: 0.75;
+}
+
+@keyframes folio-sweep {
+    from { background-position: 120% 0; }
+    to   { background-position: -120% 0; }
+}
+
+/* Reduced motion: keep the bar as a static rule so the layout does not
+   change, and let the words carry the message. */
+@media (prefers-reduced-motion: reduce) {
+    .pdf-loading::after {
+        animation: none;
+        background: var(--rule);
+        background-size: auto;
+    }
+}
+
+.pdf-frame.is-loading {
+    visibility: hidden;
+}
+
 /* Height is set from script to match the document's page shape; this is the
    fallback for when the shape is unknown — no pdfinfo on the server, or a
    file it could not read. */
@@ -713,13 +1090,13 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     font-size: 0.85em;
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.08em 0.32em;
 }
 .md-content pre {
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.85em 1em;
     overflow-x: auto;
     font-size: 0.88rem;
@@ -861,7 +1238,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.9rem;
     padding: 0.4rem 0.6rem;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--paper);
     color: var(--ink);
     flex: 1;
@@ -871,7 +1248,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .hash-out {
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.8rem 1rem;
     overflow-x: auto;
     font-size: 0.82rem;
@@ -887,7 +1264,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     padding: 0.6rem 0.9rem;
     border: 1px solid var(--rule);
     border-left-width: 3px;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     margin: 0 0 1.25rem;
 }
 .msg-ok { border-left-color: var(--accent); }
@@ -899,7 +1276,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.9rem;
     padding: 0.4rem 0.55rem;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--paper);
     color: var(--ink);
 }
@@ -946,7 +1323,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.9rem;
     padding: 0.4rem 0.55rem;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--paper);
     color: var(--ink);
     resize: vertical;
@@ -967,7 +1344,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.88em;
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.05em 0.35em;
 }
 
@@ -1034,7 +1411,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.85rem;
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.7rem 0.9rem;
     margin: 0.4rem 1.5rem 1rem;
     white-space: pre;
@@ -1061,7 +1438,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .pages-form { max-width: 44rem; }
 .page-slot {
     border: 1px solid var(--rule);
-    border-radius: 3px;
+    border-radius: var(--radius-sm);
     padding: 1rem 1.25rem 1.25rem;
     margin: 0 0 1.25rem;
 }
@@ -1099,7 +1476,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     font-size: 0.9rem;
     padding: 0.45rem 0.6rem;
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     background: var(--leaf);
     color: var(--ink);
 }
@@ -1156,7 +1533,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     width: 100%;
     aspect-ratio: 4 / 3;
     border: 1px solid var(--rule);
-    border-radius: 6px;
+    border-radius: var(--radius);
     overflow: hidden;
     background: var(--paper);
     display: flex;
@@ -1186,6 +1563,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 }
 .hover-card-media.kind-other,
 .hover-card-media.kind-md,
+.hover-card-media.kind-audio,
+.hover-card-media.kind-video,
 .hover-card-media.kind-txt {
     background:
         radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 62%),
@@ -1309,7 +1688,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .key-offer {
     background: var(--paper);
     border: 1px solid var(--rule);
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.7rem 0.9rem;
     overflow-x: auto;
     font-family: var(--mono);
@@ -1488,7 +1867,7 @@ th[aria-sort="descending"] .col-sort { color: var(--accent); }
     color: var(--quiet);
     background: none;
     border: 1px solid transparent;
-    border-radius: 2px;
+    border-radius: var(--radius-sm);
     padding: 0.4rem 0.7rem;
     cursor: pointer;
     min-height: 2.25rem;
@@ -1559,3 +1938,162 @@ th[aria-sort="descending"] .col-sort { color: var(--accent); }
         gap: 0.4rem;
     }
 }
+
+/* ---- Depth and finish ------------------------------------------------
+ *
+ * The library reads as paper: hairlines, serif text, a single accent. What it
+ * lacked was any sense that a document sits *on* the page rather than being
+ * printed into it. These add that, and nothing else — no gradients on
+ * surfaces, no colour that is not already in the theme.
+ *
+ * Every transition is short and eased, and all of it is disabled under
+ * prefers-reduced-motion at the end of this block.
+ */
+
+/* The document itself: the one thing on the page that should look raised. */
+.pdf-frame,
+.pdf-preview-canvas,
+.detail-media img {
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+}
+.pdf-preview-inline .pdf-preview-canvas-wrap {
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+/* Buttons: a hairline of light along the top edge, the way a pressed key
+   catches it, and a small lift on hover. */
+.btn {
+    border-radius: var(--radius);
+    transition: transform 0.14s var(--lift),
+                box-shadow 0.14s var(--lift),
+                border-color 0.14s var(--lift),
+                background-color 0.14s var(--lift);
+}
+.btn:not(.btn-ghost) {
+    box-shadow: inset 0 1px 0 var(--sheen), var(--shadow);
+}
+.btn:hover {
+    transform: translateY(-1px);
+    box-shadow: inset 0 1px 0 var(--sheen), var(--shadow-lift);
+}
+.btn:active {
+    transform: translateY(0);
+    box-shadow: var(--shadow);
+}
+.btn-ghost:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+/* Chips: no lift, they are apparatus. Just a softer corner and a colour
+   that arrives rather than snaps. */
+.chip {
+    border-radius: var(--radius-sm);
+    transition: color 0.14s var(--lift),
+                border-color 0.14s var(--lift),
+                background-color 0.14s var(--lift);
+}
+
+/* Cards and panels that float above the page. */
+.hover-card-inner,
+.preview-pane,
+.search-overlay-panel {
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lift);
+}
+
+/* Rows: a quiet wash on hover, so a long list tracks under the cursor. */
+.row-file {
+    transition: background-color 0.14s var(--lift);
+}
+
+/* Focus that looks intended rather than like a browser default. */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+
+/* Inputs and textareas, matching the buttons beside them. */
+.stack-form input,
+.stack-form select,
+.stack-form textarea,
+.hash-form input[type="text"] {
+    border-radius: var(--radius);
+    transition: border-color 0.14s var(--lift), box-shadow 0.14s var(--lift);
+}
+.stack-form input:focus,
+.stack-form select:focus,
+.stack-form textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+    outline: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .btn,
+    .chip,
+    .row-file,
+    .stack-form input,
+    .stack-form select,
+    .stack-form textarea {
+        transition: none;
+    }
+    .btn:hover,
+    .btn:active {
+        transform: none;
+    }
+}
+
+/* ---- Pager ------------------------------------------------------------
+   Only present when a folder is too large to render whole. */
+.pager {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem 1.25rem;
+    padding: 1rem 1.5rem 1.5rem;
+    border-top: 1px solid var(--rule);
+}
+.pager-count {
+    margin: 0;
+    font-family: var(--sans);
+    font-size: 0.74rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--quiet);
+}
+.pager-links {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    margin: 0;
+}
+.pager-page,
+.pager-here {
+    font-family: var(--sans);
+    font-size: 0.82rem;
+    min-width: 2rem;
+    min-height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 0.4rem;
+    border-radius: var(--radius-sm);
+    text-decoration: none;
+}
+.pager-page { color: var(--quiet); }
+.pager-page:hover { color: var(--accent); background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.pager-here {
+    color: var(--leaf);
+    background: var(--accent);
+    box-shadow: inset 0 1px 0 var(--sheen);
+}
+.pager-gap { color: var(--quiet); padding: 0 0.15rem; }
+
+/* Paginated headers are links, not buttons; they must not inherit button reset. */
+a.col-sort { text-decoration: none; }

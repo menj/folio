@@ -7,11 +7,15 @@
     var body = document.getElementById("preview-body");
     var nameEl = document.getElementById("preview-name");
     var printFrame = document.getElementById("print-frame");
+    var printBtn = document.getElementById("btn-print");
     var current = null; // { file, kind, url }
 
     function openPreview(file, kind, label, rawUrl, renderUrl) {
         current = { file: file, kind: kind, url: rawUrl, renderUrl: renderUrl };
         nameEl.textContent = label || file.split("/").pop().replace(/\.[^.]+$/, "");
+        if (printBtn) {
+            printBtn.hidden = (kind === "audio" || kind === "video");
+        }
         body.innerHTML = "";
 
         if (kind === "image") {
@@ -19,6 +23,50 @@
             img.src = current.url;
             img.alt = nameEl.textContent;
             body.appendChild(img);
+        } else if (kind === "audio" || kind === "video") {
+            if (!current.url) {
+                body.innerHTML = "<p class=\"preview-empty\">This file has no preview.</p>";
+                pane.hidden = false;
+                return;
+            }
+            var mwrap = document.createElement("div");
+            mwrap.className = "folio-media fm-" + kind;
+            mwrap.setAttribute("data-media-kind", kind);
+            var mel = document.createElement(kind);
+            mel.className = "fm-el";
+            mel.setAttribute("controls", "");
+            mel.setAttribute("preload", "metadata");
+            if (kind === "video") {
+                mel.setAttribute("playsinline", "");
+            }
+            mel.src = current.url;
+            mwrap.appendChild(mel);
+            /* Playlist: when the feature is on and this is audio, queue the
+               other audio files listed in the current folder so the preview
+               pane plays through them, matching the document page. */
+            var mainEl = document.getElementById("folio-main");
+            if (kind === "audio" && mainEl && mainEl.getAttribute("data-audio-playlist") === "1") {
+                var links = document.querySelectorAll(".file-link[data-kind='audio']");
+                if (links.length > 1) {
+                    var q = [];
+                    var idx = 0;
+                    for (var i = 0; i < links.length; i++) {
+                        var url = links[i].getAttribute("data-raw-url");
+                        var r = links[i].closest("tr");
+                        var t = r ? r.querySelector(".file-title") : null;
+                        q.push({ url: url, title: t ? t.textContent : "" });
+                        if (links[i].getAttribute("data-file") === file) {
+                            idx = i;
+                        }
+                    }
+                    mwrap.setAttribute("data-playlist", JSON.stringify(q));
+                    mwrap.setAttribute("data-playlist-index", String(idx));
+                }
+            }
+            body.appendChild(mwrap);
+            if (window.FolioMedia) {
+                window.FolioMedia.mount(mwrap);
+            }
         } else {
             /* An empty or relative src resolves against the current page and
                would load the library inside its own preview pane. Refuse
@@ -299,7 +347,9 @@
            deleting the text. */
     }
 
-    document.getElementById("btn-print").addEventListener("click", printCurrent);
+    if (printBtn) {
+        printBtn.addEventListener("click", printCurrent);
+    }
     document.getElementById("btn-close").addEventListener("click", function () {
         pane.hidden = true;
         body.innerHTML = "";
@@ -311,6 +361,9 @@
     try { saved = localStorage.getItem("folio-theme"); } catch (e) {}
     if (saved) {
         document.documentElement.setAttribute("data-theme", saved);
+    } else if (window.matchMedia
+        && window.matchMedia("(prefers-color-scheme: dark)").matches) {
+        document.documentElement.setAttribute("data-theme", "night");
     }
 
     function markActive() {
@@ -392,12 +445,9 @@
                 mediaBox.appendChild(pcanvas);
                 renderPdfThumb(url, pcanvas, mediaBox);
             } else {
-                // Text / markdown / other: a clean titled tile, no invented image.
-                mediaBox.innerHTML = "";
-                var glyph = document.createElement("span");
-                glyph.className = "hover-card-glyph";
-                glyph.textContent = (kind === "md") ? "\u201C \u201D" : "\u25A4";
-                mediaBox.appendChild(glyph);
+                // Audio / video / text / markdown / other: a clean titled
+                // tile with a kind glyph, no invented image.
+                showGlyph(mediaBox, kind);
             }
         }
 
@@ -441,7 +491,10 @@
             box.innerHTML = "";
             var glyph = document.createElement("span");
             glyph.className = "hover-card-glyph";
-            glyph.textContent = (kind === "md") ? "\u201C \u201D" : "\u25A4";
+            glyph.textContent = (kind === "md") ? "\u201C \u201D"
+                : (kind === "audio") ? "\u266A"
+                : (kind === "video") ? "\u25B6"
+                : "\u25A4";
             box.appendChild(glyph);
         }
 

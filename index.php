@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.19.3');
+define('FOLIO_VERSION', '1.25.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -161,6 +161,13 @@ defined('SHOW_ADMIN_LINK')      || define('SHOW_ADMIN_LINK', true);
  * anything. See pdf_access_enforced().
  */
 defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
+/* Rows per page in a folder listing. A folder below this renders whole, and
+   behaves exactly as it always has: sorting, filtering and search all happen
+   in the browser, instantly. Above it the listing is paginated and sorting
+   moves to the server, because sorting one page of a hundred is not sorting.
+   0 disables pagination entirely. */
+defined('PER_PAGE')             || define('PER_PAGE', 200);
+
 defined('SITEMAP_ENABLED')      || define('SITEMAP_ENABLED', true);
 defined('LLMS_ENABLED')         || define('LLMS_ENABLED', true);
 defined('LLMS_INTRO')           || define('LLMS_INTRO', '');
@@ -176,6 +183,7 @@ defined('MATOMO_COOKIELESS')    || define('MATOMO_COOKIELESS', false);
 defined('GA4_MEASUREMENT_ID')   || define('GA4_MEASUREMENT_ID', '');
 defined('GA4_ANONYMIZE_IP')     || define('GA4_ANONYMIZE_IP', true);
 defined('ANALYTICS_ADMIN')      || define('ANALYTICS_ADMIN', false);
+defined('AUDIO_PLAYLIST')       || define('AUDIO_PLAYLIST', false);
 
 /* IndexNow rejects requests carrying more than 10,000 URLs. */
 define('INDEXNOW_MAX_URLS_PER_REQUEST', 10000);
@@ -889,7 +897,9 @@ function url_raw(string $rel): string
 {
     $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
     $direct_safe = ['pdf', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'txt', 'md',
-                    'tif', 'tiff', 'heic', 'heif', 'avif'];
+                    'tif', 'tiff', 'heic', 'heif', 'avif',
+                    'mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba',
+                    'mp4', 'm4v', 'webm', 'ogv', 'mov'];
     if (!in_array($ext, $direct_safe, true)) {
         return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel);
     }
@@ -1042,6 +1052,66 @@ function url_sitemap_part(int $n): string
 }
 
 /** The flip-view reader URL for a PDF. Query-string only; not part of the pretty-URL map. */
+/**
+ * Strip the site origin from one of Folio's own absolute URLs, yielding a
+ * root-relative path ("/foo/" from "https://host/foo/").
+ *
+ * This is a page-weight measure for the listing, where BASE_URL is otherwise
+ * repeated on every row link — thousands of times on a large folder. It is for
+ * in-page navigation only. Canonical tags, structured data, sitemap <loc>, and
+ * IndexNow must stay absolute (see the SSOT invariants), so this is applied at
+ * the point a link is printed in the listing, never to $f['view'] at source,
+ * which those absolute surfaces share. A URL that does not start with BASE_URL
+ * (an off-site or already-relative value) is returned unchanged.
+ */
+function root_relative(string $url): string
+{
+    if ($url === '' || strncmp($url, BASE_URL, strlen(BASE_URL)) !== 0) {
+        return $url;
+    }
+    return '/' . substr($url, strlen(BASE_URL));
+}
+
+/**
+ * Collapse the indentation whitespace a template injects between tags.
+ *
+ * The listing is emitted from deeply indented PHP, so every row carries runs
+ * of leading spaces and newlines between its cells and wrappers — around a
+ * third of the page's bytes before compression, and pure indentation with no
+ * meaning. This removes whitespace that sits wholly between a ">" and a "<",
+ * and only such whitespace, so text nodes are never touched. Any <textarea>
+ * (the admin transcript field can hold significant newlines) and <pre> region
+ * is masked out first and restored afterward, so nothing inside them changes.
+ *
+ * It runs once per row over a small buffer, not over the whole page.
+ */
+function collapse_markup_ws(string $html): string
+{
+    $guard = [];
+    $mask = static function (array $m) use (&$guard): string {
+        $guard[] = $m[0];
+        return "\x00" . (count($guard) - 1) . "\x00";
+    };
+    $html = preg_replace_callback('#<textarea\b[^>]*>.*?</textarea>#is', $mask, $html);
+    $html = preg_replace_callback('#<pre\b[^>]*>.*?</pre>#is', $mask, $html);
+
+    // Whitespace between tags that includes a newline is indentation: drop it.
+    // A masked <textarea>/<pre> is represented by a \x00N\x00 token; it counts
+    // as a tag boundary on either side here, so indentation immediately before
+    // or after a masked region collapses too, without the collapse ever
+    // reaching inside the masked content itself.
+    $boundary = '(?:<|\x00\d+\x00)';
+    $html = preg_replace(
+        '#(>|\x00\d+\x00)\s*\n\s*(?=' . $boundary . ')#',
+        '$1',
+        $html
+    );
+
+    return preg_replace_callback('#\x00(\d+)\x00#', static function (array $m) use ($guard): string {
+        return $guard[(int) $m[1]];
+    }, $html);
+}
+
 function url_flipbook(string $rel): string
 {
     return BASE_URL . '?action=flipbook&file=' . rawurlencode($rel);
@@ -4153,6 +4223,9 @@ function render_footer(): void
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">Sitemap</a>
             <?php endif; ?>
+            <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
+                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
+            <?php endif; ?>
             <?php if (!is_admin() && SHOW_ADMIN_LINK): ?>
                 <a href="<?= e(BASE_URL) ?>?action=login">Admin</a>
             <?php endif; ?>
@@ -4193,7 +4266,103 @@ $mime_map = [
     'avif' => 'image/avif',
     'txt'  => 'text/plain',
     'md'   => 'text/markdown',
+    // Audio and video. Browsers play these natively; Folio wraps them in a
+    // themed transport on the document page and in the preview pane, and the
+    // web server delivers the bytes directly so seeking works over Range.
+    'mp3'  => 'audio/mpeg',
+    'm4a'  => 'audio/mp4',
+    'aac'  => 'audio/aac',
+    'wav'  => 'audio/wav',
+    'flac' => 'audio/flac',
+    'ogg'  => 'audio/ogg',
+    'oga'  => 'audio/ogg',
+    'opus' => 'audio/ogg',
+    'weba' => 'audio/webm',
+    'mp4'  => 'video/mp4',
+    'm4v'  => 'video/mp4',
+    'webm' => 'video/webm',
+    'ogv'  => 'video/ogg',
+    'mov'  => 'video/quicktime',
 ];
+
+/** Extensions Folio treats as playable audio. */
+function folio_audio_exts(): array
+{
+    return ['mp3', 'm4a', 'aac', 'wav', 'flac', 'ogg', 'oga', 'opus', 'weba'];
+}
+
+/** Extensions Folio treats as playable video. */
+function folio_video_exts(): array
+{
+    return ['mp4', 'm4v', 'webm', 'ogv', 'mov'];
+}
+
+/** Extensions Folio can show inline as an image (natively or after conversion). */
+function folio_image_exts(): array
+{
+    return ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp',
+            'tif', 'tiff', 'heic', 'heif', 'avif'];
+}
+
+/**
+ * The single decision of what a file is, by extension. Used everywhere a page
+ * or listing needs to branch on type, so the same extension never resolves to
+ * two different kinds in two places.
+ */
+function file_kind(string $ext): string
+{
+    $ext = strtolower($ext);
+    if ($ext === 'pdf') {
+        return 'pdf';
+    }
+    if ($ext === 'md') {
+        return 'md';
+    }
+    if (in_array($ext, folio_audio_exts(), true)) {
+        return 'audio';
+    }
+    if (in_array($ext, folio_video_exts(), true)) {
+        return 'video';
+    }
+    if (in_array($ext, folio_image_exts(), true)) {
+        return 'image';
+    }
+    return 'other';
+}
+
+/**
+ * The audio files that share a folder with $rel, in listing order, as a queue
+ * for the playlist feature. Each entry is [url, title, view, current].
+ *
+ * Folder-scoped on purpose: a folder is Folio's unit, so the queue is simply
+ * "the audio in this folder" with no playlist entity to store. Returns fewer
+ * than two entries when a queue would be pointless; callers skip it then.
+ */
+function audio_playlist_for(string $rel): array
+{
+    global $mime_map;
+    $dir = str_replace('\\', '/', dirname($rel));
+    if ($dir === '.' || $dir === '/') {
+        $dir = '';
+    }
+    $queue = [];
+    foreach (index_all_files($mime_map ?? []) as $f) {
+        if (($f['dir'] ?? null) !== $dir || ($f['kind'] ?? '') !== 'audio') {
+            continue;
+        }
+        $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
+        $title = ($f['title'] ?? '') !== ''
+            ? $f['title']
+            : pathinfo($f['name'], PATHINFO_FILENAME);
+        $queue[] = [
+            'url' => $url,
+            'title' => $title,
+            'view' => $f['view'],
+            'current' => $f['rel'] === $rel,
+        ];
+    }
+    return count($queue) >= 2 ? $queue : [];
+}
 
 /**
  * The file's real, content-sniffed MIME type, for metadata only
@@ -4674,8 +4843,7 @@ function index_all_files(array $mime_map): array
                 // pages. Just enough to know whether one exists.
                 'has_transcript' => trim((string) ($m['transcript'] ?? '')) !== '',
                 'previewable' => $previewable,
-                'kind' => $ext === 'pdf' ? 'pdf' : ($ext === 'md' ? 'md'
-                    : (isset($mime_map[$ext]) && $ext !== 'txt' ? 'image' : 'other')),
+                'kind' => file_kind($ext),
                 'view' => url_view($rel_e),
                 'hotlink' => $previewable ? url_raw_effective($rel_e, $m) : '',
                 'render' => url_render($rel_e),
@@ -5049,6 +5217,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Crawlers</span>
@@ -5060,7 +5229,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
     <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
     <?php if (!$writable): ?>
@@ -5314,6 +5483,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'analytics') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Analytics</span>
@@ -5323,7 +5493,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'analytics') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
     <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
     <?php if (!$writable): ?>
@@ -5423,6 +5593,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_URL' => $purl,
                     'SITE_LANGUAGE' => $lang,
                     'SHOW_ADMIN_LINK' => !empty($_POST['show_admin_link']),
+                    'AUDIO_PLAYLIST' => !empty($_POST['audio_playlist']),
                 ];
                 if (settings_store($settings)) {
                     header('Location: ' . BASE_URL . '?action=settings&saved=1');
@@ -5444,6 +5615,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_url' => PUBLISHER_URL,
         'site_language' => SITE_LANGUAGE,
         'show_admin_link' => SHOW_ADMIN_LINK,
+        'audio_playlist' => AUDIO_PLAYLIST,
     ];
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '') {
         foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'site_language'] as $k) {
@@ -5452,6 +5624,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             }
         }
         $cur['show_admin_link'] = !empty($_POST['show_admin_link']);
+        $cur['audio_playlist'] = !empty($_POST['audio_playlist']);
     }
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
 
@@ -5468,6 +5641,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Settings</span>
@@ -5481,7 +5655,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
     <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
     <?php if (!$writable): ?>
@@ -5518,6 +5692,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         <label class="check-row">
             <input type="checkbox" name="show_admin_link" value="1" <?= $cur['show_admin_link'] ? 'checked' : '' ?>>
             Show the Admin link to logged-out visitors
+        </label>
+
+        <label class="check-row">
+            <input type="checkbox" name="audio_playlist" value="1" <?= $cur['audio_playlist'] ? 'checked' : '' ?>>
+            Play a folder's audio as a playlist, with a queue and auto-advance
         </label>
 
         <div><button type="submit" class="btn">Save settings</button></div>
@@ -5648,6 +5827,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'users') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Accounts</span>
@@ -5659,7 +5839,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'users') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
     <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
     <?php if (!$writable): ?>
@@ -5775,6 +5955,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Documentation</span>
@@ -5782,7 +5963,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="layout">
+<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
     <section class="listing">
         <div class="filter-bar">
             <div class="filter-chips">
@@ -5874,6 +6055,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Pages</span>
@@ -5885,7 +6067,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
     <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
     <?php if (!$writable): ?>
@@ -6113,6 +6295,7 @@ if (isset($_GET['page'])) {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <nav class="crumbs">
@@ -6129,11 +6312,12 @@ if (isset($_GET['page'])) {
         <button data-set-theme="night" title="Night"></button>
     </div>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <h1 class="detail-title page-title"><?= e($title) ?></h1>
     <div class="md-content"><?= $body_html ?></div>
 </main>
 <?php render_footer(); ?>
+<script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
 <script src="<?= e(asset_url('assets/js/app.js')) ?>" defer></script>
 <?php if (is_admin()): ?><script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script><?php endif; ?>
 </body>
@@ -6213,6 +6397,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Catalogue</span>
@@ -6222,7 +6407,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <div class="md-content">
         <h1>Catalogue</h1>
 
@@ -6878,6 +7063,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Diagnostics</span>
@@ -6887,7 +7073,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <?php if ($bad_count > 0): ?>
         <p class="msg msg-bad"><?= (int) $bad_count ?> item<?= $bad_count === 1 ? '' : 's' ?> need attention before the site is healthy.</p>
     <?php elseif ($warn_count > 0): ?>
@@ -7660,13 +7846,25 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
             if ($f['pdf_access'] !== 'public' && pdf_access_enforced() && $f['has_transcript']) {
                 $out .= ' (Original file access-restricted; full transcription available on the page.)';
             }
+            /* The page describes the document; the file is the document. A
+               reader that can parse a PDF should be told where it is rather
+               than left to infer it from the page, so a public PDF carries its
+               direct address. Restricted ones deliberately do not: the line
+               above already explains why, and naming a URL that answers 403
+               helps nobody. */
+            if (strtolower((string) $f['ext']) === 'pdf'
+                && ($f['pdf_access'] === 'public' || !pdf_access_enforced())) {
+                $out .= ' — PDF: ' . url_raw((string) $f['rel']);
+            }
             $out .= "\n";
         }
         $out .= "\n";
     }
-    $out .= "## Machine-readable\n\n- [Sitemap]("
-          . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
-          . ")\n";
+    $out .= "## Machine-readable\n\n"
+          . '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
+          . "): every page in the library.\n"
+          . '- [Document sitemap](' . url_sitemap_pdf()
+          . "): the PDF files themselves.\n";
     exit($out);
 }
 
@@ -7694,11 +7892,12 @@ if (($_GET['action'] ?? '') === 'login'
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Sign in</span>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <h2 class="detail-title">Log in</h2>
     <?php if ($login_error !== ''): ?>
         <p class="msg msg-bad"><?= e($login_error) ?></p>
@@ -8176,6 +8375,7 @@ if (isset($_GET['cat'])) {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Category</span>
@@ -8184,7 +8384,7 @@ if (isset($_GET['cat'])) {
         <span class="sep">/</span><span><?= e($cat_name) ?></span>
     </nav>
 </header>
-<main class="layout">
+<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
     <section class="listing">
         <div class="filter-bar">
             <div class="filter-chips">
@@ -8203,7 +8403,7 @@ if (isset($_GET['cat'])) {
                 <tr class="row-file">
                     <td data-sort-name="<?= e(mb_strtolower($label !== '' ? $label : $f['name'])) ?>">
                         <div class="file-meta">
-                            <a class="file-title" href="<?= e($f['view']) ?>"><?= e($label) ?></a>
+                            <a class="file-title" href="<?= e(root_relative($f['view'])) ?>"><?= e($label) ?></a>
                             <?php if ($f['desc'] !== ''): ?><span class="file-desc"><?= e($f['desc']) ?></span><?php endif; ?>
                             <?php if ($f['tags']): ?>
                                 <span class="file-chips">
@@ -8212,7 +8412,7 @@ if (isset($_GET['cat'])) {
                             <?php endif; ?>
                         </div>
                     </td>
-                    <td><a href="<?= e(url_dir($f['dir'])) ?>"><?= e($f['dir'] === '' ? SITE_NAME : $f['dir']) ?></a></td>
+                    <td><a href="<?= e(root_relative(url_dir($f['dir']))) ?>"><?= e($f['dir'] === '' ? SITE_NAME : $f['dir']) ?></a></td>
                     <td><?= e($f['size']) ?></td>
                     <td><?= e(date('Y-m-d', $f['mtime'])) ?></td>
                 </tr>
@@ -8301,7 +8501,8 @@ if (isset($_GET['view'])) {
         exit;
     }
     $ext  = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
-    $kind = $ext === 'pdf' ? 'pdf' : ($ext === 'md' ? 'md' : (isset($mime_map[$ext]) && $ext !== 'txt' ? 'image' : 'other'));
+    $kind = file_kind($ext);
+    $audio_queue = ($kind === 'audio' && AUDIO_PLAYLIST) ? audio_playlist_for($rel) : [];
     $meta = meta_load();
     $m     = $meta[$rel] ?? [];
     $title = ($m['title'] ?? '') !== '' ? $m['title'] : pathinfo($rel, PATHINFO_FILENAME);
@@ -8395,6 +8596,7 @@ if (isset($_GET['view'])) {
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(url_dir('')) ?>"><?= e(SITE_NAME) ?></a></h1>
     <nav class="crumbs">
@@ -8409,7 +8611,7 @@ if (isset($_GET['view'])) {
         <span class="sep">/</span><span><?= e($title) ?></span>
     </nav>
 </header>
-<main class="detail">
+<main class="detail" id="folio-main" tabindex="-1">
     <article>
         <h2 class="detail-title"><?= e($title) ?></h2>
         <?php if ($desc !== ''): ?><p class="detail-desc"><?= e($desc) ?></p><?php endif; ?>
@@ -8451,11 +8653,23 @@ if (isset($_GET['view'])) {
                     </figcaption>
                 <?php endif; ?>
             <?php elseif ($kind === 'pdf'): ?>
-                <div class="pdf-preview" data-pdf-url="<?= e($raw) ?>" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/" data-flip-url="<?= e(url_flipbook($rel)) ?>" data-pdf-title="<?= e($title) ?>" data-pdf-aspect="<?= e((string) pdf_aspect_ratio($rel, $abs)) ?>">
+                <div class="pdf-preview" data-pdf-url="<?= e($raw) ?>" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/" data-flip-url="<?= e(url_flipbook($rel)) ?>" data-pdf-title="<?= e($title) ?>" data-pdf-aspect="<?= e((string) pdf_aspect_ratio($rel, $abs)) ?>" data-pdf-size="<?= e($size) ?>">
                     <div class="pdf-preview-canvas-wrap">
                         <canvas class="pdf-preview-canvas" aria-label="First page of <?= e($title) ?>"></canvas>
                         <p class="pdf-preview-status">Loading preview&hellip;</p>
                     </div>
+                </div>
+            <?php elseif ($kind === 'audio'): ?>
+                <div class="folio-media fm-audio" data-media-kind="audio"<?php if ($audio_queue): ?> data-playlist="<?= e(json_encode(array_map(fn($t) => ['url' => $t['url'], 'title' => $t['title']], $audio_queue), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) ?>" data-playlist-index="<?= (int) array_search(true, array_column($audio_queue, 'current'), true) ?>"<?php endif; ?>>
+                    <audio class="fm-el" controls preload="metadata" src="<?= e($raw) ?>">
+                        <a href="<?= e($raw) ?>">Download audio</a>
+                    </audio>
+                </div>
+            <?php elseif ($kind === 'video'): ?>
+                <div class="folio-media fm-video" data-media-kind="video">
+                    <video class="fm-el" controls playsinline preload="metadata" src="<?= e($raw) ?>">
+                        <a href="<?= e($raw) ?>">Download video</a>
+                    </video>
                 </div>
             <?php elseif ($kind === 'md'): ?>
                 <div class="md-content"><?= render_markdown($abs) ?></div>
@@ -8465,8 +8679,9 @@ if (isset($_GET['view'])) {
         </figure>
         <p class="detail-actions">
             <?php if ($kind === 'pdf' && !$pdf_is_hidden): ?><a class="btn" href="<?= e(url_flipbook($rel)) ?>">Flip view</a><?php endif; ?>
-            <?php if ($kind !== 'other' && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
+            <?php if (in_array($kind, ['pdf', 'image', 'md'], true) && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
             <?php if ($pdf_full_access): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
+            <?php if (in_array($kind, ['audio', 'video'], true)): ?><a class="btn btn-ghost" href="<?= e($raw) ?>" download>Download</a><?php endif; ?>
         </p>
         <?php if ($transcript !== ''): ?>
         <section class="document-transcript">
@@ -8480,6 +8695,7 @@ if (isset($_GET['view'])) {
 <?php if (!$pdf_is_hidden): ?>
 <iframe id="print-frame" class="print-frame" title="print helper" data-kind="<?= e($kind) ?>" data-url="<?= e($raw) ?>"></iframe>
 <?php endif; ?>
+<script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
 <script src="<?= e(asset_url('assets/js/view.js')) ?>" defer></script>
 </body>
 </html>
@@ -8546,7 +8762,7 @@ foreach (scandir($abs_dir) as $entry) {
             'mtime' => date('Y-m-d H:i', (int) filemtime($abs_entry)),
             'mtime_ts' => (int) filemtime($abs_entry),
             'previewable' => $previewable,
-            'kind' => $ext === 'pdf' ? 'pdf' : ($ext === 'md' ? 'md' : (isset($mime_map[$ext]) && $ext !== 'txt' ? 'image' : 'other')),
+            'kind' => file_kind($ext),
             'title' => $m['title'] ?? '',
             'desc'  => $m['desc'] ?? '',
             'slug'  => (string) ((document_for_path($rel_entry ?? '') ?? [])['slug'] ?? ''),
@@ -8578,6 +8794,70 @@ foreach ($files as $f) {
     }
 }
 sort($all_categories);
+
+/* ---- Ordering and pagination ---------------------------------------
+ *
+ * A folder that fits on one page is left exactly as it was: the browser
+ * sorts, filters and searches it instantly, over rows it already has.
+ *
+ * Past that the listing is split, and ordering has to move here. Sorting one
+ * page of several is not sorting the folder, and a reader who clicks "Size"
+ * expecting the largest file is entitled to the largest file, not the largest
+ * of the hundred that happen to be in front of them.
+ */
+$total_files = count($files);
+$paginated   = PER_PAGE > 0 && $total_files > PER_PAGE;
+
+$sort_key   = (string) ($_GET['sort'] ?? 'name');
+$sort_order = strtolower((string) ($_GET['order'] ?? '')) === 'desc' ? 'desc' : 'asc';
+if (!in_array($sort_key, ['name', 'size', 'date'], true)) {
+    $sort_key = 'name';
+}
+
+if ($paginated) {
+    usort($files, static function (array $a, array $b) use ($sort_key, $sort_order): int {
+        switch ($sort_key) {
+            case 'size':
+                $cmp = ($a['bytes'] ?? 0) <=> ($b['bytes'] ?? 0);
+                break;
+            case 'date':
+                $cmp = ($a['mtime'] ?? 0) <=> ($b['mtime'] ?? 0);
+                break;
+            default:
+                $an = mb_strtolower((string) ($a['title'] !== '' ? $a['title'] : $a['name']));
+                $bn = mb_strtolower((string) ($b['title'] !== '' ? $b['title'] : $b['name']));
+                $cmp = strnatcmp($an, $bn);
+        }
+        // A stable tiebreak, so equal sizes or dates keep a predictable order
+        // across pages instead of shuffling between requests.
+        if ($cmp === 0) {
+            $cmp = strnatcmp((string) $a['name'], (string) $b['name']);
+        }
+        return $sort_order === 'desc' ? -$cmp : $cmp;
+    });
+}
+
+$page_count = $paginated ? (int) ceil($total_files / PER_PAGE) : 1;
+$page_no    = max(1, (int) ($_GET['p'] ?? 1));
+if ($page_no > $page_count) {
+    $page_no = $page_count;
+}
+$page_files = $paginated
+    ? array_slice($files, ($page_no - 1) * PER_PAGE, PER_PAGE)
+    : $files;
+
+/** URL for this folder at a given page, preserving the chosen ordering. */
+$page_url = static function (int $n) use ($rel_dir, $sort_key, $sort_order): string {
+    $q = [];
+    if ($sort_key !== 'name')  { $q['sort']  = $sort_key; }
+    if ($sort_order !== 'asc') { $q['order'] = $sort_order; }
+    if ($n > 1)                { $q['p']     = $n; }
+    $base = url_dir($rel_dir);
+    if (!$q) {
+        return $base;
+    }
+    return $base . (strpos($base, '?') === false ? '?' : '&') . http_build_query($q);
+};
 $acc = '';
 foreach (array_filter(explode('/', $rel_dir)) as $part) {
     $acc = ltrim($acc . '/' . $part, '/');
@@ -8649,7 +8929,9 @@ $listing_ld = [
 <?php $page_title = $rel_dir === '' ? SITE_NAME : basename($rel_dir) . ' – ' . SITE_NAME; ?>
 <title><?= e($page_title) ?></title>
 <meta name="description" content="<?= e($rel_dir === '' ? SITE_DESCRIPTION : basename($rel_dir) . ': documents and images in ' . SITE_NAME) ?>">
-<link rel="canonical" href="<?= e(url_dir($rel_dir)) ?>">
+<link rel="canonical" href="<?= e($page_url($page_no)) ?>">
+<?php if ($paginated && $page_no > 1): ?><link rel="prev" href="<?= e($page_url($page_no - 1)) ?>"><?php endif; ?>
+<?php if ($paginated && $page_no < $page_count): ?><link rel="next" href="<?= e($page_url($page_no + 1)) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
@@ -8663,6 +8945,7 @@ $listing_ld = [
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
 <body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><?= e(SITE_NAME) ?></h1>
     <span class="running-head"><?= e($rel_dir === '' ? 'Collection' : $rel_dir) ?></span>
@@ -8725,7 +9008,7 @@ $listing_ld = [
     <?php endif; ?>
 </header>
 
-<main class="layout">
+<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
     <section class="listing">
         <?php if ($installer_present): ?>
         <p class="msg msg-bad install-warn"><strong>Security notice.</strong> <code>install.php</code> is still present in the Folio folder. It is inert while <code>config.php</code> exists, but delete it now over FTP to keep the installation tidy.</p>
@@ -8745,24 +9028,49 @@ $listing_ld = [
         <table>
             <thead>
                 <tr>
-                    <th aria-sort="none" data-sort-key="name"><button type="button" class="col-sort">Name<span class="sort-mark" aria-hidden="true"></span></button></th>
-                    <th aria-sort="none" data-sort-key="size"><button type="button" class="col-sort">Size<span class="sort-mark" aria-hidden="true"></span></button></th>
-                    <th aria-sort="none" data-sort-key="date"><button type="button" class="col-sort">Date<span class="sort-mark" aria-hidden="true"></span></button></th>
+                    <?php
+                    /* Unpaginated, the headers are buttons and the browser
+                       reorders rows it already holds. Paginated, they become
+                       links: the order is decided here, because sorting one
+                       page of several would not sort the folder. */
+                    $col = static function (string $key, string $label) use ($paginated, $sort_key, $sort_order, $rel_dir): string {
+                        if (!$paginated) {
+                            return '<th aria-sort="none" data-sort-key="' . e($key) . '">'
+                                 . '<button type="button" class="col-sort">' . e($label)
+                                 . '<span class="sort-mark" aria-hidden="true"></span></button></th>';
+                        }
+                        $active = $sort_key === $key;
+                        $next   = ($active && $sort_order === 'asc') ? 'desc' : 'asc';
+                        $q = [];
+                        if ($key !== 'name')  { $q['sort']  = $key; }
+                        if ($next !== 'asc')  { $q['order'] = $next; }
+                        $href = url_dir($rel_dir);
+                        if ($q) {
+                            $href .= (strpos($href, '?') === false ? '?' : '&') . http_build_query($q);
+                        }
+                        $aria = $active ? ($sort_order === 'asc' ? 'ascending' : 'descending') : 'none';
+                        return '<th aria-sort="' . $aria . '">'
+                             . '<a class="col-sort" href="' . e($href) . '">' . e($label)
+                             . '<span class="sort-mark" aria-hidden="true"></span></a></th>';
+                    };
+                    echo $col('name', 'Name'), $col('size', 'Size'), $col('date', 'Date');
+                    ?>
                     <th></th>
                 </tr>
             </thead>
             <tbody>
+            <?php ob_start(); ?>
             <?php if ($rel_dir !== ''): ?>
                 <tr class="row-dir">
-                    <td colspan="4"><a href="<?= e(url_dir(dirname($rel_dir) === '.' ? '' : dirname($rel_dir))) ?>">&#8617; Up one level</a></td>
+                    <td colspan="4"><a href="<?= e(root_relative(url_dir(dirname($rel_dir) === '.' ? '' : dirname($rel_dir)))) ?>">&#8617; Up one level</a></td>
                 </tr>
             <?php endif; ?>
             <?php foreach ($dirs as $d): ?>
                 <tr class="row-dir">
-                    <td colspan="4"><a href="<?= e(url_dir($d['rel'])) ?>">&#128193; <?= e($d['name']) ?></a></td>
+                    <td colspan="4"><a href="<?= e(root_relative(url_dir($d['rel']))) ?>">&#128193; <?= e($d['name']) ?></a></td>
                 </tr>
             <?php endforeach; ?>
-            <?php foreach ($files as $f): ?>
+            <?php foreach ($page_files as $f): ?>
                 <?php $label = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME); ?>
                 <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($f['kind'] === 'image'
                         ? url_thumb($f['rel'], 320)
@@ -8771,14 +9079,14 @@ $listing_ld = [
                             : '')) ?>" data-hover-thumb="<?= ($f['kind'] === 'pdf' && image_can_derive($f['rel'])) ? '1' : '' ?>" data-hover-title="<?= e($label) ?>" data-hover-meta="<?= e($f['size'] . ' &middot; ' . $f['mtime']) ?>">
                     <td data-sort-name="<?= e(function_exists('mb_strtolower') ? mb_strtolower($label) : strtolower($label)) ?>">
                         <div class="file-meta">
-                            <a class="file-title" href="<?= e($f['view']) ?>"><?= e($label) ?></a>
+                            <a class="file-title" href="<?= e(root_relative($f['view'])) ?>"><?= e($label) ?></a>
                             <?php if ($f['desc'] !== ''): ?>
                                 <span class="file-desc"><?= e($f['desc']) ?></span>
                             <?php endif; ?>
                             <?php if ($f['category'] !== '' || $f['tags']): ?>
                                 <?php if ($f['category'] !== ''): ?>
                                 <span class="file-cats">
-                                        <a class="chip chip-cat chip-mini" data-filter-cat="<?= e($f['category']) ?>" href="<?= e(url_category($f['category'])) ?>"><?= e($f['category']) ?></a>
+                                        <a class="chip chip-cat chip-mini" data-filter-cat="<?= e($f['category']) ?>" href="<?= e(root_relative(url_category($f['category']))) ?>"><?= e($f['category']) ?></a>
                                 </span>
                                 <?php endif; ?>
                                 <?php if ($f['tags']): ?>
@@ -8879,7 +9187,7 @@ $listing_ld = [
                             <button class="btn-small file-link" data-file="<?= e($f['rel']) ?>" data-kind="<?= e($f['kind']) ?>" data-raw-url="<?= e($f['hotlink']) ?>" data-render-url="<?= e($f['render']) ?>">Preview</button>
                         <?php endif; ?>
                         <?php if ($f['kind'] === 'pdf' && !($f['pdf_access'] === 'hidden' && pdf_access_enforced())): ?>
-                            <a class="btn-small btn-ghost" href="<?= e(url_flipbook($f['rel'])) ?>">Flip view</a>
+                            <a class="btn-small btn-ghost" href="<?= e(root_relative(url_flipbook($f['rel']))) ?>">Flip view</a>
                         <?php endif; ?>
                         <?php if (is_admin()): ?>
                             <button class="btn-small btn-ghost meta-edit" title="Edit title and description">Edit</button>
@@ -8906,8 +9214,45 @@ $listing_ld = [
             <tr class="row-search-empty" id="search-empty" hidden>
                 <td colspan="4" class="empty">No files match that search.</td>
             </tr>
+            <?php echo collapse_markup_ws((string) ob_get_clean()); ?>
             </tbody>
         </table>
+
+        <?php if ($paginated): ?>
+        <nav class="pager" aria-label="Pages">
+            <p class="pager-count">
+                <?= (int) (($page_no - 1) * PER_PAGE + 1) ?>&ndash;<?= (int) min($page_no * PER_PAGE, $total_files) ?>
+                of <?= (int) $total_files ?> documents
+            </p>
+            <p class="pager-links">
+                <?php if ($page_no > 1): ?>
+                    <a class="btn btn-ghost" rel="prev" href="<?= e($page_url($page_no - 1)) ?>">Previous</a>
+                <?php endif; ?>
+                <?php
+                /* A short window around the current page, with the ends always
+                   reachable, so a hundred pages do not become a hundred links. */
+                $window = [];
+                for ($n = 1; $n <= $page_count; $n++) {
+                    if ($n <= 2 || $n > $page_count - 2 || abs($n - $page_no) <= 2) {
+                        $window[] = $n;
+                    }
+                }
+                $last = 0;
+                foreach ($window as $n):
+                    if ($last && $n > $last + 1): ?><span class="pager-gap">&hellip;</span><?php endif; ?>
+                    <?php if ($n === $page_no): ?>
+                        <span class="pager-here" aria-current="page"><?= (int) $n ?></span>
+                    <?php else: ?>
+                        <a class="pager-page" href="<?= e($page_url($n)) ?>"><?= (int) $n ?></a>
+                    <?php endif; ?>
+                    <?php $last = $n;
+                endforeach; ?>
+                <?php if ($page_no < $page_count): ?>
+                    <a class="btn btn-ghost" rel="next" href="<?= e($page_url($page_no + 1)) ?>">Next</a>
+                <?php endif; ?>
+            </p>
+        </nav>
+        <?php endif; ?>
     </section>
 
     <aside class="preview" id="preview-pane" hidden>
@@ -8933,14 +9278,15 @@ $listing_ld = [
 </main>
 <?php if (count($files) >= 3): ?>
 <div class="search-overlay" id="search-overlay" hidden>
-    <div class="search-overlay-panel" role="dialog" aria-modal="true" aria-label="Search this folder">
+    <div class="search-overlay-panel" role="dialog" aria-modal="true" aria-label="<?= $paginated ? 'Search this page' : 'Search this folder' ?>">
         <label class="search-overlay-label" for="listing-search">
             <span class="nav-search-glyph" aria-hidden="true"></span>
             <!-- Deliberately type="text", not type="search": a search input clears
                  itself on Escape at a level preventDefault cannot reach, which
                  wiped the filter when the reader only meant to dismiss the panel. -->
             <input type="text" inputmode="search" id="listing-search" class="listing-search"
-                   placeholder="Search this folder&hellip;" autocomplete="off" spellcheck="false">
+                   aria-label="<?= $paginated ? 'Search this page' : 'Search this folder' ?>"
+                   placeholder="<?= $paginated ? 'Search this page&hellip;' : 'Search this folder&hellip;' ?>" autocomplete="off" spellcheck="false">
         </label>
         <button type="button" class="search-overlay-close" id="search-overlay-close" aria-label="Close search">&times;</button>
         <p class="search-overlay-hint">Type to filter. <kbd>Esc</kbd> closes.</p>
@@ -8958,6 +9304,7 @@ $listing_ld = [
     <?php endforeach; ?>
 </datalist>
 <?php endif; ?>
+<script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
 <script src="<?= e(asset_url('assets/js/app.js')) ?>" defer></script>
 <?php if (is_admin()): ?><script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script><?php endif; ?>
 </body>

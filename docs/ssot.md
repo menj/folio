@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.19.3. Update this file in the same commit as any change it describes.
+Version 1.25.0. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.13.1');` |
-| `changelog.md` | `## 1.13.1 — 5 August 2026` |
-| `readme.txt` | `Stable tag: 1.13.1` |
-| `readme.md` | `1.13.1.` under `## Version` |
-| `security.md` | `The current supported release is **1.13.1**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.25.0');` |
+| `changelog.md` | `## 1.25.0 — 13 August 2026` |
+| `readme.txt` | `Stable tag: 1.25.0` |
+| `readme.md` | `1.25.0.` under `## Version` |
+| `security.md` | `The current supported release is **1.25.0**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -76,6 +76,7 @@ tools/minify.js           builds the minified twins; maintainers only
 assets/css/flipbook.css   flip reader only
 assets/js/app.js          listing behaviour
 assets/js/view.js         detail page behaviour
+assets/js/media.js        themed audio and video transport
 assets/js/admin.js        admin screens
 assets/js/flipbook.js     flip reader
 assets/img/               favicon.svg, favicon.ico, apple-touch-icon.png
@@ -149,6 +150,7 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `PUBLISHER_NAME` | empty | Settings |
 | `PUBLISHER_URL` | empty | Settings |
 | `SHOW_ADMIN_LINK` | `true` | Settings |
+| `AUDIO_PLAYLIST` | `false` | Settings |
 
 ### Addressing
 

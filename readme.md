@@ -12,6 +12,10 @@
 
 * Directory listing with subfolder navigation and breadcrumbs
 * Inline preview and printing for PDF, image, and Markdown files
+* Audio and video play in the page through a transport styled to the active
+  theme, with the web server delivering the bytes directly so seeking works.
+  With JavaScript off, the browser's own player is used. An optional setting
+  plays a folder's audio as a playlist, with a queue and auto-advance
 * Fast thumbnails when the Imagick or GD extension is available: listings and
   hover cards send small cached copies instead of full-size scans, and TIFF,
   HEIC, and AVIF files get a viewable preview. Originals are never modified,
@@ -80,6 +84,8 @@ Garden (green), and Night (a dark scheme for evening reading).
 | Images | `.png` `.jpg` `.jpeg` `.gif` `.webp` `.bmp` | Inline image | Yes | Yes | Yes, with image extensions |
 | SVG | `.svg` | Inline image | Yes | Yes | Yes, with image extensions |
 | Markdown | `.md` | Rendered to HTML | Yes | Yes, rendered into the page | Yes |
+| Audio | `.mp3` `.m4a` `.aac` `.wav` `.flac` `.ogg` `.oga` `.opus` `.weba` | Themed player | No | Yes, plays in the page | Yes |
+| Video | `.mp4` `.m4v` `.webm` `.ogv` `.mov` | Themed player | No | Yes, plays in the page | Yes |
 | Plain text | `.txt` | No | No | Yes, with a download link | Yes |
 | Anything else | any | No | No | Yes, with a download link | No |
 
@@ -114,6 +120,7 @@ assets/css/style.css   Stylesheet and colour schemes
 assets/css/flipbook.css  Styles for the PDF flip-view reader only
 assets/js/app.js       Listing behaviour: preview, print, editing, filtering
 assets/js/view.js      Detail page behaviour: printing
+assets/js/media.js     Themed audio and video transport; listing and detail
 assets/js/admin.js     Admin-only: delete/remove confirmations, rewrite preflight
 assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
@@ -981,6 +988,12 @@ html[data-theme="folio"] {
 }
 ```
 
+Alongside the colours, three shared tokens set the shape and depth of the
+interface: `--radius-sm`, `--radius` and `--radius-lg` for chips, controls and
+panels, and `--shadow`, `--shadow-lift` and `--sheen` for elevation. The radii
+are theme-independent; the shadows are not, because depth that reads correctly
+on bone reads as a smudge on near-black, so each theme defines its own.
+
 Four themes ship: `folio` (oxblood on bone), `ledger` (indigo on cool grey),
 `garden` (green on warm white), and `night` (dark). The selector renders as the
 row of colour dots in the header; the choice is stored client-side and applied
@@ -1053,4 +1066,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.13.1. Single-file application with separated CSS and JS assets.
+1.25.0. Single-file application with separated CSS and JS assets.

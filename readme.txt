@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.19.3
+Stable tag: 1.25.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -45,9 +45,11 @@ data/metadata.json, with data/metadata.json.bak as the last-known-good backup.
 Older uploads/.sfm-meta.json data is read for migration.
 
 Supported preview formats are PDF, PNG, JPEG, GIF, WebP, BMP, SVG, and Markdown.
-Plain text and unknown files receive detail pages with download links. Unknown
-or active formats are forced to download by the supplied server rules and by
-the PHP fallback endpoint. Symlinks are rejected.
+Audio and video (MP3, M4A, AAC, WAV, FLAC, OGG, Opus, MP4, M4V, WebM, OGV, MOV)
+play in the page through a themed transport, with the web server delivering the
+bytes directly so seeking works. Plain text and unknown files receive detail
+pages with download links. Unknown or active formats are forced to download by
+the supplied server rules and by the PHP fallback endpoint. Symlinks are rejected.
 
 == URLs and SEO ==
 
