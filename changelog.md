@@ -5,9 +5,48 @@ versioning: major for breaking changes, minor for features, patch for fixes.
 
 ## 1.25.0 — 13 August 2026
 
-Mobile media ergonomics and a lighter listing. The in-page player is easier to
-operate by touch, and the folder listing ships noticeably fewer bytes without
-changing a single visible thing.
+Everything shipped on 13 August, gathered under one entry. In-page media
+arrived — audio and video now play in the page, with an optional folder
+playlist — and the player was then made easier to operate by touch. The folder
+listing was made lighter on the wire without changing anything visible, the
+footer was reworked to credit the project and show the version to a logged-in
+admin, and a set of accessibility and theming items landed, including honouring
+the operating system's dark-mode preference on a first visit.
+
+### Added
+
+- **An optional audio playlist.** Turned on from Settings, a folder holding
+  more than one audio file plays as a queue: the tracks in listing order, with
+  auto-advance to the next when one ends, previous and next controls, repeat
+  and shuffle toggles, and a track list with the current one marked. It works
+  on the document page and in the listing preview pane, and stays folder-scoped
+  so there is no playlist to store or manage. Off by default.
+
+- **Audio and video play in the page.** Files that were preview-and-download
+  only now open in a player styled to the active theme, on the document page
+  and in the listing preview pane, for both audio and video. The transport has
+  play and pause, a seek bar with a buffered indicator, a time readout, volume
+  and mute, and full screen for video, and is keyboard operable. Supported
+  extensions are `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.ogg`, `.oga`,
+  `.opus`, and `.weba` for audio, and `.mp4`, `.m4v`, `.webm`, `.ogv`, and
+  `.mov` for video.
+
+- **The web server delivers media directly, so seeking works.** Media
+  extensions are on the direct-serve path and declared in the uploads rules
+  with the right type and without the download-and-sandbox headers other
+  formats get, which lets the browser request byte ranges and seek. Playback
+  needs no new dependency, no database, and no build step, and the file on
+  disk is never touched.
+
+- **A no-JavaScript fallback.** The page ships the browser's own player, and
+  the theme enhances it only when scripts run, so a reader without JavaScript
+  still gets working playback.
+
+- **A skip-to-content link.** Every page with the standard header now opens
+  with a link that jumps a keyboard or screen-reader user straight to the main
+  content, past the header and its navigation. It stays off screen until it
+  receives focus, so nothing changes visually for a pointer user. The main
+  element carries `id="folio-main"` as its target.
 
 ### Changed
 
@@ -39,6 +78,27 @@ changing a single visible thing.
   tags, structured data, sitemap entries, and IndexNow stay fully absolute, as
   they must.
 
+- **File-kind detection is centralised.** A single `file_kind()` decides what
+  every file is, replacing three copies of the same logic that would otherwise
+  need the audio and video rules added in three places.
+
+- **The operating system's dark-mode preference is honoured on a first
+  visit.** With no stored choice, a reader whose system asks for dark now
+  opens on the Night theme. A saved choice still wins, and the theme picker
+  behaves exactly as before once anything is chosen.
+
+- **The listing search field has an accessible name.** Its label held only a
+  decorative glyph, so a screen reader announced an empty label and fell back
+  to the placeholder. The field now carries an `aria-label` matching its scope,
+  *Search this folder* or *Search this page* on a paginated folder.
+
+- **Mobile touch targets.** On coarse pointers (phones and tablets) the header
+  links, breadcrumb links, pager links, filter chips and category/tag chips now
+  meet a 24px minimum hit area, and their labels are lifted off the sub-12px
+  floor (chips 0.8rem, category/tag chips 0.75rem, sort marks to 1em). Desktop
+  layout and density are unchanged — the rules are gated behind
+  `@media (pointer: coarse)`.
+
 ### Documentation
 
 - **A version-agnostic upgrade procedure.** `docs/upgrading.md` now opens with
@@ -59,90 +119,10 @@ changing a single visible thing.
   re-measured, and a scoped near-term item added for captions and a transcript
   beside the in-page media player.
 
-## 1.24.0 — 13 August 2026
-
-In-page media. Audio and video now play in the page, and a folder's audio can
-play as a playlist. Both add capability and one changes what a shipped file
-kind does, which makes this a minor.
-
-### Added
-
-- **An optional audio playlist.** Turned on from Settings, a folder holding
-  more than one audio file plays as a queue: the tracks in listing order, with
-  auto-advance to the next when one ends, previous and next controls, repeat
-  and shuffle toggles, and a track list with the current one marked. It works
-  on the document page and in the listing preview pane, and stays folder-scoped
-  so there is no playlist to store or manage. Off by default.
-
-- **Audio and video play in the page.** Files that were preview-and-download
-  only now open in a player styled to the active theme, on the document page
-  and in the listing preview pane, for both audio and video. The transport has
-  play and pause, a seek bar with a buffered indicator, a time readout, volume
-  and mute, and full screen for video, and is keyboard operable. Supported
-  extensions are `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.ogg`, `.oga`,
-  `.opus`, and `.weba` for audio, and `.mp4`, `.m4v`, `.webm`, `.ogv`, and
-  `.mov` for video.
-
-- **The web server delivers media directly, so seeking works.** Media
-  extensions are on the direct-serve path and declared in the uploads rules
-  with the right type and without the download-and-sandbox headers other
-  formats get, which lets the browser request byte ranges and seek. Playback
-  needs no new dependency, no database, and no build step, and the file on
-  disk is never touched.
-
-- **A no-JavaScript fallback.** The page ships the browser's own player, and
-  the theme enhances it only when scripts run, so a reader without JavaScript
-  still gets working playback.
-
-### Changed
-
-- **File-kind detection is centralised.** A single `file_kind()` decides what
-  every file is, replacing three copies of the same logic that would otherwise
-  need the audio and video rules added in three places.
-
-## 1.23.0 — 13 August 2026
-
-Three accessibility and theming items from the roadmap's Known issues.
-Honouring the operating system's dark-mode preference changes a shipped
-default on first visit, which makes the release a minor.
-
-### Added
-
-- **A skip-to-content link.** Every page with the standard header now opens
-  with a link that jumps a keyboard or screen-reader user straight to the main
-  content, past the header and its navigation. It stays off screen until it
-  receives focus, so nothing changes visually for a pointer user. The main
-  element carries `id="folio-main"` as its target.
-
-### Changed
-
-- **The operating system's dark-mode preference is honoured on a first
-  visit.** With no stored choice, a reader whose system asks for dark now
-  opens on the Night theme. A saved choice still wins, and the theme picker
-  behaves exactly as before once anything is chosen.
-
-- **The listing search field has an accessible name.** Its label held only a
-  decorative glyph, so a screen reader announced an empty label and fell back
-  to the placeholder. The field now carries an `aria-label` matching its scope,
-  *Search this folder* or *Search this page* on a paginated folder.
-
-### Documentation
-
 - **The roadmap gained a phased plan for the archive features** in
   `docs/upgrading.md`, covering separated dates, standardised archival
   metadata, related records, and a chronological timeline, with the build
   order, the structured-data mappings, and the decisions each phase depends on.
-
-## 1.22.0 — 13 August 2026
-
-### Changed
-
-- **Mobile touch targets.** On coarse pointers (phones and tablets) the header
-  links, breadcrumb links, pager links, filter chips and category/tag chips now
-  meet a 24px minimum hit area, and their labels are lifted off the sub-12px
-  floor (chips 0.8rem, category/tag chips 0.75rem, sort marks to 1em). Desktop
-  layout and density are unchanged — the rules are gated behind
-  `@media (pointer: coarse)`.
 
 ## 1.21.0 — 6 August 2026
 
@@ -174,39 +154,55 @@ default on first visit, which makes the release a minor.
 - **A link to llms.txt in the footer**, beside the sitemap, on the same terms:
   shown when the file is enabled and the library is indexable.
 
+- **Project metadata**: author MENJ (<https://menj.blog>) and the repository at
+  <https://github.com/menj/folio>, recorded in the file header, in
+  `readme.txt` and `readme.md`, and in `docs/ssot.md`. `FOLIO_AUTHOR`,
+  `FOLIO_AUTHOR_URI` and `FOLIO_REPO_URI` hold the values so nothing else
+  repeats them.
+- Diagnostics names the author and links the repository beside the version, so
+  anyone administering an installation can find where to report a problem.
+- `Contributors` in `readme.txt` was the placeholder `folio`; it is now `menj`.
+
+- **A search title and search description for every document and every
+  standalone page.** The title above a document is written for someone
+  reading the page; the one that works in a result list is often different,
+  and usually shorter. The two are now separate fields, in the Edit panel and
+  on the Pages screen.
+
+  Limits are 60 characters for the title and 150 for the description, which is
+  roughly what a result shows before truncating. Both are enforced when saved,
+  not only in the browser.
+
+  A search title is used as the whole `<title>`, with no site name appended,
+  since controlling the entire tag is the point of the field. Both feed
+  `og:title` and `og:description` too, so social cards match. Left empty,
+  every page behaves exactly as it did before.
+
+- **A library can have as many standalone pages as it wants.** There were five
+  slots: About, FAQ, and three numbered ones. Wanting a sixth meant editing
+  the source. The Pages screen now has **Add a page** and a per-page **Delete
+  on save**, with no ceiling.
+
+  About and FAQ stay built in and cannot be deleted, because their schema.org
+  types say something a generic page cannot: an FAQ page carries its questions
+  as structured data, and an About page is read as identity information.
+  Everything added is a `WebPage`.
+
+  A new page derives its address from its title when no slug is given, so the
+  internal slot identifier never appears in a URL. New pages join the sitemap,
+  the header, and the footer exactly as the fixed slots always did.
+
+- `tools/minify.js`, the script that builds the minified twins, so a release
+  is reproducible rather than depending on something done by hand once. It
+  uses clean-css and terser rather than a hand-written regex, and exits
+  non-zero if any file fails.
+
 ### Changed
 
 - The listing search field reads *Search this page* on a paginated folder
   rather than *Search this folder*, because that is what it does. Searching a
   whole paginated folder needs the server, and is now recorded as a known
   issue rather than implied by a label.
-
-## 1.20.1 — 6 August 2026
-
-### Documentation
-
-- **The roadmap's Known issues were re-measured against this release.** The
-  entry for `index.php` still quoted 8,279 lines and 151 functions; it is now
-  8,964 and 163, having grown by roughly 700 lines since the note was written.
-  A figure that quietly goes stale is worse than no figure, so the list now
-  says it is re-measured whenever it is reviewed.
-
-- **The search-field entry was wrong about the cause.** It said the field had
-  no label. It has one — `<label for="listing-search">` — but the label's only
-  content is a decorative glyph marked `aria-hidden`, so a screen reader finds
-  an empty label and falls back to the placeholder. The fix is different from
-  the one implied, so the entry now describes what is actually there.
-
-- Principle 6, on disposable caches, listed four directories and had not been
-  updated for `data/compressed/` or `data/aspect.json`. Both are disposable
-  and both are now named.
-
-The three payload measurements were re-checked on a 1,500-document folder and
-hold: 2.7 MB, 33% indentation, `BASE_URL` written 7,514 times.
-
-## 1.20.0 — 6 August 2026
-
-### Changed
 
 - **The loading note carries an animated sweep.** A thin rule in the accent
   travels beneath the words while a document loads. It is indeterminate on
@@ -239,82 +235,6 @@ Every transition is short and eased, and all of them are switched off under
 `prefers-reduced-motion`. No gradients on surfaces, and no colour that is not
 already in the theme: the library still reads as paper.
 
-## 1.19.4 — 6 August 2026
-
-### Fixed
-
-- **A loading document looked like a broken one.** The browser's PDF viewer
-  is an empty dark rectangle until the file arrives, and a large scan can sit
-  like that for a long time with nothing to say it is working. A reader has no
-  way to tell a slow document from a failed one.
-
-  The viewer is now covered until it is ready by a quiet note on the page
-  colour, naming the size so the wait is explicable: *Loading the document
-  (846 KB)…*. The frame keeps its space while hidden, so nothing shifts when
-  the document appears.
-
-  After six seconds the note acknowledges the wait rather than repeating
-  itself. After twenty it reveals the viewer regardless: some browsers never
-  report an embedded PDF as loaded, and a viewer the reader can see is better
-  than a note that never leaves.
-
-## 1.19.3 — 6 August 2026
-
-### Fixed
-
-- **The inline PDF viewer ignored the shape of the document.** Its height was
-  fixed, which suits an A4 page and leaves a screenful of empty dark viewer
-  under anything wider: a birth certificate, a landscape results slip, a
-  scanned card. The page was fine; the frame around it was not.
-
-  The viewer now takes its height from the first page's own proportions.
-  `pdfinfo` already reported the page size, so this only had to be carried to
-  the browser: a wide certificate that previously reserved a full portrait
-  frame now takes roughly half of it, with nothing empty below.
-
-  The height is capped at 82% of the window so a very tall page cannot push
-  the buttons out of view, and floored so a very wide one stays readable. When
-  the page size cannot be read — no `pdfinfo`, or a file it cannot parse — the
-  previous fixed height is used, so nothing depends on the tool being there.
-
-- The measurement is cached in `data/aspect.json`, keyed on each file's size
-  and modification time, so `pdfinfo` runs once per document rather than on
-  every page view, and a replaced file is measured again.
-
-## 1.19.2 — 6 August 2026
-
-### Fixed
-
-- **Print did the same thing as Direct link on a PDF page.** Both opened the
-  raw file: two buttons side by side with one behaviour between them.
-
-  The cause was a stale assumption. When the inline PDF viewer was removed in
-  1.0.1 there was nothing left on the page to print, so Print was changed to
-  hand the file to the browser. 1.15.0 restored the viewer, and this was never
-  changed back. Print now prints the document where it sits, which is what the
-  button is for.
-
-  Where there is no viewer to print — mobile, where the preview is a rendered
-  first page rather than an embedded document — the file is still handed to the
-  browser, and a viewer that refuses to print falls back the same way.
-
-## 1.19.1 — 6 August 2026
-
-### Added
-
-- **Project metadata**: author MENJ (<https://menj.blog>) and the repository at
-  <https://github.com/menj/folio>, recorded in the file header, in
-  `readme.txt` and `readme.md`, and in `docs/ssot.md`. `FOLIO_AUTHOR`,
-  `FOLIO_AUTHOR_URI` and `FOLIO_REPO_URI` hold the values so nothing else
-  repeats them.
-- Diagnostics names the author and links the repository beside the version, so
-  anyone administering an installation can find where to report a problem.
-- `Contributors` in `readme.txt` was the placeholder `folio`; it is now `menj`.
-
-## 1.19.0 — 6 August 2026
-
-### Changed
-
 - **The stylesheet is delivered inside the document.** A linked stylesheet
   blocks the first paint for an entire extra round trip: parse the document,
   request the file, wait. PageSpeed measured that at 120ms on desktop and
@@ -341,121 +261,6 @@ already in the theme: the library still reads as paper.
 - The fourteen places that emitted a stylesheet tag now call one function, so
   the inline and linked paths cannot diverge screen by screen.
 
-## 1.18.3 — 6 August 2026
-
-### Fixed
-
-- **Chip rows on two screens rendered as full-width stacked bars.** The
-  documentation viewer and the category archive placed their chips directly
-  inside `.filter-bar`, which became a vertical flex container when the search
-  field moved into it. Each chip then became a column item and stretched the
-  full width. The library listing had been updated to wrap its chips in a
-  `.filter-chips` row; these two were missed and had been wrong ever since.
-
-  Both now use the same row container. Found by auditing every `.filter-bar`
-  in the file rather than fixing the one in the screenshot: the category
-  archive is a public page, so every visitor was seeing it too.
-
-## 1.18.2 — 6 August 2026
-
-### Fixed
-
-- **Minified assets were not being served.** 1.14.0 shipped minified twins and
-  chose between them and the readable sources by comparing modification times.
-  That comparison cannot survive an upload: FTP sets mtimes by upload order and
-  by whatever the client decides, so a perfectly good `style.min.css` can look
-  older than its source and be passed over indefinitely. A live site was
-  serving the full 11 KiB stylesheet with the minified one sitting beside it
-  unused.
-
-  The choice is now made from `assets/manifest.json`, written by
-  `tools/minify.js`, which records the byte length of the source each twin was
-  built from. A byte length survives upload unchanged and still changes the
-  moment the file is edited, so editing a stylesheet still takes precedence
-  with nothing to rebuild, and an installation with no manifest falls back to
-  readable sources rather than breaking.
-
-- **Chips were too small to tap reliably.** Category and tag chips stood about
-  fifteen pixels tall against the twenty-four a finger needs, which is what
-  cost the Accessibility score. They now meet the minimum on touch devices,
-  with more space between them. Scoped to coarse pointers, so the desktop
-  appearance is unchanged.
-
-## 1.18.1 — 6 August 2026
-
-### Fixed
-
-- **IndexNow submitted only part of the site.** It sent the library root and
-  the document pages, and nothing else: folder listings, category archives,
-  standalone pages, and every PDF file were announced by the sitemaps but
-  never pushed. The mechanism that delivers immediately was the one carrying
-  the least.
-
-  The submission is now the union of both sitemaps, built from the same
-  sources they use so the three cannot drift apart. Verified by set
-  comparison: nothing in either sitemap goes unsubmitted, and nothing is
-  submitted that is not in one.
-
-- The button now states how many URLs it will send, and the screen says what
-  is covered, so the gap could not sit unnoticed again.
-
-## 1.18.0 — 6 August 2026
-
-### Added
-
-- **A search title and search description for every document and every
-  standalone page.** The title above a document is written for someone
-  reading the page; the one that works in a result list is often different,
-  and usually shorter. The two are now separate fields, in the Edit panel and
-  on the Pages screen.
-
-  Limits are 60 characters for the title and 150 for the description, which is
-  roughly what a result shows before truncating. Both are enforced when saved,
-  not only in the browser.
-
-  A search title is used as the whole `<title>`, with no site name appended,
-  since controlling the entire tag is the point of the field. Both feed
-  `og:title` and `og:description` too, so social cards match. Left empty,
-  every page behaves exactly as it did before.
-
-### Fixed
-
-- **Standalone pages emitted no meta description at all.** About, FAQ and the
-  rest had none, so a search engine composed its own snippet from wherever in
-  the body it chose. They now carry one: the written description when there is
-  one, and otherwise the opening 150 characters of the page, which is at least
-  the beginning rather than an arbitrary middle.
-
-## 1.17.0 — 6 August 2026
-
-### Added
-
-- **A library can have as many standalone pages as it wants.** There were five
-  slots: About, FAQ, and three numbered ones. Wanting a sixth meant editing
-  the source. The Pages screen now has **Add a page** and a per-page **Delete
-  on save**, with no ceiling.
-
-  About and FAQ stay built in and cannot be deleted, because their schema.org
-  types say something a generic page cannot: an FAQ page carries its questions
-  as structured data, and an About page is read as identity information.
-  Everything added is a `WebPage`.
-
-  A new page derives its address from its title when no slug is given, so the
-  internal slot identifier never appears in a URL. New pages join the sitemap,
-  the header, and the footer exactly as the fixed slots always did.
-
-### Compatibility
-
-- **Existing installations need no migration.** The slot list is now read from
-  `data/pages.json` rather than hardcoded, so an installation carrying
-  `page1`, `page2` and `page3` keeps them, their content, and their addresses.
-  Verified against a pre-1.17 file: all three slots still list in the admin,
-  and their pages still resolve and still appear in the sitemap.
-
-## 1.16.1 — 6 August 2026
-
-### Changed
-
 - **Category addresses drop the hash suffix.** Every category carried one —
   `/category/tracts-2a4f72ad/`, `/category/language-literature-a6888cfe/` —
   because two names can slugify to the same string, "Q&A" and "Q A" among
@@ -465,17 +270,6 @@ already in the theme: the library still reads as paper.
   The suffix is now added only to names that actually collide, and to every
   member of the colliding group so none of them silently wins the plain
   address. A library with no clash has clean addresses: `/category/tracts/`.
-
-### Fixed
-
-- **Addresses issued before this release still work.** The hashed form is
-  recognised and 301-redirects to the current address, so links already
-  indexed, bookmarked, or sitting in a submitted sitemap do not break. The
-  bare slugified name redirects too, for links predating the suffix entirely.
-
-## 1.16.0 — 6 August 2026
-
-### Changed
 
 - **Diagnostics is tabbed, and opens on what is wrong.** Thirty-eight checks
   in one column meant reading the whole page to find the one line that
@@ -499,50 +293,6 @@ already in the theme: the library still reads as paper.
 - Tabs are keyboard-navigable with the arrow keys, and without JavaScript
   every panel stays visible so the page degrades to labelled sections rather
   than hiding its own contents.
-
-## 1.15.2 — 6 August 2026
-
-### Fixed
-
-- **Diagnostics contradicted itself about reconciliation.** When no document
-  could be matched by content it reported "No document can be matched
-  automatically. Open Catalogue to apply it." — naming an action that did not
-  exist, since there was nothing to apply. The closing sentence was appended
-  unconditionally. It now says what is actually true: the files were deleted
-  rather than renamed, or were replaced with different content, and the way
-  forward is to relink by hand or remove the records.
-
-- **The catalogue note promised content matching would work before checking
-  whether it could.** It always said "Folio will match them by content and
-  keep their URLs", even where the match preview had already found nothing.
-  Both notes are now built from a single preview, so they cannot disagree,
-  and the preview is computed once rather than twice.
-
-## 1.15.1 — 6 August 2026
-
-### Fixed
-
-- **Compression failed outright on hosts running qpdf older than 10.0**, with
-  the raw error `unknown option --recompress-flate`. Folio passed
-  `--recompress-flate` and `--compression-level` unconditionally, and both
-  arrived in qpdf 10.0; an older qpdf rejects an unknown option rather than
-  ignoring it, so nothing was compressed at all. Shared hosts commonly ship
-  8.x or 9.x.
-
-  The flag list is now built from the installed version. Everything qpdf has
-  understood for years is always sent; the two newer flags are added only
-  where they exist. Their absence costs a few percent of the saving rather
-  than the feature: on a test document both flag sets produced byte-identical
-  output.
-
-- **The failure message no longer hands the reader a tool's internal error.**
-  An unknown-option failure now names the qpdf version on the server and asks
-  for a report, rather than showing a command-line flag to someone with no
-  reason to know qpdf's release history.
-
-## 1.15.0 — 6 August 2026
-
-### Changed
 
 - **The document page had its buttons in two places.** "Read in flip view"
   sat under the preview while Print and Direct link sat below a rule further
@@ -581,10 +331,6 @@ already in the theme: the library still reads as paper.
   the exact confusion that field was added to remove. The recorded date is
   used when there is one, falling back to the file date when there is not.
 
-## 1.14.0 — 6 August 2026
-
-### Changed
-
 - **Stylesheets and scripts ship minified.** PageSpeed had flagged this since
   the first report and it was declined twice on the grounds that Folio has no
   build step. That reasoning was wrong: the constraint is that *installing*
@@ -605,16 +351,164 @@ already in the theme: the library still reads as paper.
   roadmap, that the stylesheet is editable directly rather than through a
   package format.
 
-### Added
+### Fixed
 
-- `tools/minify.js`, the script that builds the minified twins, so a release
-  is reproducible rather than depending on something done by hand once. It
-  uses clean-css and terser rather than a hand-written regex, and exits
-  non-zero if any file fails.
+- **A loading document looked like a broken one.** The browser's PDF viewer
+  is an empty dark rectangle until the file arrives, and a large scan can sit
+  like that for a long time with nothing to say it is working. A reader has no
+  way to tell a slow document from a failed one.
 
-## 1.13.2 — 6 August 2026
+  The viewer is now covered until it is ready by a quiet note on the page
+  colour, naming the size so the wait is explicable: *Loading the document
+  (846 KB)…*. The frame keeps its space while hidden, so nothing shifts when
+  the document appears.
+
+  After six seconds the note acknowledges the wait rather than repeating
+  itself. After twenty it reveals the viewer regardless: some browsers never
+  report an embedded PDF as loaded, and a viewer the reader can see is better
+  than a note that never leaves.
+
+- **The inline PDF viewer ignored the shape of the document.** Its height was
+  fixed, which suits an A4 page and leaves a screenful of empty dark viewer
+  under anything wider: a birth certificate, a landscape results slip, a
+  scanned card. The page was fine; the frame around it was not.
+
+  The viewer now takes its height from the first page's own proportions.
+  `pdfinfo` already reported the page size, so this only had to be carried to
+  the browser: a wide certificate that previously reserved a full portrait
+  frame now takes roughly half of it, with nothing empty below.
+
+  The height is capped at 82% of the window so a very tall page cannot push
+  the buttons out of view, and floored so a very wide one stays readable. When
+  the page size cannot be read — no `pdfinfo`, or a file it cannot parse — the
+  previous fixed height is used, so nothing depends on the tool being there.
+
+- The measurement is cached in `data/aspect.json`, keyed on each file's size
+  and modification time, so `pdfinfo` runs once per document rather than on
+  every page view, and a replaced file is measured again.
+
+- **Print did the same thing as Direct link on a PDF page.** Both opened the
+  raw file: two buttons side by side with one behaviour between them.
+
+  The cause was a stale assumption. When the inline PDF viewer was removed in
+  1.0.1 there was nothing left on the page to print, so Print was changed to
+  hand the file to the browser. 1.15.0 restored the viewer, and this was never
+  changed back. Print now prints the document where it sits, which is what the
+  button is for.
+
+  Where there is no viewer to print — mobile, where the preview is a rendered
+  first page rather than an embedded document — the file is still handed to the
+  browser, and a viewer that refuses to print falls back the same way.
+
+- **Chip rows on two screens rendered as full-width stacked bars.** The
+  documentation viewer and the category archive placed their chips directly
+  inside `.filter-bar`, which became a vertical flex container when the search
+  field moved into it. Each chip then became a column item and stretched the
+  full width. The library listing had been updated to wrap its chips in a
+  `.filter-chips` row; these two were missed and had been wrong ever since.
+
+  Both now use the same row container. Found by auditing every `.filter-bar`
+  in the file rather than fixing the one in the screenshot: the category
+  archive is a public page, so every visitor was seeing it too.
+
+- **Minified assets were not being served.** 1.14.0 shipped minified twins and
+  chose between them and the readable sources by comparing modification times.
+  That comparison cannot survive an upload: FTP sets mtimes by upload order and
+  by whatever the client decides, so a perfectly good `style.min.css` can look
+  older than its source and be passed over indefinitely. A live site was
+  serving the full 11 KiB stylesheet with the minified one sitting beside it
+  unused.
+
+  The choice is now made from `assets/manifest.json`, written by
+  `tools/minify.js`, which records the byte length of the source each twin was
+  built from. A byte length survives upload unchanged and still changes the
+  moment the file is edited, so editing a stylesheet still takes precedence
+  with nothing to rebuild, and an installation with no manifest falls back to
+  readable sources rather than breaking.
+
+- **Chips were too small to tap reliably.** Category and tag chips stood about
+  fifteen pixels tall against the twenty-four a finger needs, which is what
+  cost the Accessibility score. They now meet the minimum on touch devices,
+  with more space between them. Scoped to coarse pointers, so the desktop
+  appearance is unchanged.
+
+- **IndexNow submitted only part of the site.** It sent the library root and
+  the document pages, and nothing else: folder listings, category archives,
+  standalone pages, and every PDF file were announced by the sitemaps but
+  never pushed. The mechanism that delivers immediately was the one carrying
+  the least.
+
+  The submission is now the union of both sitemaps, built from the same
+  sources they use so the three cannot drift apart. Verified by set
+  comparison: nothing in either sitemap goes unsubmitted, and nothing is
+  submitted that is not in one.
+
+- The button now states how many URLs it will send, and the screen says what
+  is covered, so the gap could not sit unnoticed again.
+
+- **Standalone pages emitted no meta description at all.** About, FAQ and the
+  rest had none, so a search engine composed its own snippet from wherever in
+  the body it chose. They now carry one: the written description when there is
+  one, and otherwise the opening 150 characters of the page, which is at least
+  the beginning rather than an arbitrary middle.
+
+- **Addresses issued before this release still work.** The hashed form is
+  recognised and 301-redirects to the current address, so links already
+  indexed, bookmarked, or sitting in a submitted sitemap do not break. The
+  bare slugified name redirects too, for links predating the suffix entirely.
+
+- **Diagnostics contradicted itself about reconciliation.** When no document
+  could be matched by content it reported "No document can be matched
+  automatically. Open Catalogue to apply it." — naming an action that did not
+  exist, since there was nothing to apply. The closing sentence was appended
+  unconditionally. It now says what is actually true: the files were deleted
+  rather than renamed, or were replaced with different content, and the way
+  forward is to relink by hand or remove the records.
+
+- **The catalogue note promised content matching would work before checking
+  whether it could.** It always said "Folio will match them by content and
+  keep their URLs", even where the match preview had already found nothing.
+  Both notes are now built from a single preview, so they cannot disagree,
+  and the preview is computed once rather than twice.
+
+- **Compression failed outright on hosts running qpdf older than 10.0**, with
+  the raw error `unknown option --recompress-flate`. Folio passed
+  `--recompress-flate` and `--compression-level` unconditionally, and both
+  arrived in qpdf 10.0; an older qpdf rejects an unknown option rather than
+  ignoring it, so nothing was compressed at all. Shared hosts commonly ship
+  8.x or 9.x.
+
+  The flag list is now built from the installed version. Everything qpdf has
+  understood for years is always sent; the two newer flags are added only
+  where they exist. Their absence costs a few percent of the saving rather
+  than the feature: on a test document both flag sets produced byte-identical
+  output.
+
+- **The failure message no longer hands the reader a tool's internal error.**
+  An unknown-option failure now names the qpdf version on the server and asks
+  for a report, rather than showing a command-line flag to someone with no
+  reason to know qpdf's release history.
 
 ### Documentation
+
+- **The roadmap's Known issues were re-measured against this release.** The
+  entry for `index.php` still quoted 8,279 lines and 151 functions; it is now
+  8,964 and 163, having grown by roughly 700 lines since the note was written.
+  A figure that quietly goes stale is worse than no figure, so the list now
+  says it is re-measured whenever it is reviewed.
+
+- **The search-field entry was wrong about the cause.** It said the field had
+  no label. It has one — `<label for="listing-search">` — but the label's only
+  content is a decorative glyph marked `aria-hidden`, so a screen reader finds
+  an empty label and falls back to the placeholder. The fix is different from
+  the one implied, so the entry now describes what is actually there.
+
+- Principle 6, on disposable caches, listed four directories and had not been
+  updated for `data/compressed/` or `data/aspect.json`. Both are disposable
+  and both are now named.
+
+The three payload measurements were re-checked on a 1,500-document folder and
+hold: 2.7 MB, 33% indentation, `BASE_URL` written 7,514 times.
 
 - **A Known issues section in the roadmap**, recording what a review of this
   release actually measured rather than what it assumed. The largest item is
@@ -650,29 +544,17 @@ already in the theme: the library still reads as paper.
 - `tests/asset-version-check.php` and `tests/wired-check.php` were missing from
   the file inventory in `docs/ssot.md`, which claims to be authoritative.
 
+### Compatibility
+
+- **Existing installations need no migration.** The slot list is now read from
+  `data/pages.json` rather than hardcoded, so an installation carrying
+  `page1`, `page2` and `page3` keeps them, their content, and their addresses.
+  Verified against a pre-1.17 file: all three slots still list in the admin,
+  and their pages still resolve and still appear in the sitemap.
+
 ## 1.13.1 — 5 August 2026
 
-### Fixed
-
-- **An upgrade could leave the site styled by the previous stylesheet.**
-  1.9.2 told browsers to cache `style.css` and the scripts for a year and
-  never revalidate — correct for files that only change on upgrade, but only
-  if the URL changes with them. It did not. A browser that had visited before
-  kept the old stylesheet and applied it to the new markup: sort buttons drew
-  as plain boxes, tags kept borders the new rules removed, and the header lost
-  its styling entirely.
-
-  Every release-owned asset is now linked with `?v=` and the version number,
-  so an upgrade is a new URL and the cache is bypassed exactly when it should
-  be. The year-long cache stays, and is now safe.
-
-  A regression test fails the build if an asset is linked without a version.
-
-**If a page still looks wrong after upgrading**, it is the old file in your
-browser cache: reload once with Ctrl-Shift-R, or open a private window. From
-this release on it corrects itself.
-
-## 1.13.0 — 5 August 2026
+Fixes for the issues PageSpeed Insights reports on a live installation.
 
 ### Added
 
@@ -701,10 +583,6 @@ this release on it corrects itself.
   Linked from the admin bar and from the Diagnostics rows that report the
   problem.
 
-## 1.12.0 — 5 August 2026
-
-### Added
-
 - **Compress a PDF.** Scanners often write PDFs that store their page images
   with little or no compression, so a single certificate can arrive as tens of
   megabytes. A **Compress** button on each PDF row prepares a smaller copy
@@ -727,82 +605,6 @@ this release on it corrects itself.
 
   Both the preparation and the download are administrator-only.
 
-## 1.11.4 — 5 August 2026
-
-### Fixed
-
-- **A PDF whose preview could not be generated showed a broken-image icon.**
-  When rendering failed, the thumbnail route redirected to the original file.
-  That is the right answer for an image, and exactly wrong for a PDF: the
-  browser received a PDF where it expected an image and drew the broken icon
-  the fallback existed to avoid. It now returns 404 for anything an `<img>`
-  cannot display, and the hover card shows its document placeholder instead.
-
-- **A failed render said nothing.** A library where only some previews work
-  gave nothing to diagnose. The reason is now written to the error log —
-  `Syntax Error: Couldn't find trailer dictionary`, `Document stream is
-  empty`, a timeout — naming the file each time.
-
-Encrypted, truncated and empty PDFs are the usual causes; all three now
-degrade to a placeholder rather than a broken image. A document that renders
-is unaffected.
-
-## 1.11.3 — 5 August 2026
-
-### Changed
-
-- **The browser's own PDF toolbar no longer sits on top of the preview.**
-  Clicking Preview on a PDF embeds it, and Chrome and Edge draw their own
-  download, print and menu buttons over Folio's — duplicating actions already
-  beside the document and, on a restricted document, implying they are
-  available. The embed now asks for those controls to be dropped.
-
-  This is presentation, not protection. Firefox and Safari ignore the
-  parameters, and the file's own URL is reachable regardless. A document that
-  must not be downloaded needs `pdf_access` set to viewer or hidden, which is
-  enforced on the server rather than requested of the browser.
-
-## 1.11.2 — 5 August 2026
-
-### Changed
-
-- **Category and tags are visually distinct.** They sat in one row styled
-  almost identically — a bordered chip each, differing only by a `#` and some
-  letter-spacing — so a document with six tags showed seven near-identical
-  boxes and nothing said which was which.
-
-  They are two different kinds of fact. A document belongs to exactly one
-  category, and that is how the library is navigated; tags are annotations,
-  and there may be many. Giving them equal weight said they were the same
-  thing.
-
-  The category now sits on its own line as a tinted, bordered link. Tags sit
-  beneath it with no box at all — plain muted words that read as a line of
-  text rather than a row of competing buttons. Both still filter on click.
-
-## 1.11.1 — 5 August 2026
-
-### Changed
-
-- **Search is a nav icon and an overlay, not a bar across the listing.** The
-  field sat in the filter bar, where it had to be wide enough to look
-  deliberate and so dominated a row that is otherwise small chips — on a wide
-  screen it stretched most of the page for no reason. It is now a magnifier
-  in the header. Clicking it opens a panel; the categories get their row back.
-
-  Escape and the close button dismiss it, clicking the backdrop dismisses it,
-  and `/` opens it from anywhere on the page. Focus moves into the field on
-  open and returns to where it came from on close, and stays inside the panel
-  while it is open.
-
-  **Closing keeps the results.** Dismissing the panel and losing the filtered
-  list at the same time is not what a reader is asking for; clearing is done
-  by deleting the text.
-
-## 1.11.0 — 5 August 2026
-
-### Added
-
 - **Sortable columns.** Name, Size and Date each sort ascending on the first
   click and descending on the second. The active column shows an arrow, and
   the header is a real button, so it works by keyboard and is announced
@@ -822,27 +624,6 @@ is unaffected.
   chips and the search box still own that, so a sort applied to a filtered
   view keeps exactly the same set of documents. The chosen order is remembered
   for the session, so moving between folders does not silently reset it.
-
-## 1.10.1 — 5 August 2026
-
-### Changed
-
-- **The filter bar is laid out properly.** Category chips and the search box
-  shared one wrapping flex container, with the search pushed right by
-  `margin-left: auto`. That meant the search landed at the end of whatever row
-  the chips happened to stop on, and moved every time a category was added or
-  the window resized. They are now two rows: search across the full width with
-  a magnifier, categories beneath it.
-- The search field is full width rather than a fixed 15rem, with a visible
-  search icon, and no longer needs a separate mobile rule to behave.
-- **The date column shows the document's date**, not the file's modification
-  time. `2026-08-04` on a 1980 birth certificate answered a question nobody
-  was asking. Where no document date is recorded the file time is still shown,
-  muted, with a tooltip saying what it is.
-
-## 1.10.0 — 5 August 2026
-
-### Added
 
 - **A date field for each document.** Folio recorded when a file was last
   modified, which for an archive is nearly meaningless: it says when the scan
@@ -865,11 +646,96 @@ is unaffected.
 - The listing shows the document's date beneath its description, as a proper
   `<time>` element with a machine-readable value where one could be derived.
 
-## 1.9.2 — 5 August 2026
+### Changed
 
-Fixes for the issues PageSpeed Insights reports on a live installation.
+- **The browser's own PDF toolbar no longer sits on top of the preview.**
+  Clicking Preview on a PDF embeds it, and Chrome and Edge draw their own
+  download, print and menu buttons over Folio's — duplicating actions already
+  beside the document and, on a restricted document, implying they are
+  available. The embed now asks for those controls to be dropped.
+
+  This is presentation, not protection. Firefox and Safari ignore the
+  parameters, and the file's own URL is reachable regardless. A document that
+  must not be downloaded needs `pdf_access` set to viewer or hidden, which is
+  enforced on the server rather than requested of the browser.
+
+- **Category and tags are visually distinct.** They sat in one row styled
+  almost identically — a bordered chip each, differing only by a `#` and some
+  letter-spacing — so a document with six tags showed seven near-identical
+  boxes and nothing said which was which.
+
+  They are two different kinds of fact. A document belongs to exactly one
+  category, and that is how the library is navigated; tags are annotations,
+  and there may be many. Giving them equal weight said they were the same
+  thing.
+
+  The category now sits on its own line as a tinted, bordered link. Tags sit
+  beneath it with no box at all — plain muted words that read as a line of
+  text rather than a row of competing buttons. Both still filter on click.
+
+- **Search is a nav icon and an overlay, not a bar across the listing.** The
+  field sat in the filter bar, where it had to be wide enough to look
+  deliberate and so dominated a row that is otherwise small chips — on a wide
+  screen it stretched most of the page for no reason. It is now a magnifier
+  in the header. Clicking it opens a panel; the categories get their row back.
+
+  Escape and the close button dismiss it, clicking the backdrop dismisses it,
+  and `/` opens it from anywhere on the page. Focus moves into the field on
+  open and returns to where it came from on close, and stays inside the panel
+  while it is open.
+
+  **Closing keeps the results.** Dismissing the panel and losing the filtered
+  list at the same time is not what a reader is asking for; clearing is done
+  by deleting the text.
+
+- **The filter bar is laid out properly.** Category chips and the search box
+  shared one wrapping flex container, with the search pushed right by
+  `margin-left: auto`. That meant the search landed at the end of whatever row
+  the chips happened to stop on, and moved every time a category was added or
+  the window resized. They are now two rows: search across the full width with
+  a magnifier, categories beneath it.
+- The search field is full width rather than a fixed 15rem, with a visible
+  search icon, and no longer needs a separate mobile rule to behave.
+- **The date column shows the document's date**, not the file's modification
+  time. `2026-08-04` on a 1980 birth certificate answered a question nobody
+  was asking. Where no document date is recorded the file time is still shown,
+  muted, with a tooltip saying what it is.
 
 ### Fixed
+
+- **An upgrade could leave the site styled by the previous stylesheet.**
+  1.9.2 told browsers to cache `style.css` and the scripts for a year and
+  never revalidate — correct for files that only change on upgrade, but only
+  if the URL changes with them. It did not. A browser that had visited before
+  kept the old stylesheet and applied it to the new markup: sort buttons drew
+  as plain boxes, tags kept borders the new rules removed, and the header lost
+  its styling entirely.
+
+  Every release-owned asset is now linked with `?v=` and the version number,
+  so an upgrade is a new URL and the cache is bypassed exactly when it should
+  be. The year-long cache stays, and is now safe.
+
+  A regression test fails the build if an asset is linked without a version.
+
+**If a page still looks wrong after upgrading**, it is the old file in your
+browser cache: reload once with Ctrl-Shift-R, or open a private window. From
+this release on it corrects itself.
+
+- **A PDF whose preview could not be generated showed a broken-image icon.**
+  When rendering failed, the thumbnail route redirected to the original file.
+  That is the right answer for an image, and exactly wrong for a PDF: the
+  browser received a PDF where it expected an image and drew the broken icon
+  the fallback existed to avoid. It now returns 404 for anything an `<img>`
+  cannot display, and the hover card shows its document placeholder instead.
+
+- **A failed render said nothing.** A library where only some previews work
+  gave nothing to diagnose. The reason is now written to the error log —
+  `Syntax Error: Couldn't find trailer dictionary`, `Document stream is
+  empty`, a timeout — naming the file each time.
+
+Encrypted, truncated and empty PDFs are the usual causes; all three now
+degrade to a placeholder rather than a broken image. A document that renders
+is unaffected.
 
 - **Nothing was compressed.** `.htaccess` carried no `mod_deflate` or
   `mod_brotli` rules, so the stylesheet and script were sent uncompressed on
@@ -897,10 +763,6 @@ Fixes for the issues PageSpeed Insights reports on a live installation.
   coloured dot stays 13px: the tap area grew, the design did not change.
   Keyboard focus is now visible on them too.
 
-## 1.9.1 — 5 August 2026
-
-### Fixed
-
 - **Hovering a PDF row downloaded the whole document.** Image rows used a
   cached thumbnail, but PDF rows were given the file itself and rendered page
   one in the browser with pdf.js. On a 6 MB scan that meant waiting several
@@ -916,6 +778,26 @@ Fixes for the issues PageSpeed Insights reports on a live installation.
 
 Getting the documents themselves into search results.
 
+Folio is free software.
+
+Two Diagnostics faults, both of which made a healthy installation look broken.
+
+Standalone pages now work the way documents do.
+
+Documentation completeness, and a roadmap.
+
+Diagnostics now reports every PHP extension Folio can use.
+
+Two utilities were detected and advertised but never actually used.
+
+OCR is now usable from the interface. It was implemented and tested in 1.5.0
+but there was no way to start it.
+
+Interface fixes, and a site icon you can actually change.
+
+Document URLs are now permanent. They no longer follow the filename or the
+folder, so renaming or reorganising the library over FTP does not break links.
+
 ### Added
 
 - **A sitemap for the document files**, at `/sitemap-pdf.xml`, listing every
@@ -929,223 +811,13 @@ Getting the documents themselves into search results.
   matching `EXCLUDE_PATTERNS` are not listed, because they are not part of the
   library and return 404 on every route.
 
-### Changed
-
-- **PDFs are now served `index, follow` explicitly**, rather than being left
-  to the default. Following the links inside a document is how a crawler
-  reaches the rest of a collection from it. The same applies to `.txt` and
-  `.md`.
-
-Formats a browser would execute are unaffected: HTML, XHTML, XML, MHTML and
-anything unrecognised are still forced to download with `noindex, nofollow`.
-
-## 1.8.3 — 4 August 2026
-
-### Fixed
-
-- **`uploads/.htaccess` could return 403 for every file in the folder.** It set
-  `Options -FollowSymLinks`. On cPanel and similar hosts the path to
-  `public_html` is frequently a symlink itself, and disabling symlink following
-  makes Apache refuse the entire directory — documents included. It is now
-  `+SymLinksIfOwnerMatch`, which keeps the protection without the risk. Folio's
-  own path resolution rejects symlinks regardless, so nothing is lost.
-
-- **PDFs were being told not to appear in search results.** Both
-  `uploads/.htaccess` and the raw file endpoint sent
-  `X-Robots-Tag: noindex, follow` for `.pdf`, `.txt` and `.md`. For a public
-  document library that is backwards: the documents are the content, and a
-  scanned certificate a search engine cannot see is a document nobody will
-  find. Documents are now left indexable. The detail page still carries the
-  canonical URL, so the record and the file do not compete.
-
-Formats a browser would execute — HTML, XHTML, XML, MHTML and anything
-unrecognised — are unaffected and still forced to download with `noindex`.
-
-## 1.8.2 — 4 August 2026
-
-### Fixed
-
-- **`uploads/` did not appear when the project was pushed to GitHub.** Two
-  causes. The `.gitignore` carried a bare `.htaccess` rule, which matches at
-  every level, and it came *after* the `!uploads/.htaccess` exception — so the
-  later rule won and every file in `uploads/` was ignored. With nothing
-  tracked, Git dropped the directory, since it cannot store an empty one. The
-  rule is now `/.htaccess`, scoped to the installed copy at the root.
-
-  Separately, `uploads/` and `data/` contained only dotfiles, and GitHub's
-  web uploader silently skips those — so even a correct `.gitignore` would
-  have produced empty folders when dragging the release in. Both now carry a
-  visible `readme.txt` explaining what belongs there.
-
-- **`data/` ignored a list of known files rather than the folder.** Any
-  runtime file added by a future version would have been committed to a public
-  repository. It now ignores the folder and names the few files that belong in
-  the repository, so it fails closed.
-
-Verified with `git check-ignore`: `uploads/` and `data/` are both present in a
-commit, while `config.php`, the installed `.htaccess`, accounts, settings, the
-catalogue, generated caches, and uploaded documents are all still excluded.
-
-## 1.8.1 — 4 August 2026
-
-### Changed
-
-- **Stopped labouring the Ghostscript point.** Folio does not use Ghostscript,
-  and the documentation said so 77 times across seven files — in the readmes,
-  the security notes, the architecture reference, the upgrade guide, the
-  sample configuration, and on the Diagnostics screen. Repeating it made an
-  irrelevance look like a caveat. The user-facing text now simply says PDF
-  pages are rendered with Poppler.
-
-  What remains is only the `PDF_ALLOW_GHOSTSCRIPT` setting name, which cannot
-  be renamed without breaking existing configurations. Behaviour is unchanged.
-
-## 1.8.0 — 4 August 2026
-
-Folio is free software.
-
-### Changed
-
-- **Folio is now licensed under the GNU General Public License, version 3 or
-  later.** It was previously marked proprietary, which was wrong: Folio is
-  open source. You may use, study, modify, and redistribute it; derivative
-  works carry the same licence.
-
-      Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
-      SPDX-License-Identifier: GPL-3.0-or-later
-
-  `license.txt` now carries the full, verbatim GPL version 3 text, preceded by
-  the standard notice and a list of the bundled components.
-
-- **Version 3 rather than version 2 is a constraint, not a preference.** The
-  bundled Mozilla pdf.js is Apache-2.0, which is compatible with GPL version 3
-  and incompatible with version 2. Licensing Folio as GPL-2.0-only would make
-  the release undistributable without first removing pdf.js.
-
-- Every source file — PHP, JavaScript, and CSS — carries an
-  `SPDX-License-Identifier` line, so the licence is discoverable from any one
-  file rather than only from the release as a whole.
-
-- `docs/ssot.md` gained a Licensing section recording each bundled
-  component's licence and where its notice lives, and an invariant: a
-  dependency that is GPL-2-only, proprietary, or non-commercial cannot be
-  bundled.
-
-### Unchanged
-
-- The bundled components keep their own licences and are unaffected:
-  Parsedown (MIT), Mozilla pdf.js (Apache-2.0), and the OpenJPEG and QCMS
-  WebAssembly decoders.
-
-## 1.7.2 — 4 August 2026
-
-### Fixed
-
-- **A custom site icon still did not appear.** 1.6.1 added the `branding/`
-  folder and made every page emit the right `<link>` tags, and that part
-  worked — but browsers also request `/favicon.ico` and
-  `/apple-touch-icon.png` directly, whatever the tags say. Tabs, bookmarks,
-  history and session restore all use the root path. With the catch-all
-  rewrite in place those requests reached `index.php`, which tried to resolve
-  them as document slugs and returned an HTML 404, so the browser fell back to
-  a blank icon and the custom one never showed.
-
-  Those paths are now answered with the real icon, preferring `branding/` and
-  falling back to the one Folio ships. Verified for `favicon.ico`,
-  `favicon.svg`, and `apple-touch-icon.png`, with and without a `branding/`
-  folder present.
-
-- **`branding/` is now part of the release**, with a short readme inside it.
-  Previously the folder had to be created by hand after reading the
-  documentation, which is a poor way to discover a feature.
-
-### Added
-
 - A regression test asserting the root icon paths return an actual image
   rather than an HTML page. It fails if the handler is removed.
-
-### Note
-
-Icons are cached hard by browsers. If the old one persists after upgrading,
-try a private window before assuming it has not worked.
-
-## 1.7.1 — 4 August 2026
-
-Two Diagnostics faults, both of which made a healthy installation look broken.
-
-### Fixed
-
-- **"Rewrite route received" always reported a failure.** It inspected the
-  current request, but Diagnostics is only ever reached at
-  `?action=diagnostics` — a query-string admin URL that is never rewritten by
-  design. The check could therefore never pass, and reported "this request was
-  not rewritten" on sites whose clean URLs were working perfectly. It is
-  replaced by a **Rewrite rules** check that reads `.htaccess` for the rules
-  that actually matter, including the PDF access rule, and says plainly that
-  an admin page cannot demonstrate rewriting itself.
-- **`mod_rewrite` was flagged amber on every modern host.** It can only be
-  read under Apache mod_php, so PHP-FPM and CGI — which is most hosting — got
-  a warning for a condition that is normal and harmless. It now reports as
-  information, with the note explaining that working clean URLs are the real
-  proof.
-- **Status chips and notes were misaligned between groups, and long labels
-  collided with them.** Each group is a separate table, and with automatic
-  layout every one computed its own column widths. The tables now share a
-  fixed layout, so all 38 rows line up in a single column, and a long label
-  wraps instead of running into the chip beside it.
-
-## 1.7.0 — 4 August 2026
-
-Standalone pages now work the way documents do.
-
-### Changed
-
-- **Pages have editable URL slugs.** A page's address was fixed to its
-  internal slot name behind a `/p/` prefix, so the three general-purpose pages
-  were stuck at `/p/page1/`, `/p/page2/` and `/p/page3/` — names that mean
-  nothing to a reader. Each page now has a **URL slug** field, and its address
-  is whatever you set: `/bibliography/`, not `/p/page1/`.
-- **Pages and documents share one flat namespace.** There is no reason a
-  certificate should get a tidier address than an About page. A slug is
-  checked against documents, other pages, and Folio's own routes before it is
-  accepted, in both directions: a page cannot take a document's address and a
-  document cannot take a page's. An uncatalogued file is checked too, since it
-  still answers on its filename-derived address.
-- **Old addresses keep working.** `/p/page1/` and `/page1/` both redirect
-  permanently to the page's current address, so existing links and bookmarks
-  survive. About and FAQ keep `/about/` and `/faq/` unless you change them.
-
-This was an inconsistency left by 1.6.0, which gave documents editable,
-collision-checked slugs and did not extend the same treatment to pages.
-
-## 1.6.6 — 4 August 2026
-
-### Fixed
-
-- **Nothing told you how to produce `FOLIO_URL_SIGNING_KEY`.** Without it, PDF
-  access control cannot be enforced, and the Crawlers screen said only
-  "generate one and add it there" — while the IndexNow key beside it had a
-  one-click generator. The screen now shows a freshly generated 256-bit key as
-  a complete, copyable `define(...)` line, with a new one offered on every
-  visit until the setting is in place. `config-sample.php` gained the
-  equivalent shell commands.
-
-  Folio does not write the key into `config.php` itself, deliberately: that
-  file stays one the application cannot modify, which is what stops a future
-  flaw from rewriting Folio's own configuration.
-
-### Added
 
 - A step-by-step **"Turning on PDF access control"** section in the readme
   covering the signing key, the preflight, the `.htaccess` rule, and the
   warning that renaming the uploads folder silently disables enforcement
   unless the rule is updated to match.
-
-## 1.6.5 — 4 August 2026
-
-Documentation completeness, and a roadmap.
-
-### Added
 
 - **A roadmap in `docs/upgrading.md`.** It records the principles that will
   not change, what is planned next, what is under consideration, and — just as
@@ -1154,37 +826,6 @@ Documentation completeness, and a roadmap.
   belong in the same file.
 - A note in the readme and readme.txt pointing at it, so that something listed
   as declined is not mistaken for something merely not done yet.
-
-### Fixed
-
-- **Six configuration constants were documented nowhere.** `SITE_INDEXABLE`,
-  `SITEMAP_ENABLED`, `LLMS_ENABLED`, `LLMS_INTRO`, `INDEXNOW_KEY`, and
-  `PDF_GATE_CONFIRMED` are written by the admin screens, so nothing was
-  broken, but a reader of `config-sample.php` had no way to learn they exist
-  or that defining one by hand takes it away from the admin screen. They are
-  now listed with that explanation, and with a warning against setting
-  `PDF_GATE_CONFIRMED` manually — doing so claims a restriction is enforced
-  when it may not be. All 46 constants are now documented.
-- **Four endpoints were missing from the reference.** `?action=thumb`,
-  `?action=ocr`, `?action=reconcile`, and `?action=relink` were added in
-  1.5.0 and 1.6.0 but never reached the endpoint table in `docs/ssot.md`.
-  `?action=meta` and `?action=logout` were absent too.
-- **The documentation-set table said "these five" while listing six**, and
-  omitted `security.md` and `tests/readme.md` altogether. It now lists all
-  eight and states each one's scope.
-
-## 1.6.4 — 4 August 2026
-
-Diagnostics now reports every PHP extension Folio can use.
-
-### Fixed
-
-- **The image engine row had disappeared.** It was added in 1.5.0 and lost in
-  the 1.6.0 merge, because the branch it was merged onto predated it. Whether
-  Imagick or GD was available — the difference between working thumbnails and
-  none — was not reported anywhere.
-
-### Added
 
 - Diagnostics rows for **image engine**, **fileinfo**, **iconv**, and
   **OPcache**, alongside the existing PHP version, mbstring, JSON, password
@@ -1196,53 +837,11 @@ Diagnostics now reports every PHP extension Folio can use.
 - OPcache reports as a check rather than OK when it is off, since a
   single-file application benefits from it noticeably.
 
-### Unchanged
-
-- Only mbstring is genuinely required, and only for Markdown. Every other
-  extension has a fallback: verified by serving the listing, a document page
-  and the sitemap with Imagick, GD, fileinfo, iconv and mbstring all absent —
-  all returned 200.
-
-## 1.6.3 — 4 August 2026
-
-Two utilities were detected and advertised but never actually used.
-
-### Fixed
-
-- **`pngquant` was dead code.** `thumb_optimise()` returned immediately unless
-  the file ended in `.png`, but every derivative Folio writes is WebP, so the
-  condition could never be true. It now runs on the PNG that Poppler produces
-  when rendering a PDF page — the one point in the pipeline where a real PNG
-  exists — shrinking it before it is decoded and re-encoded. Measured at 26%
-  smaller on a 1400x900 render.
-- **`exiftool` was never called at all.** It appeared only in the version
-  table and a Diagnostics label. It now reads a document's own creation date,
-  which is usually closer to the truth than the filesystem time — that changes
-  every time a file is copied or re-uploaded over FTP. The date is stored as
-  `captured_at` when a document states one.
-- Diagnostics described both in terms of what they were supposed to do rather
-  than what they did. The labels now say what actually happens.
-
-### Added
-
 - A regression test asserting that **every utility Diagnostics advertises is
   invoked somewhere**. Detection without a call site is worse than not
   supporting a tool: the interface reports a capability the application does
   not have. Verified to fail when either utility is returned to its previous
   state.
-
-## 1.6.2 — 4 August 2026
-
-OCR is now usable from the interface. It was implemented and tested in 1.5.0
-but there was no way to start it.
-
-### Fixed
-
-- **`admin.js` was never loaded on the listing page**, so every admin-only row
-  behaviour defined there was unreachable. It is now loaded for signed-in
-  administrators alongside `app.js`.
-
-### Added
 
 - **An OCR button on PDF rows**, shown to signed-in administrators when OCR is
   available. It counts up while working — a control that sits silent for two
@@ -1254,30 +853,6 @@ but there was no way to start it.
   environment, how to choose languages, and what to do when OCR reads a
   document badly.
 
-## 1.6.1 — 4 August 2026
-
-Interface fixes, and a site icon you can actually change.
-
-### Fixed
-
-- **Every metadata edit form was permanently open.** `.meta-form` set
-  `display: flex` in a class rule, which silently overrides the `hidden`
-  attribute — `hidden` is only a weak user-agent style. The listing rendered
-  every row fully expanded, with truncated inputs squeezed into the narrow
-  first column. A `[hidden] { display: none !important }` guard now covers
-  every element that toggles this way, six of which were affected.
-- **The listing was starved of width.** The hover-preview column reserved a
-  proportional share whether or not it was showing anything, leaving the table
-  44% of the page: long titles wrapped over four lines and tags stacked one
-  per row. The reservation is now capped, giving the listing the majority —
-  at 1280px the table went from 564px to 895px, and the name column from
-  145px to 423px.
-- **Rows with an open form put the size, date and buttons in the vertical
-  middle** of a tall empty row. Table cells are top-aligned so they stay level
-  with the title.
-
-### Added
-
 - **A site icon you can change.** Put `favicon.svg`, `.png`, `.ico`, or
   `apple-touch-icon.png` in a `branding/` folder at the root and Folio uses
   them, with no configuration. `branding/` is not release-owned, so an upgrade
@@ -1286,13 +861,6 @@ Interface fixes, and a site icon you can actually change.
   optional `SITE_ICON` setting points somewhere else. Icon markup is now
   emitted from one place rather than repeated across sixteen page templates.
 - Diagnostics reports which icon is in use and where it came from.
-
-## 1.6.0 — 4 August 2026
-
-Document URLs are now permanent. They no longer follow the filename or the
-folder, so renaming or reorganising the library over FTP does not break links.
-
-### Added
 
 - **Permanent document identity.** Every document gets an internal
   `document_id` that survives renaming, moving, and slug changes. Metadata is
@@ -1319,6 +887,67 @@ folder, so renaming or reorganising the library over FTP does not break links.
 
 ### Changed
 
+- **PDFs are now served `index, follow` explicitly**, rather than being left
+  to the default. Following the links inside a document is how a crawler
+  reaches the rest of a collection from it. The same applies to `.txt` and
+  `.md`.
+
+Formats a browser would execute are unaffected: HTML, XHTML, XML, MHTML and
+anything unrecognised are still forced to download with `noindex, nofollow`.
+
+- **Stopped labouring the Ghostscript point.** Folio does not use Ghostscript,
+  and the documentation said so 77 times across seven files — in the readmes,
+  the security notes, the architecture reference, the upgrade guide, the
+  sample configuration, and on the Diagnostics screen. Repeating it made an
+  irrelevance look like a caveat. The user-facing text now simply says PDF
+  pages are rendered with Poppler.
+
+  What remains is only the `PDF_ALLOW_GHOSTSCRIPT` setting name, which cannot
+  be renamed without breaking existing configurations. Behaviour is unchanged.
+
+- **Folio is now licensed under the GNU General Public License, version 3 or
+  later.** It was previously marked proprietary, which was wrong: Folio is
+  open source. You may use, study, modify, and redistribute it; derivative
+  works carry the same licence.
+
+      Copyright (C) 2026 Mohd Elfie Nieshaem Juferi
+      SPDX-License-Identifier: GPL-3.0-or-later
+
+  `license.txt` now carries the full, verbatim GPL version 3 text, preceded by
+  the standard notice and a list of the bundled components.
+
+- **Version 3 rather than version 2 is a constraint, not a preference.** The
+  bundled Mozilla pdf.js is Apache-2.0, which is compatible with GPL version 3
+  and incompatible with version 2. Licensing Folio as GPL-2.0-only would make
+  the release undistributable without first removing pdf.js.
+
+- Every source file — PHP, JavaScript, and CSS — carries an
+  `SPDX-License-Identifier` line, so the licence is discoverable from any one
+  file rather than only from the release as a whole.
+
+- `docs/ssot.md` gained a Licensing section recording each bundled
+  component's licence and where its notice lives, and an invariant: a
+  dependency that is GPL-2-only, proprietary, or non-commercial cannot be
+  bundled.
+
+- **Pages have editable URL slugs.** A page's address was fixed to its
+  internal slot name behind a `/p/` prefix, so the three general-purpose pages
+  were stuck at `/p/page1/`, `/p/page2/` and `/p/page3/` — names that mean
+  nothing to a reader. Each page now has a **URL slug** field, and its address
+  is whatever you set: `/bibliography/`, not `/p/page1/`.
+- **Pages and documents share one flat namespace.** There is no reason a
+  certificate should get a tidier address than an About page. A slug is
+  checked against documents, other pages, and Folio's own routes before it is
+  accepted, in both directions: a page cannot take a document's address and a
+  document cannot take a page's. An uncatalogued file is checked too, since it
+  still answers on its filename-derived address.
+- **Old addresses keep working.** `/p/page1/` and `/page1/` both redirect
+  permanently to the page's current address, so existing links and bookmarks
+  survive. About and FAQ keep `/about/` and `/faq/` unless you change them.
+
+This was an inconsistency left by 1.6.0, which gave documents editable,
+collision-checked slugs and did not extend the same treatment to pages.
+
 - Canonical URLs, sitemap entries, structured-data identifiers, `og:url`, and
   every internal link now use the saved slug. Aliases never appear in any of
   them; they only ever redirect.
@@ -1328,6 +957,151 @@ folder, so renaming or reorganising the library over FTP does not break links.
   field **and the URL each document already answered on** — a migration that
   silently changed every address would undo years of indexing. The pre-
   migration file is kept as a dated backup.
+
+### Fixed
+
+- **`uploads/.htaccess` could return 403 for every file in the folder.** It set
+  `Options -FollowSymLinks`. On cPanel and similar hosts the path to
+  `public_html` is frequently a symlink itself, and disabling symlink following
+  makes Apache refuse the entire directory — documents included. It is now
+  `+SymLinksIfOwnerMatch`, which keeps the protection without the risk. Folio's
+  own path resolution rejects symlinks regardless, so nothing is lost.
+
+- **PDFs were being told not to appear in search results.** Both
+  `uploads/.htaccess` and the raw file endpoint sent
+  `X-Robots-Tag: noindex, follow` for `.pdf`, `.txt` and `.md`. For a public
+  document library that is backwards: the documents are the content, and a
+  scanned certificate a search engine cannot see is a document nobody will
+  find. Documents are now left indexable. The detail page still carries the
+  canonical URL, so the record and the file do not compete.
+
+Formats a browser would execute — HTML, XHTML, XML, MHTML and anything
+unrecognised — are unaffected and still forced to download with `noindex`.
+
+- **`uploads/` did not appear when the project was pushed to GitHub.** Two
+  causes. The `.gitignore` carried a bare `.htaccess` rule, which matches at
+  every level, and it came *after* the `!uploads/.htaccess` exception — so the
+  later rule won and every file in `uploads/` was ignored. With nothing
+  tracked, Git dropped the directory, since it cannot store an empty one. The
+  rule is now `/.htaccess`, scoped to the installed copy at the root.
+
+  Separately, `uploads/` and `data/` contained only dotfiles, and GitHub's
+  web uploader silently skips those — so even a correct `.gitignore` would
+  have produced empty folders when dragging the release in. Both now carry a
+  visible `readme.txt` explaining what belongs there.
+
+- **`data/` ignored a list of known files rather than the folder.** Any
+  runtime file added by a future version would have been committed to a public
+  repository. It now ignores the folder and names the few files that belong in
+  the repository, so it fails closed.
+
+Verified with `git check-ignore`: `uploads/` and `data/` are both present in a
+commit, while `config.php`, the installed `.htaccess`, accounts, settings, the
+catalogue, generated caches, and uploaded documents are all still excluded.
+
+- **A custom site icon still did not appear.** 1.6.1 added the `branding/`
+  folder and made every page emit the right `<link>` tags, and that part
+  worked — but browsers also request `/favicon.ico` and
+  `/apple-touch-icon.png` directly, whatever the tags say. Tabs, bookmarks,
+  history and session restore all use the root path. With the catch-all
+  rewrite in place those requests reached `index.php`, which tried to resolve
+  them as document slugs and returned an HTML 404, so the browser fell back to
+  a blank icon and the custom one never showed.
+
+  Those paths are now answered with the real icon, preferring `branding/` and
+  falling back to the one Folio ships. Verified for `favicon.ico`,
+  `favicon.svg`, and `apple-touch-icon.png`, with and without a `branding/`
+  folder present.
+
+- **`branding/` is now part of the release**, with a short readme inside it.
+  Previously the folder had to be created by hand after reading the
+  documentation, which is a poor way to discover a feature.
+
+- **"Rewrite route received" always reported a failure.** It inspected the
+  current request, but Diagnostics is only ever reached at
+  `?action=diagnostics` — a query-string admin URL that is never rewritten by
+  design. The check could therefore never pass, and reported "this request was
+  not rewritten" on sites whose clean URLs were working perfectly. It is
+  replaced by a **Rewrite rules** check that reads `.htaccess` for the rules
+  that actually matter, including the PDF access rule, and says plainly that
+  an admin page cannot demonstrate rewriting itself.
+- **`mod_rewrite` was flagged amber on every modern host.** It can only be
+  read under Apache mod_php, so PHP-FPM and CGI — which is most hosting — got
+  a warning for a condition that is normal and harmless. It now reports as
+  information, with the note explaining that working clean URLs are the real
+  proof.
+- **Status chips and notes were misaligned between groups, and long labels
+  collided with them.** Each group is a separate table, and with automatic
+  layout every one computed its own column widths. The tables now share a
+  fixed layout, so all 38 rows line up in a single column, and a long label
+  wraps instead of running into the chip beside it.
+
+- **Nothing told you how to produce `FOLIO_URL_SIGNING_KEY`.** Without it, PDF
+  access control cannot be enforced, and the Crawlers screen said only
+  "generate one and add it there" — while the IndexNow key beside it had a
+  one-click generator. The screen now shows a freshly generated 256-bit key as
+  a complete, copyable `define(...)` line, with a new one offered on every
+  visit until the setting is in place. `config-sample.php` gained the
+  equivalent shell commands.
+
+  Folio does not write the key into `config.php` itself, deliberately: that
+  file stays one the application cannot modify, which is what stops a future
+  flaw from rewriting Folio's own configuration.
+
+- **Six configuration constants were documented nowhere.** `SITE_INDEXABLE`,
+  `SITEMAP_ENABLED`, `LLMS_ENABLED`, `LLMS_INTRO`, `INDEXNOW_KEY`, and
+  `PDF_GATE_CONFIRMED` are written by the admin screens, so nothing was
+  broken, but a reader of `config-sample.php` had no way to learn they exist
+  or that defining one by hand takes it away from the admin screen. They are
+  now listed with that explanation, and with a warning against setting
+  `PDF_GATE_CONFIRMED` manually — doing so claims a restriction is enforced
+  when it may not be. All 46 constants are now documented.
+- **Four endpoints were missing from the reference.** `?action=thumb`,
+  `?action=ocr`, `?action=reconcile`, and `?action=relink` were added in
+  1.5.0 and 1.6.0 but never reached the endpoint table in `docs/ssot.md`.
+  `?action=meta` and `?action=logout` were absent too.
+- **The documentation-set table said "these five" while listing six**, and
+  omitted `security.md` and `tests/readme.md` altogether. It now lists all
+  eight and states each one's scope.
+
+- **The image engine row had disappeared.** It was added in 1.5.0 and lost in
+  the 1.6.0 merge, because the branch it was merged onto predated it. Whether
+  Imagick or GD was available — the difference between working thumbnails and
+  none — was not reported anywhere.
+
+- **`pngquant` was dead code.** `thumb_optimise()` returned immediately unless
+  the file ended in `.png`, but every derivative Folio writes is WebP, so the
+  condition could never be true. It now runs on the PNG that Poppler produces
+  when rendering a PDF page — the one point in the pipeline where a real PNG
+  exists — shrinking it before it is decoded and re-encoded. Measured at 26%
+  smaller on a 1400x900 render.
+- **`exiftool` was never called at all.** It appeared only in the version
+  table and a Diagnostics label. It now reads a document's own creation date,
+  which is usually closer to the truth than the filesystem time — that changes
+  every time a file is copied or re-uploaded over FTP. The date is stored as
+  `captured_at` when a document states one.
+- Diagnostics described both in terms of what they were supposed to do rather
+  than what they did. The labels now say what actually happens.
+
+- **`admin.js` was never loaded on the listing page**, so every admin-only row
+  behaviour defined there was unreachable. It is now loaded for signed-in
+  administrators alongside `app.js`.
+
+- **Every metadata edit form was permanently open.** `.meta-form` set
+  `display: flex` in a class rule, which silently overrides the `hidden`
+  attribute — `hidden` is only a weak user-agent style. The listing rendered
+  every row fully expanded, with truncated inputs squeezed into the narrow
+  first column. A `[hidden] { display: none !important }` guard now covers
+  every element that toggles this way, six of which were affected.
+- **The listing was starved of width.** The hover-preview column reserved a
+  proportional share whether or not it was showing anything, leaving the table
+  44% of the page: long titles wrapped over four lines and tags stacked one
+  per row. The reservation is now capped, giving the listing the majority —
+  at 1280px the table went from 564px to 895px, and the name column from
+  145px to 423px.
+- **Rows with an open form put the size, date and buttons in the vertical
+  middle** of a tall empty row. Table cells are top-aligned so they stay level
+  with the title.
 
 ### Security
 
@@ -1345,11 +1119,29 @@ folder, so renaming or reorganising the library over FTP does not break links.
   rename, move, replace, or delete anything, and creates no folders. The
   regression suite fails the build if such a call is introduced.
 
+### Unchanged
+
+- The bundled components keep their own licences and are unaffected:
+  Parsedown (MIT), Mozilla pdf.js (Apache-2.0), and the OpenJPEG and QCMS
+  WebAssembly decoders.
+
+- Only mbstring is genuinely required, and only for Markdown. Every other
+  extension has a fallback: verified by serving the listing, a document page
+  and the sitemap with Imagick, GD, fileinfo, iconv and mbstring all absent —
+  all returned 200.
+
+### Note
+
+Icons are cached hard by browsers. If the old one persists after upgrading,
+try a private window before assuming it has not worked.
+
 ## 1.5.0 — 3 August 2026
 
 Folio now notices the command-line utilities a server already provides and
 uses them. Nothing here is required: with none installed, behaviour is
 unchanged.
+
+Documentation accuracy. No functional change.
 
 ### Added
 
@@ -1402,79 +1194,6 @@ unchanged.
   `docs/ssot.md` and in the readme. A server with none of them installed runs
   Folio exactly as it ran before this release.
 
-### Security
-
-- Utilities are run through `proc_open()` with an argument array and
-  `bypass_shell`, so no shell is spawned and a filename containing shell
-  metacharacters arrives at the program as ordinary characters. This is what
-  makes it safe for Folio, whose filenames come from FTP, to call external
-  programs at all. The regression suite fails the build if `shell_exec`,
-  `exec`, `system`, `passthru`, or backticks appear in executable code, or if
-  `proc_open` is used without `bypass_shell`.
-- Only the directories in `TOOL_SEARCH_PATHS` are searched. `$PATH` is
-  inherited from whatever started PHP and is not something to trust when
-  deciding which binary runs. A utility that is not found resolves to `null`
-  rather than a bare name, so a failed lookup can never become a
-  `$PATH`-resolved execution.
-- Every invocation has a timeout and an output cap, so a malformed document
-  cannot hang a request or exhaust memory.
-- The OCR endpoint is admin-only, CSRF-protected, and refuses paths outside
-  `uploads/` and anything matching `EXCLUDE_PATTERNS`, like every other
-  action.
-- The regression suite fails the build if `PDF_ALLOW_GHOSTSCRIPT` stops
-  defaulting to false, if an ImageMagick PDF read appears without that guard,
-  or if any utility becomes mandatory.
-
-## 1.4.2 — 3 August 2026
-
-Documentation accuracy. No functional change.
-
-### Fixed
-
-- **Install and diagnostic messages referred to a file that no longer
-  ships.** `.htaccess` has been active in the package since 1.2.0, but the
-  installer, the Diagnostics screen, and `readme.txt` still told you to
-  "rename `htaccess.txt` to `.htaccess`". Worse, that instruction pointed at
-  the wrong problem: when `.htaccess` is genuinely missing it is almost always
-  because the FTP client skipped the dotfile, not because anything needs
-  renaming. All three now say so.
-- **Four fixes shipped in 1.4.0 were missing from its changelog** — the
-  analytics bootstrap being blocked by the Content-Security-Policy, the Matomo
-  port being dropped from the policy origin, resource ceilings on blurred PDF
-  previews, and restricted PDFs being excluded from the thumbnail route. The
-  code was correct; only the record was incomplete. They are documented under
-  1.4.0 where they belong.
-
-### Changed
-
-- The version-sync table in `docs/ssot.md` now lists all six locations that
-  carry the version, with the exact string in each, plus a shell snippet that
-  reports any that are stale. It previously listed three, omitting `readme.md`
-  and `security.md` — the two that had actually drifted in the past.
-- `docs/upgrading.md` separates the 1.3.0 and 1.4.0 steps. The three PDF
-  access control steps belonged to 1.3.0 but sat under the 1.4.0 heading, so
-  anyone already on 1.3.0 was walked through work they had done.
-
-## 1.4.1 — 3 August 2026
-
-### Removed
-
-- **`nginx.conf.example`.** Nginx was never actively maintained as a
-  deployment target; keeping a config file for it implied a level of
-  support that wasn't real. Folio already fails safe on any server that
-  can't confirm its rewrite is active — see "PDF access control" — so
-  dropping this file changes documentation, not behaviour: an Nginx
-  install already fell back to query-string URLs and unenforced
-  `pdf_access` before this, and still does. Requirements, install steps,
-  and the PDF access control docs across `readme.md`, `readme.txt`,
-  `security.md`, `docs/install.md`, and `docs/ssot.md` now state Apache or
-  LiteSpeed is required, rather than carving Nginx out as a special case
-  only for the PDF feature.
-
-## 1.4.0 — 3 August 2026
-
-### Added
-
 - **Cached derivative images.** When the Imagick or GD extension is present,
   Folio generates small WebP copies for listings, hover cards, and detail
   pages instead of sending the full-size original. A hover over a 12 MB scan
@@ -1491,55 +1210,6 @@ Documentation accuracy. No functional change.
 - Diagnostics reports which image engine is active, which formats it can read,
   whether the cache directory is writable, and the state of PDF preview
   support.
-
-### Fixed
-
-- **Analytics was collecting nothing.** Matomo and GA4 both need a short
-  inline bootstrap, and the Content-Security-Policy admits no inline script.
-  The external tracker file loaded, the inline block was refused, and `_paq`
-  or `dataLayer` stayed empty — a silent failure that looks exactly like a
-  working installation. Each bootstrap is now admitted by its own `sha256`
-  hash, derived from the same string that is emitted, so the policy stays as
-  strict as it was and the two cannot drift apart.
-- **A Matomo URL with a non-default port was refused.** The policy origin was
-  built without the port, so a self-hosted Matomo on, say, `:8443` had its
-  script blocked. The port is now carried through.
-- **An excluded folder was still visible.** A pattern such as `_drafts/*`
-  hid the folder's contents but not the folder itself, so an empty row, a
-  working link, and a `CollectionPage` entry in the structured data all
-  disclosed that it existed. Patterns now hide the folder they describe, and
-  everything beneath an excluded folder is excluded however deeply nested,
-  without needing a glob. `_draftsman.pdf` is still shown when `_drafts/*` is
-  excluded: the match is on path segments, not string prefixes.
-- **`uploads/.htaccess` was missing from the package** although `readme.md`,
-  `security.md`, `docs/install.md`, and `docs/ssot.md` all describe it as
-  shipped. It's the second layer that forces active formats to download and
-  stops anything in the uploads folder from executing; without it that
-  protection rested on PHP alone. Restored, along with `.gitignore`.
-
-### Security
-
-- Rasterising a PDF for a blurred preview now runs under the same memory,
-  time, and thread ceilings as every other conversion. Without them a large or
-  crafted document could exhaust the host through Ghostscript.
-- A PDF restricted to `viewer` or `hidden` has no thumbnail. Access gating and
-  derivative generation are separate features that meet at the thumbnail
-  route, which carries no signature; without this it would be an unguarded
-  second door to exactly what the gate protects. Enforced in both the URL
-  helper and the endpoint, since anyone can type a URL.
-- Derivative generation reads image dimensions before any pixels and refuses
-  anything beyond `IMAGE_MAX_PIXELS`, so a small file declaring enormous
-  dimensions cannot exhaust memory. Memory, time, and thread ceilings apply to
-  every conversion.
-- The derivative route accepts only the widths Folio offers, so the cache
-  cannot be filled by requesting arbitrary sizes, and it enforces the same path
-  containment and exclusion rules as every other delivery route.
-- Generated derivatives are stripped of metadata, so EXIF GPS coordinates and
-  camera serial numbers are not republished in public thumbnails.
-
-## 1.3.0 — 3 August 2026
-
-### Added
 
 - **Per-file PDF access control** (`pdf_access`: `public` / `viewer` /
   `hidden`), enforced through the existing `?action=raw` endpoint as the sole
@@ -1578,7 +1248,54 @@ Documentation accuracy. No functional change.
   only for `encodingFormat`/`dcterms:format`. The existing extension-based
   map stays authoritative for routing, previews, and sitemap inclusion.
 
+### Changed
+
+- The version-sync table in `docs/ssot.md` now lists all six locations that
+  carry the version, with the exact string in each, plus a shell snippet that
+  reports any that are stale. It previously listed three, omitting `readme.md`
+  and `security.md` — the two that had actually drifted in the past.
+- `docs/upgrading.md` separates the 1.3.0 and 1.4.0 steps. The three PDF
+  access control steps belonged to 1.3.0 but sat under the 1.4.0 heading, so
+  anyone already on 1.3.0 was walked through work they had done.
+
 ### Fixed
+
+- **Install and diagnostic messages referred to a file that no longer
+  ships.** `.htaccess` has been active in the package since 1.2.0, but the
+  installer, the Diagnostics screen, and `readme.txt` still told you to
+  "rename `htaccess.txt` to `.htaccess`". Worse, that instruction pointed at
+  the wrong problem: when `.htaccess` is genuinely missing it is almost always
+  because the FTP client skipped the dotfile, not because anything needs
+  renaming. All three now say so.
+- **Four fixes shipped in 1.4.0 were missing from its changelog** — the
+  analytics bootstrap being blocked by the Content-Security-Policy, the Matomo
+  port being dropped from the policy origin, resource ceilings on blurred PDF
+  previews, and restricted PDFs being excluded from the thumbnail route. The
+  code was correct; only the record was incomplete. They are documented under
+  1.4.0 where they belong.
+
+- **Analytics was collecting nothing.** Matomo and GA4 both need a short
+  inline bootstrap, and the Content-Security-Policy admits no inline script.
+  The external tracker file loaded, the inline block was refused, and `_paq`
+  or `dataLayer` stayed empty — a silent failure that looks exactly like a
+  working installation. Each bootstrap is now admitted by its own `sha256`
+  hash, derived from the same string that is emitted, so the policy stays as
+  strict as it was and the two cannot drift apart.
+- **A Matomo URL with a non-default port was refused.** The policy origin was
+  built without the port, so a self-hosted Matomo on, say, `:8443` had its
+  script blocked. The port is now carried through.
+- **An excluded folder was still visible.** A pattern such as `_drafts/*`
+  hid the folder's contents but not the folder itself, so an empty row, a
+  working link, and a `CollectionPage` entry in the structured data all
+  disclosed that it existed. Patterns now hide the folder they describe, and
+  everything beneath an excluded folder is excluded however deeply nested,
+  without needing a glob. `_draftsman.pdf` is still shown when `_drafts/*` is
+  excluded: the match is on path segments, not string prefixes.
+- **`uploads/.htaccess` was missing from the package** although `readme.md`,
+  `security.md`, `docs/install.md`, and `docs/ssot.md` all describe it as
+  shipped. It's the second layer that forces active formats to download and
+  stops anything in the uploads folder from executing; without it that
+  protection rested on PHP alone. Restored, along with `.gitignore`.
 
 - **The analytics tracker was blocked by the site's own security policy and
   collected nothing.** Matomo/GA4's inline bootstrap needs a `<script>`
@@ -1589,6 +1306,61 @@ Documentation accuracy. No functional change.
   that are emitted, so the two cannot drift apart. A self-hosted Matomo on a
   non-default port is also now carried through correctly in the CSP
   origin, which previously matched only the scheme's default port.
+
+### Removed
+
+- **`nginx.conf.example`.** Nginx was never actively maintained as a
+  deployment target; keeping a config file for it implied a level of
+  support that wasn't real. Folio already fails safe on any server that
+  can't confirm its rewrite is active — see "PDF access control" — so
+  dropping this file changes documentation, not behaviour: an Nginx
+  install already fell back to query-string URLs and unenforced
+  `pdf_access` before this, and still does. Requirements, install steps,
+  and the PDF access control docs across `readme.md`, `readme.txt`,
+  `security.md`, `docs/install.md`, and `docs/ssot.md` now state Apache or
+  LiteSpeed is required, rather than carving Nginx out as a special case
+  only for the PDF feature.
+
+### Security
+
+- Utilities are run through `proc_open()` with an argument array and
+  `bypass_shell`, so no shell is spawned and a filename containing shell
+  metacharacters arrives at the program as ordinary characters. This is what
+  makes it safe for Folio, whose filenames come from FTP, to call external
+  programs at all. The regression suite fails the build if `shell_exec`,
+  `exec`, `system`, `passthru`, or backticks appear in executable code, or if
+  `proc_open` is used without `bypass_shell`.
+- Only the directories in `TOOL_SEARCH_PATHS` are searched. `$PATH` is
+  inherited from whatever started PHP and is not something to trust when
+  deciding which binary runs. A utility that is not found resolves to `null`
+  rather than a bare name, so a failed lookup can never become a
+  `$PATH`-resolved execution.
+- Every invocation has a timeout and an output cap, so a malformed document
+  cannot hang a request or exhaust memory.
+- The OCR endpoint is admin-only, CSRF-protected, and refuses paths outside
+  `uploads/` and anything matching `EXCLUDE_PATTERNS`, like every other
+  action.
+- The regression suite fails the build if `PDF_ALLOW_GHOSTSCRIPT` stops
+  defaulting to false, if an ImageMagick PDF read appears without that guard,
+  or if any utility becomes mandatory.
+
+- Rasterising a PDF for a blurred preview now runs under the same memory,
+  time, and thread ceilings as every other conversion. Without them a large or
+  crafted document could exhaust the host through Ghostscript.
+- A PDF restricted to `viewer` or `hidden` has no thumbnail. Access gating and
+  derivative generation are separate features that meet at the thumbnail
+  route, which carries no signature; without this it would be an unguarded
+  second door to exactly what the gate protects. Enforced in both the URL
+  helper and the endpoint, since anyone can type a URL.
+- Derivative generation reads image dimensions before any pixels and refuses
+  anything beyond `IMAGE_MAX_PIXELS`, so a small file declaring enormous
+  dimensions cannot exhaust memory. Memory, time, and thread ceilings apply to
+  every conversion.
+- The derivative route accepts only the widths Folio offers, so the cache
+  cannot be filled by requesting arbitrary sizes, and it enforces the same path
+  containment and exclusion rules as every other delivery route.
+- Generated derivatives are stripped of metadata, so EXIF GPS coordinates and
+  camera serial numbers are not republished in public thumbnails.
 
 ### Explicitly out of scope
 
@@ -1621,6 +1393,83 @@ Documentation accuracy. No functional change.
 - The Content-Security-Policy widens to exactly the origins a configured
   provider needs, and to nothing else. With no analytics configured the policy
   is identical to a build without the feature.
+
+- `FOLIO_VERSION` constant as the single source of truth for the release.
+- Diagnostics reports the Folio version and whether clean URLs are active,
+  naming the reason when they are not.
+
+### Changed
+
+- **Clean URLs need no configuration at all.** The installer no longer writes
+  `PRETTY_URLS` into `config.php`, and `config-sample.php` ships it commented
+  out, so detection governs on a fresh install and the site comes up on clean
+  URLs without anyone editing a file. Setting the constant still forces a mode
+  for hosts that need it, such as Nginx.
+- **`SITE_URL` is optional rather than required.** The installer still fills it
+  in automatically, and pinning it remains recommended for production, but an
+  installation without it now derives the address from the request instead of
+  breaking.
+- **Apache configuration ships as `.htaccess`, ready to use.** No renaming, and
+  clean URLs are enabled out of the box rather than requiring a manual edit.
+- **Clean URLs are now detected rather than assumed.** The shipped `.htaccess`
+  sets `FOLIO_REWRITE` from inside its `<IfModule mod_rewrite.c>` block, so the
+  signal is present only when that file is installed and the module is loaded.
+  Folio emits clean URLs when it sees it and query-string URLs otherwise, so a
+  host without mod_rewrite, or an upgrade that keeps an older `.htaccess`,
+  degrades quietly instead of serving links that 404. Pinning `PRETTY_URLS` in
+  `config.php` overrides the detection either way.
+- **The admin login is a dropdown in the header again**, replacing the separate
+  login page. The page remains available at `?action=login` for installations
+  that hide the Admin link.
+- The header login form is authenticated with a stateless signed token rather
+  than a session-backed one, so anonymous visitors still receive no session
+  cookie and public pages stay cacheable.
+
+### Fixed
+
+- The `.htaccess` and `nginx.conf.example` rules that stop documentation being
+  served over HTTP matched uppercase filenames only, so the lowercase rename
+  would have left `readme.md`, `changelog.md`, and `license.txt` publicly
+  fetchable. Both rules are now case-insensitive and cover `security.md`,
+  `install.md`, `upgrading.md`, and `ssot.md` as well. The Nginx rule also
+  still referenced the `-htaccess.txt` templates removed in 1.1.0.
+
+- **Category chips did nothing useful on the listing.** They carried no filter
+  hook, so clicking one navigated away to the archive page while tag chips
+  beside them filtered in place. They now filter the current folder like tags
+  do, while remaining real links to their archive pages for crawlers and for
+  anyone who opens them in a new tab.
+- **The hover preview embedded the library inside itself.** The card framed the
+  PDF and appended a fragment to the URL, so an empty URL resolved against the
+  current page and rendered the whole site in miniature. PDFs are now drawn as
+  a real first-page thumbnail, which also avoids downloading an entire document
+  on hover and works in browsers with no PDF plugin.
+- The side preview pane had the same latent flaw and now reports that a file
+  has no preview instead of framing the library.
+- **The PDF preview could hang forever** on "Loading first page". A fifteen
+  second watchdog now reports the failure and points at the buttons below.
+- **Two buttons linked to the same file.** The PDF page offered both "Open the
+  PDF" and "Direct link"; the duplicate is gone and the action row is now
+  consistent across every file type.
+- Settings whose names contain digits, such as `GA4_MEASUREMENT_ID`, were
+  silently discarded when loaded from `data/settings.php`. The name filter
+  accepted only letters and underscores.
+
+- **The inline PDF viewer is back on the document page.** 1.0.1 replaced the
+  embedded viewer with a static first-page image because Chrome on Android and
+  older Safari on iOS cannot display a framed PDF, which also removed inline
+  reading on every desktop browser that can. Folio now asks the browser through
+  `navigator.pdfViewerEnabled`: where a built-in viewer exists the PDF is
+  embedded and is scrollable, searchable, and printable in place; where it does
+  not, the first-page render is used exactly as before. Flip view is a
+  secondary action alongside the direct link rather than the primary one.
+- **Every link pointed at `http://localhost` unless `SITE_URL` was set in
+  `config.php`.** This broke navigation, the PDF reader, the flip-view reader,
+  and the admin simultaneously on any installation that skipped that setting.
+  The canonical URL is now derived from the request when unconfigured, with the
+  Host header validated against a strict hostname pattern so header injection
+  is still rejected. Setting `SITE_URL` explicitly remains recommended and
+  continues to take precedence.
 
 ### Documentation
 
@@ -1663,38 +1512,6 @@ Documentation accuracy. No functional change.
   sits beside `readme.md` where people look for it.
 - The admin documentation viewer gains a **Reference** tab for `ssot.md`.
 
-### Fixed
-
-- The `.htaccess` and `nginx.conf.example` rules that stop documentation being
-  served over HTTP matched uppercase filenames only, so the lowercase rename
-  would have left `readme.md`, `changelog.md`, and `license.txt` publicly
-  fetchable. Both rules are now case-insensitive and cover `security.md`,
-  `install.md`, `upgrading.md`, and `ssot.md` as well. The Nginx rule also
-  still referenced the `-htaccess.txt` templates removed in 1.1.0.
-
-- **Category chips did nothing useful on the listing.** They carried no filter
-  hook, so clicking one navigated away to the archive page while tag chips
-  beside them filtered in place. They now filter the current folder like tags
-  do, while remaining real links to their archive pages for crawlers and for
-  anyone who opens them in a new tab.
-- **The hover preview embedded the library inside itself.** The card framed the
-  PDF and appended a fragment to the URL, so an empty URL resolved against the
-  current page and rendered the whole site in miniature. PDFs are now drawn as
-  a real first-page thumbnail, which also avoids downloading an entire document
-  on hover and works in browsers with no PDF plugin.
-- The side preview pane had the same latent flaw and now reports that a file
-  has no preview instead of framing the library.
-- **The PDF preview could hang forever** on "Loading first page". A fifteen
-  second watchdog now reports the failure and points at the buttons below.
-- **Two buttons linked to the same file.** The PDF page offered both "Open the
-  PDF" and "Direct link"; the duplicate is gone and the action row is now
-  consistent across every file type.
-- Settings whose names contain digits, such as `GA4_MEASUREMENT_ID`, were
-  silently discarded when loaded from `data/settings.php`. The name filter
-  accepted only letters and underscores.
-
-## 1.1.0 — 1 August 2026
-
 ### Action required when upgrading
 
 - **Upload the new `.htaccess`.** It now ships as a real dot-file with clean
@@ -1707,84 +1524,7 @@ Nothing else changes on upgrade. Your `config.php`, `data/`, and `uploads/` are
 untouched, and an installation that keeps an older `.htaccess` keeps working on
 query-string URLs rather than breaking.
 
-### Fixed
-
-- **The inline PDF viewer is back on the document page.** 1.0.1 replaced the
-  embedded viewer with a static first-page image because Chrome on Android and
-  older Safari on iOS cannot display a framed PDF, which also removed inline
-  reading on every desktop browser that can. Folio now asks the browser through
-  `navigator.pdfViewerEnabled`: where a built-in viewer exists the PDF is
-  embedded and is scrollable, searchable, and printable in place; where it does
-  not, the first-page render is used exactly as before. Flip view is a
-  secondary action alongside the direct link rather than the primary one.
-- **Every link pointed at `http://localhost` unless `SITE_URL` was set in
-  `config.php`.** This broke navigation, the PDF reader, the flip-view reader,
-  and the admin simultaneously on any installation that skipped that setting.
-  The canonical URL is now derived from the request when unconfigured, with the
-  Host header validated against a strict hostname pattern so header injection
-  is still rejected. Setting `SITE_URL` explicitly remains recommended and
-  continues to take precedence.
-
-### Changed
-
-- **Clean URLs need no configuration at all.** The installer no longer writes
-  `PRETTY_URLS` into `config.php`, and `config-sample.php` ships it commented
-  out, so detection governs on a fresh install and the site comes up on clean
-  URLs without anyone editing a file. Setting the constant still forces a mode
-  for hosts that need it, such as Nginx.
-- **`SITE_URL` is optional rather than required.** The installer still fills it
-  in automatically, and pinning it remains recommended for production, but an
-  installation without it now derives the address from the request instead of
-  breaking.
-- **Apache configuration ships as `.htaccess`, ready to use.** No renaming, and
-  clean URLs are enabled out of the box rather than requiring a manual edit.
-- **Clean URLs are now detected rather than assumed.** The shipped `.htaccess`
-  sets `FOLIO_REWRITE` from inside its `<IfModule mod_rewrite.c>` block, so the
-  signal is present only when that file is installed and the module is loaded.
-  Folio emits clean URLs when it sees it and query-string URLs otherwise, so a
-  host without mod_rewrite, or an upgrade that keeps an older `.htaccess`,
-  degrades quietly instead of serving links that 404. Pinning `PRETTY_URLS` in
-  `config.php` overrides the detection either way.
-- **The admin login is a dropdown in the header again**, replacing the separate
-  login page. The page remains available at `?action=login` for installations
-  that hide the Admin link.
-- The header login form is authenticated with a stateless signed token rather
-  than a session-backed one, so anonymous visitors still receive no session
-  cookie and public pages stay cacheable.
-
-### Added
-
-- `FOLIO_VERSION` constant as the single source of truth for the release.
-- Diagnostics reports the Folio version and whether clean URLs are active,
-  naming the reason when they are not.
-
 ## 1.0.1 — 31 July 2026
-
-### Security
-
-- **Fixed HTML injection through JSON-LD structured data.** Document titles,
-  descriptions, categories, and tags are user input and were written into a
-  `<script type="application/ld+json">` element with `JSON_UNESCAPED_SLASHES`,
-  so a value containing a closing script tag could end the element and inject
-  markup into the page. JSON-LD is now encoded with `JSON_HEX_TAG`,
-  `JSON_HEX_AMP`, `JSON_HEX_APOS`, and `JSON_HEX_QUOT`, and an encoding failure
-  emits an empty graph rather than a broken element. Covered by a regression
-  test that fails against the previous behaviour.
-- **Logging out now requires a POST with a valid CSRF token.** Previously a
-  plain `GET` ended the session, so any third-party page could sign an
-  administrator out. Opening the old URL now returns `405` with a confirmation
-  form instead of acting.
-- **Login throttling is safe under concurrent requests.** The counter was read
-  before the exclusive lock was taken, so parallel attempts overwrote each
-  other's increments and a burst of guesses cost far fewer than one attempt
-  each. The whole read-modify-write now happens while the lock is held. The
-  read also no longer uses `filesize()`, whose stat cache could return a stale
-  size and silently truncate the counter.
-- **The installer emits the same hardened headers as the application**: a
-  strict Content-Security-Policy with no `unsafe-inline`, `frame-ancestors
-  'none'`, `nosniff`, a referrer policy, and `no-store` caching, since its
-  pages display one-time tokens and generated secrets. Its two inline style
-  attributes were replaced with classes so the policy needs no exceptions.
 
 ### Changed
 
@@ -1832,9 +1572,63 @@ query-string URLs rather than breaking.
   independently so a partial failure is never described as a whole-library
   success.
 
+### Security
+
+- **Fixed HTML injection through JSON-LD structured data.** Document titles,
+  descriptions, categories, and tags are user input and were written into a
+  `<script type="application/ld+json">` element with `JSON_UNESCAPED_SLASHES`,
+  so a value containing a closing script tag could end the element and inject
+  markup into the page. JSON-LD is now encoded with `JSON_HEX_TAG`,
+  `JSON_HEX_AMP`, `JSON_HEX_APOS`, and `JSON_HEX_QUOT`, and an encoding failure
+  emits an empty graph rather than a broken element. Covered by a regression
+  test that fails against the previous behaviour.
+- **Logging out now requires a POST with a valid CSRF token.** Previously a
+  plain `GET` ended the session, so any third-party page could sign an
+  administrator out. Opening the old URL now returns `405` with a confirmation
+  form instead of acting.
+- **Login throttling is safe under concurrent requests.** The counter was read
+  before the exclusive lock was taken, so parallel attempts overwrote each
+  other's increments and a burst of guesses cost far fewer than one attempt
+  each. The whole read-modify-write now happens while the lock is held. The
+  read also no longer uses `filesize()`, whose stat cache could return a stale
+  size and silently truncate the counter.
+- **The installer emits the same hardened headers as the application**: a
+  strict Content-Security-Policy with no `unsafe-inline`, `frame-ancestors
+  'none'`, `nosniff`, a referrer policy, and `no-store` caching, since its
+  pages display one-time tokens and generated secrets. Its two inline style
+  attributes were replaced with classes so the policy needs no exceptions.
+
 ## 1.0.0 — 30 July 2026
 
 First release.
+
+### Security
+
+- Symbolic links, and any path resolving outside `uploads/`, are rejected on
+  every endpoint: listing, recursive indexing, detail resolution, sitemap, and
+  raw delivery. Recursive indexing tracks visited directories to avoid loops.
+- Unknown and active formats (HTML, XML, MHTML, and anything outside the inline
+  allowlist) are forced through attachment delivery with a sandboxing
+  Content-Security-Policy, both by PHP and by the shipped Apache/LiteSpeed and
+  Nginx rules.
+- Sessions start only for login, authenticated routes, POST requests, or
+  visitors who already hold a Folio session cookie, so anonymous public pages
+  stay cacheable.
+- Per-account authentication versions mean password changes, resets, and
+  account deletion immediately revoke other active sessions.
+- Optional `FOLIO_AUTH_PEPPER` in `config.php` HMACs every password hash,
+  protecting `data/users.php` in the event of an isolated leak. Existing hashes
+  migrate on next successful login.
+- Optional `FOLIO_COOKIE_NAME` namespaces the session cookie against other
+  applications on the same domain.
+- Admin login with a bcrypt password hash and a constant-time comparison.
+- CSRF tokens on every POST, hardened session cookies, and login throttling
+  after eight failed attempts.
+- Content-Security-Policy, `X-Frame-Options`, `Referrer-Policy`, and `nosniff`
+  on every page.
+- SVG files sandboxed so embedded scripts cannot run; script execution disabled
+  inside `uploads/`.
+- Markdown rendered by Parsedown in safe mode.
 
 ### Library
 
@@ -1949,34 +1743,6 @@ First release.
   stricter site-wide policy.
 - Four colour schemes: Folio, Ledger, Garden, Night.
 - Site icon in SVG, ICO, and Apple touch formats.
-
-### Security
-
-- Symbolic links, and any path resolving outside `uploads/`, are rejected on
-  every endpoint: listing, recursive indexing, detail resolution, sitemap, and
-  raw delivery. Recursive indexing tracks visited directories to avoid loops.
-- Unknown and active formats (HTML, XML, MHTML, and anything outside the inline
-  allowlist) are forced through attachment delivery with a sandboxing
-  Content-Security-Policy, both by PHP and by the shipped Apache/LiteSpeed and
-  Nginx rules.
-- Sessions start only for login, authenticated routes, POST requests, or
-  visitors who already hold a Folio session cookie, so anonymous public pages
-  stay cacheable.
-- Per-account authentication versions mean password changes, resets, and
-  account deletion immediately revoke other active sessions.
-- Optional `FOLIO_AUTH_PEPPER` in `config.php` HMACs every password hash,
-  protecting `data/users.php` in the event of an isolated leak. Existing hashes
-  migrate on next successful login.
-- Optional `FOLIO_COOKIE_NAME` namespaces the session cookie against other
-  applications on the same domain.
-- Admin login with a bcrypt password hash and a constant-time comparison.
-- CSRF tokens on every POST, hardened session cookies, and login throttling
-  after eight failed attempts.
-- Content-Security-Policy, `X-Frame-Options`, `Referrer-Policy`, and `nosniff`
-  on every page.
-- SVG files sandboxed so embedded scripts cannot run; script execution disabled
-  inside `uploads/`.
-- Markdown rendered by Parsedown in safe mode.
 
 ### Accounts
 
