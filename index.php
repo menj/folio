@@ -4196,24 +4196,18 @@ function pages_menu(): array
 function render_footer(): void
 {
     $pages     = pages_menu();
-    $publisher = trim((string) PUBLISHER_NAME);
-    $pub_url   = trim((string) PUBLISHER_URL);
     $year      = date('Y');
     ?>
 <footer class="site-footer">
     <div class="site-footer-inner">
         <p class="footer-identity">
             <span class="footer-site"><?= e(SITE_NAME) ?></span>
-            <?php if ($publisher !== ''): ?>
-                <span class="footer-sep">&middot;</span>
-                <?php if ($pub_url !== ''): ?>
-                    <a href="<?= e($pub_url) ?>" rel="noopener"><?= e($publisher) ?></a>
-                <?php else: ?>
-                    <?= e($publisher) ?>
-                <?php endif; ?>
-            <?php endif; ?>
             <span class="footer-sep">&middot;</span>
             <span class="footer-year"><?= e($year) ?></span>
+        </p>
+        <p class="footer-colophon">
+            Powered by
+            <a href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?><span class="footer-sep">&middot;</span><span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?>
         </p>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>

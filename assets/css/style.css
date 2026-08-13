@@ -1650,6 +1650,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     flex-wrap: wrap;
 }
 .footer-identity { margin: 0; }
+.footer-colophon {
+    margin: 0;
+    flex: 1 1 100%;
+    order: 3;
+    opacity: 0.85;
+}
+.footer-version { font-variant-numeric: tabular-nums; }
 .footer-site {
     text-transform: uppercase;
     letter-spacing: 0.14em;

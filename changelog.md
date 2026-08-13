@@ -11,6 +11,17 @@ changing a single visible thing.
 
 ### Changed
 
+- **The footer credits the project, and shows the version when logged in.** A
+  new colophon line reads *Powered by Folio*, linking the project repository, so
+  the software is attributed rather than left anonymous. The identity line above
+  it is now just the site name and year: the publisher was dropped from the
+  footer because it duplicated the site title on single-owner archives and added
+  nothing. `PUBLISHER_NAME` / `PUBLISHER_URL` are unaffected everywhere else —
+  they still populate the schema.org publisher node, which is where they matter
+  for search engines. The running version is appended to the colophon for a
+  logged-in admin only (*Powered by Folio · v1.25.0*), so it is visible at a
+  glance on every page without exposing it to the public.
+
 - **The media player is easier to use by touch.** On coarse pointers the seek
   bar's hit area grows from 16px to 28px and its knob from 12px to 18px, so it
   can be grabbed and dragged with a fingertip, and playlist track rows are given
@@ -27,6 +38,26 @@ changing a single visible thing.
   `<textarea>` so the admin transcript field keeps its formatting. Canonical
   tags, structured data, sitemap entries, and IndexNow stay fully absolute, as
   they must.
+
+### Documentation
+
+- **A version-agnostic upgrade procedure.** `docs/upgrading.md` now opens with
+  a single "any version to the latest" section — upload everything but your own
+  files, reload once, verify — so the per-version sections read as deltas on top
+  of it rather than each restating the mechanics. A consolidated note covers the
+  1.17.0–1.24.0 span, flagging the two first-visit-visible changes in it (in-page
+  media and the system dark-mode default).
+
+- **A new invariant records which URLs must stay absolute.** The SSOT gains
+  invariant 23: canonical tags, structured data, sitemap `<loc>`, and IndexNow
+  are always absolute, while in-page listing links may be root-relative through
+  `root_relative()`. This protects the page-weight change from being undone by a
+  later well-meant edit that makes an indexing surface relative.
+
+- **The roadmap was reviewed against this release.** The two resolved
+  page-weight items were removed from Known issues, the `index.php` size figure
+  re-measured, and a scoped near-term item added for captions and a transcript
+  beside the in-page media player.
 
 ## 1.24.0 — 13 August 2026
 

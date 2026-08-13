@@ -28,6 +28,60 @@ A folder that previously held metadata in `uploads/.sfm-meta.json` is read
 once for migration; Folio writes all future changes to `data/metadata.json`.
 Keep the legacy file until the migrated metadata has been verified.
 
+## How to upgrade — any version to the latest
+
+This is the standard procedure, and it is the same every release. The
+per-version sections below add only what a specific release needs on top of
+it; if a version is not listed there, this is the whole of it. To cross
+several releases at once, read each per-version section between your build and
+the latest first — they are ordered newest at the top — then follow these
+steps once.
+
+### Step 1 — Upload the release, except your own files
+
+Upload every file and folder from the package **except** the three that belong
+to your installation:
+
+```
+config.php
+data/
+uploads/
+```
+
+Everything else is release-owned and is meant to be overwritten: `index.php`,
+`install.php`, `.htaccess`, `robots.txt`, all of `assets/`, `lib/`, `docs/`,
+`tests/`, and the root documentation files.
+
+**Upload `.htaccess`; it is not optional.** Several features live in its rules
+— PDF access control, the PDF sitemap, asset cache lifetimes, and the
+media byte-range delivery that makes audio and video seek. A site missing the
+current `.htaccess` looks fine and quietly loses these. If you hand-edited it
+(for example, renaming the uploads folder), re-apply your edit to the new file
+rather than keeping the old one.
+
+**Keep `branding/`.** Your site icon lives there, untouched by upgrades. The
+`uploads/readme.txt` and `data/readme.txt` placeholders in the package are
+harmless if they land; they only keep those folders present in git.
+
+### Step 2 — Reload once with the cache cleared
+
+Press Ctrl-Shift-R, or open the site in a private window. Assets are linked
+with the version number since 1.13.1, so a stale stylesheet corrects itself,
+but this one reload clears anything left from an older build.
+
+### Step 3 — Verify
+
+1. Open **Diagnostics**. It should report the new version and no failures.
+2. Open a document page and hover a row in the listing — previews render.
+3. Open `/sitemap.xml` and `/sitemap-pdf.xml` — both list your documents.
+4. Sort the listing by a column header — the arrows draw correctly, not as
+   plain boxes (if they do, repeat step 2; it is the browser cache).
+
+Nothing in the standard procedure migrates or rewrites stored data. Your
+documents, titles, categories, tags, accounts, and settings carry across as
+they are. Where a specific release does migrate something — such as the
+metadata store's move to `document_id` keys — its own section below says so.
+
 ## Upgrading to 1.25.0
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
@@ -44,6 +98,36 @@ bar and playlist rows are larger on touch screens; on a desktop nothing moves.
 The roadmap listed the repeated `BASE_URL` on every listing row, and the
 indentation whitespace between cells, as outstanding page-weight issues. Both
 are done, and the entries have been removed.
+
+## Upgrading across 1.17.0 to 1.24.0
+
+This whole span shipped in a few days and nothing in it migrates or rewrites
+stored data, so the standard procedure above is all it takes. Two changes are
+worth knowing before you upgrade, because both are visible on the first visit.
+
+- **Audio and video now play in the page (1.24.0).** Files that were
+  preview-and-download only — `.mp3`, `.m4a`, `.aac`, `.wav`, `.flac`, `.ogg`,
+  `.oga`, `.opus`, `.weba`, `.mp4`, `.m4v`, `.webm`, `.ogv`, `.mov` — open in a
+  themed player on the document page and in the listing preview. The current
+  `.htaccess` puts these extensions on the direct-serve path so the browser can
+  request byte ranges and seek, which is the one reason uploading the new
+  `.htaccess` matters here specifically. A reader without JavaScript still gets
+  the browser's own player. An optional **audio playlist**, off by default, is
+  turned on from Settings (`AUDIO_PLAYLIST`) and plays a folder's audio as a
+  queue.
+
+- **The system dark-mode preference is honoured on a first visit (1.23.0).** A
+  reader whose operating system asks for dark now opens on the Night theme when
+  they have made no choice of their own. Any saved choice still wins, and the
+  theme picker is unchanged. This is a shipped-default change, not a migration:
+  nothing stored is altered.
+
+Everything else in the range is additive or cosmetic and needs nothing from
+you: large folders paginate above `PER_PAGE` documents with server-side sorting
+(1.21.0), the interface gained a consistent radius scale, soft shadows, and
+touch feedback (1.20.0), a skip-to-content link and an accessible search-field
+name (1.23.0), and mobile touch targets were enlarged (1.22.0). Full detail is
+in `changelog.md`.
 
 ## Upgrading to 1.16.1
 
@@ -572,7 +656,7 @@ today.
   smaller half of the global search listed under Medium term.
 
 - **`index.php` is past the size the single-file design serves well.** At
-  9,302 lines and 170 functions it has grown by roughly 340 lines since this
+  9,311 lines and 170 functions it has grown by roughly 350 lines since this
   was first noted, and the admin screens are the bulk of it. Moving them into
   `admin/` includes would roughly halve the main file while keeping the
   copy-a-folder deployment intact. This is maintainability, not behaviour:
@@ -747,6 +831,13 @@ Work that is scoped and would not change existing behaviour.
 - **A slug history view.** Previous addresses are stored and redirect
   correctly, but there is no screen showing them or allowing one to be
   retired deliberately.
+- **Captions and a transcript for audio and video.** The in-page player
+  (1.24.0) plays media but shows no text alongside it, while the archive
+  already keeps a transcript field for documents. A `<track>` for caption
+  files placed beside a media file, and the existing transcript rendered under
+  the player, would make spoken records as crawlable and accessible as the
+  scanned ones — the same transcript-first posture the PDF access model takes,
+  applied to media. Additive, no new dependency.
 
 ### Medium term
 

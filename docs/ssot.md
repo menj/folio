@@ -48,6 +48,14 @@ Silence means every location matches.
 Semantic versioning. Major for breaking changes, minor for features, patch for
 fixes. A change to a shipped default counts as minor, not patch.
 
+The running version is shown to a logged-in admin only: the public footer
+carries a *Powered by Folio* colophon linking `FOLIO_REPO_URI`, and appends
+`v<FOLIO_VERSION>` to it exclusively when `is_admin()`. An anonymous visitor
+is never told which version is deployed. The footer's identity line is the
+site name and year only; `PUBLISHER_NAME` / `PUBLISHER_URL` are not shown
+there (they would duplicate the title on a single-owner archive) but continue
+to populate the schema.org publisher node.
+
 ## File inventory
 
 Files owned by the release. An upgrade overwrites all of them.
@@ -520,6 +528,14 @@ Rules that must hold. A change breaking any of these is a defect.
 22. Release-owned assets are linked with the version in the URL. They are
     cached for a year without revalidation, so an unversioned link means an
     upgraded site is rendered against the previous stylesheet.
+23. Canonical tags, `og:url`, structured-data URLs and `@id`s, sitemap `<loc>`
+    values, and the IndexNow payload are always absolute. In-page navigation
+    inside a listing — the row title, folder, category, and flip-view links —
+    may be root-relative to save page weight, produced by `root_relative()` at
+    the point of emission only. The shared field these links derive from
+    (`$f['view']` / `url_view()`) stays absolute at source, because the
+    canonical, structured-data, and sitemap surfaces read the same field. A
+    link surface that must be absolute becoming root-relative is a defect.
 
 ## Documentation set
 
