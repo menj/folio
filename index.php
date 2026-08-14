@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.25.0');
+define('FOLIO_VERSION', '1.26.1');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -9320,6 +9320,9 @@ $listing_ld = [
                             <input type="text" name="desc" maxlength="500" placeholder="Short description" value="<?= e($f['desc']) ?>">
                             <input type="text" name="category" maxlength="50" placeholder="Category" value="<?= e($f['category']) ?>" list="category-list">
                             <input type="text" name="tags" placeholder="Tags, comma-separated" value="<?= e(implode(', ', $f['tags'])) ?>">
+                            <?php if (in_array($f['kind'], ['audio', 'video'], true)): ?>
+                            <input type="hidden" name="document_type" value="<?= e($f['document_type']) ?>">
+                            <?php else: ?>
                             <label class="meta-form-label">
                                 Document type
                                 <select name="document_type">
@@ -9329,14 +9332,16 @@ $listing_ld = [
                                     <?php endforeach; ?>
                                 </select>
                             </label>
+                            <?php endif; ?>
                             <input type="text" name="language" maxlength="35" placeholder="Language (e.g. en, ms, ar)" value="<?= e($f['language']) ?>">
+                            <?php $av = in_array($f['kind'], ['audio', 'video'], true); ?>
                             <label class="meta-form-label">
-                                Date of the document
+                                <?= $av ? 'Date of the recording' : 'Date of the document' ?>
                                 <input type="text" name="doc_date" maxlength="60"
                                        placeholder="1996, Oktober 1998, 30/11/1991"
                                        value="<?= e($f['doc_date']) ?>">
                                 <span class="field-note">
-                                    When the document itself is from — not when the file was
+                                    When the <?= $av ? 'recording' : 'document' ?> itself is from, not when the file was
                                     uploaded. A year alone is fine, and so is an approximation.
                                 </span>
                             </label>
@@ -9383,7 +9388,7 @@ $listing_ld = [
                             <?php endif; ?>
                             <input type="text" name="placeholder_image" maxlength="255" placeholder="Placeholder image path for Hidden (e.g. redactions/cert-blur.jpg)" value="<?= e($f['placeholder_image']) ?>">
                             <?php endif; ?>
-                            <textarea name="transcript" maxlength="100000" placeholder="Document transcription (corrected OCR or manual transcript)" rows="4"><?= e($f['transcript']) ?></textarea>
+                            <textarea name="transcript" maxlength="100000" placeholder="<?= $av ? 'Transcript of the recording' : 'Document transcription (corrected OCR or manual transcript)' ?>" rows="4"><?= e($f['transcript']) ?></textarea>
                             <div class="meta-form-actions">
                                 <button type="submit" class="btn-small">Save</button>
                                 <button type="button" class="btn-small btn-ghost meta-cancel">Cancel</button>

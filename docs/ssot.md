@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.25.0. Update this file in the same commit as any change it describes.
+Version 1.26.1. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.25.0');` |
-| `changelog.md` | `## 1.25.0 — 13 August 2026` |
-| `readme.txt` | `Stable tag: 1.25.0` |
-| `readme.md` | `1.25.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.25.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.26.1');` |
+| `changelog.md` | `## 1.26.1 — 13 August 2026` |
+| `readme.txt` | `Stable tag: 1.26.1` |
+| `readme.md` | `1.26.1.` under `## Version` |
+| `security.md` | `The current supported release is **1.26.1**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:

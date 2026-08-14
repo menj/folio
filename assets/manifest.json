@@ -13,7 +13,7 @@
  },
  "assets/js/app.js": {
   "min": "assets/js/app.min.js",
-  "size": 31310
+  "size": 31345
  },
  "assets/js/view.js": {
   "min": "assets/js/view.min.js",

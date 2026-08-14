@@ -82,6 +82,25 @@ documents, titles, categories, tags, accounts, and settings carry across as
 they are. Where a specific release does migrate something — such as the
 metadata store's move to `document_id` keys — its own section below says so.
 
+## Upgrading to 1.26.0
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
+There is no required manual step.
+
+Three things are new. Folders can carry a description, stored in a file the
+application writes for you, `data/folder-descriptions.json`. The category
+archive pages now have their own sitemap at `sitemap-categories.xml`, announced
+in the `robots.txt` shown on the Crawlers screen. And the audio playlist has
+moved off the document pages onto a dedicated page, reached by a "Play all"
+button on any folder holding two or more audio files; a document page now plays
+only its own file. The `AUDIO_PLAYLIST` setting still turns the playlist on or
+off.
+
+The root `.htaccess` gained one line, an explicit rewrite for
+`sitemap-categories.xml`. Replacing the root `.htaccess` is optional, because
+the existing catch-all already routes that address to the application. Clear
+your browser cache once so the new stylesheet loads.
+
 ## Upgrading to 1.25.0
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.

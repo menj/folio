@@ -366,14 +366,13 @@
         current = null;
     });
 
-    /* Colour schemes */
+    /* Colour schemes. Folio (oxblood) is the default. Only a theme the reader
+       has explicitly chosen changes it; the operating system's dark-mode
+       preference does not, so the archive keeps its house colours by default. */
     var saved = null;
     try { saved = localStorage.getItem("folio-theme"); } catch (e) {}
     if (saved) {
         document.documentElement.setAttribute("data-theme", saved);
-    } else if (window.matchMedia
-        && window.matchMedia("(prefers-color-scheme: dark)").matches) {
-        document.documentElement.setAttribute("data-theme", "night");
     }
 
     function markActive() {
