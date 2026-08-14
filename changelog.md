@@ -3,6 +3,20 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.26.2 — 14 August 2026
+
+### Changed
+
+- **Media caches and streams instead of re-downloading.** Audio and video now
+  carry `Accept-Ranges` and a week-long `Cache-Control`, so the browser can
+  start playing before the whole file arrives, can seek, and does not fetch the
+  file again on a replay or a seek. This needs the new `uploads/.htaccess`.
+
+- **Playlist durations no longer compete with playback.** On the playlist page
+  the track times were fetched several at once, which took bandwidth from the
+  track being played. They now load one at a time, hold off until the current
+  track can play, and pause whenever the player is buffering.
+
 ## 1.26.1 — 14 August 2026
 
 ### Changed

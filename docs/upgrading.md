@@ -82,6 +82,21 @@ documents, titles, categories, tags, accounts, and settings carry across as
 they are. Where a specific release does migrate something — such as the
 metadata store's move to `document_id` keys — its own section below says so.
 
+## Upgrading to 1.26.2
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`,
+then copy the single file `uploads/.htaccess` from the release over your
+existing one. That file gained cache and byte-range headers for audio and
+video, which let the browser stream media and stop it from re-downloading on a
+replay or a seek. Without the new `uploads/.htaccess` playback still works, but
+it will feel slower. Do not touch anything else in `uploads/`.
+
+If media still buffers slowly after this, check that your server answers a
+byte-range request with `206 Partial Content` rather than `200`. On Apache the
+supplied rules handle it. On nginx or another server, range support for static
+files has to be enabled in that server's own configuration; Folio cannot set it
+from `.htaccess` there.
+
 ## Upgrading to 1.26.0
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.

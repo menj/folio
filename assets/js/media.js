@@ -362,26 +362,54 @@
                 wrap.appendChild(list);
 
                 /* Durations fill in on their own as each track's metadata
-                   loads. Nothing is stored; these are metadata-only reads,
-                   run a few at a time so a long folder does not open dozens
-                   of connections at once. */
+                   loads. To keep them from competing with playback for
+                   bandwidth and connections, they load one at a time, they do
+                   not start until the current track can already play, and they
+                   pause whenever the player is actively buffering (a "waiting"
+                   event) and resume once it can play again. Nothing is stored;
+                   these are metadata-only reads. */
                 (function loadDurations() {
                     var next = 0;
+                    var busy = false;      // a probe is in flight
+                    var blocked = true;    // hold until the player is ready
+                    var probe = null;
+
                     function pump() {
-                        if (next >= queue.length) { return; }
+                        if (busy || blocked || next >= queue.length) {
+                            return;
+                        }
                         var i = next++;
-                        var probe = document.createElement("audio");
+                        if (durCells[i].textContent) { pump(); return; }
+                        busy = true;
+                        probe = document.createElement("audio");
                         probe.preload = "metadata";
                         probe.src = queue[i].url;
-                        probe.addEventListener("loadedmetadata", function () {
+                        var done = function () {
                             durCells[i].textContent = fmtDur(probe.duration);
-                            probe.src = "";
+                            cleanup();
+                        };
+                        var fail = function () { cleanup(); };
+                        function cleanup() {
+                            if (!probe) { return; }
+                            probe.removeAttribute("src");
+                            probe.load();
+                            probe = null;
+                            busy = false;
                             pump();
-                        });
-                        probe.addEventListener("error", function () { pump(); });
+                        }
+                        probe.addEventListener("loadedmetadata", done);
+                        probe.addEventListener("error", fail);
                     }
-                    var lanes = Math.min(3, queue.length);
-                    for (var k = 0; k < lanes; k++) { pump(); }
+
+                    // Give way while the player is stalled for data; resume when
+                    // it can play again.
+                    el.addEventListener("waiting", function () { blocked = true; });
+                    el.addEventListener("canplay", function () { blocked = false; pump(); });
+                    el.addEventListener("playing", function () { blocked = false; pump(); });
+                    el.addEventListener("pause", function () { blocked = false; pump(); });
+                    // If the first track never gets played, still fill durations
+                    // shortly after load.
+                    setTimeout(function () { blocked = false; pump(); }, 2000);
                 })();
 
                 function eqNode() {

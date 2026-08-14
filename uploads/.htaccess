@@ -43,6 +43,18 @@ AddType video/ogg .ogv
 AddType video/quicktime .mov
 </IfModule>
 
+# Media playback wants two things from the server: byte-range requests, so the
+# browser can start playing before the whole file arrives and can seek, and a
+# cache window, so a replay or a seek does not re-download. Range is on by
+# default for static files; this states it, and caches media for a week while
+# still allowing revalidation through the ETag Apache already sends.
+<IfModule mod_headers.c>
+<FilesMatch "(?i)\.(mp3|m4a|aac|wav|flac|ogg|oga|opus|weba|mp4|m4v|webm|ogv|mov)$">
+Header set Accept-Ranges "bytes"
+Header set Cache-Control "public, max-age=604800"
+</FilesMatch>
+</IfModule>
+
 <FilesMatch "(?i)\.(php|phtml|phar|php[0-9]|cgi|pl|py|sh|shtml|fcgi|asp|aspx|jsp)$">
 <IfModule mod_authz_core.c>
 Require all denied

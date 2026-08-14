@@ -21,7 +21,7 @@
  },
  "assets/js/media.js": {
   "min": "assets/js/media.min.js",
-  "size": 20388
+  "size": 21952
  },
  "assets/js/admin.js": {
   "min": "assets/js/admin.min.js",
