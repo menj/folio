@@ -1043,6 +1043,14 @@ function url_sitemap_pdf(): string
         : BASE_URL . '?action=sitemap_pdf';
 }
 
+/** URL of the category sitemap, which lists every category archive page. */
+function url_sitemap_categories(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/sitemap-categories.xml'
+        : BASE_URL . '?action=sitemap_categories';
+}
+
 /** URL of one part of a partitioned sitemap. */
 function url_sitemap_part(int $n): string
 {
@@ -1115,6 +1123,12 @@ function collapse_markup_ws(string $html): string
 function url_flipbook(string $rel): string
 {
     return BASE_URL . '?action=flipbook&file=' . rawurlencode($rel);
+}
+
+/** URL of the dedicated playlist page for an audio folder. Query-string only. */
+function url_playlist(string $rel): string
+{
+    return BASE_URL . '?action=playlist&dir=' . rawurlencode($rel);
 }
 
 function url_render(string $rel): string
@@ -1283,6 +1297,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'sitemap';
     } elseif ($route === 'sitemap-pdf.xml') {
         $_GET['action'] = 'sitemap_pdf';
+    } elseif ($route === 'sitemap-categories.xml') {
+        $_GET['action'] = 'sitemap_categories';
     } elseif (preg_match('#^sitemap-([0-9]+)\.xml$#', $route, $m)) {
         $_GET['action'] = 'sitemap';
         $_GET['part'] = $m[1];
@@ -2512,6 +2528,51 @@ define('META_LOCK_FILE', __DIR__ . '/data/metadata.lock');
 define('LEGACY_META_FILE', BASE_DIR . DIRECTORY_SEPARATOR . '.sfm-meta.json');
 
 $folio_meta_cache = null;
+
+define('FOLDER_DESC_FILE', __DIR__ . '/data/folder-descriptions.json');
+
+/**
+ * Folder descriptions, kept in their own flat file as
+ * [folder-relative-path => description]. Deliberately separate from the
+ * document metadata: a folder is not a document, so it must never receive a
+ * document identity, a slug, or a place in a sitemap. This store holds nothing
+ * but a short line of prose per folder.
+ */
+function folder_desc_load(): array
+{
+    static $cache = null;
+    if (is_array($cache)) {
+        return $cache;
+    }
+    $out = [];
+    if (is_file(FOLDER_DESC_FILE)) {
+        $raw = @file_get_contents(FOLDER_DESC_FILE);
+        $data = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($data)) {
+            foreach ($data as $k => $v) {
+                if (is_string($k) && is_string($v) && $v !== '') {
+                    $out[$k] = $v;
+                }
+            }
+        }
+    }
+    return $cache = $out;
+}
+
+/** Set or clear one folder's description. An empty description clears it. */
+function folder_desc_save(string $rel, string $desc): bool
+{
+    $all = folder_desc_load();
+    if ($desc === '') {
+        unset($all[$rel]);
+    } else {
+        $all[$rel] = $desc;
+    }
+    return atomic_replace_file(
+        FOLDER_DESC_FILE,
+        json_encode($all, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) . "\n"
+    );
+}
 
 function meta_decode_file(string $path, bool &$valid): array
 {
@@ -5192,6 +5253,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         // Announced separately so crawlers find the documents themselves, not
         // only the pages describing them.
         $robots .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
+        // Category archive pages have their own sitemap, kept apart from the
+        // main one so the two never duplicate each other.
+        $robots .= 'Sitemap: ' . url_sitemap_categories() . "\n";
     }
 
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
@@ -5954,7 +6018,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
         <a href="<?= e(BASE_URL) ?>">Back to the library</a>
     </nav>
 </header>
-<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
+<main class="layout" id="folio-main" tabindex="-1">
     <section class="listing">
         <div class="filter-bar">
             <div class="filter-chips">
@@ -7337,6 +7401,78 @@ if (isset($_GET['action']) && $_GET['action'] === 'flipbook') {
 }
 
 /* ------------------------------------------------------------------ */
+/* Dedicated playlist page: one player and a folder's audio queue.      */
+/* Reached by "Play all" on an audio folder; never on a document page.  */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
+    if (!AUDIO_PLAYLIST) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $abs_pl = resolve_path((string) ($_GET['dir'] ?? ''));
+    if ($abs_pl === null || !is_dir($abs_pl)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel_pl = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs_pl, strlen((string) realpath(BASE_DIR))), '/\\'));
+
+    $queue = [];
+    foreach (index_all_files($mime_map) as $f) {
+        if (($f['dir'] ?? '') !== $rel_pl || ($f['kind'] ?? '') !== 'audio') {
+            continue;
+        }
+        $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
+        $title = ($f['title'] ?? '') !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
+        $queue[] = ['url' => $url, 'title' => $title];
+    }
+    if (count($queue) < 2) {
+        // A single track is not a playlist. Send the reader to the folder.
+        header('Location: ' . url_dir($rel_pl), true, 302);
+        exit;
+    }
+
+    $pl_title = $rel_pl === '' ? SITE_NAME : basename($rel_pl);
+    $pl_json  = json_encode($queue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $back_url = url_dir($rel_pl);
+
+    header('Content-Type: text/html; charset=UTF-8');
+    send_security_headers();
+    ?>
+<!DOCTYPE html>
+<html lang="<?= e(SITE_LANGUAGE) ?>" data-theme="folio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Playlist: <?= e($pl_title) ?> &ndash; <?= e(SITE_NAME) ?></title>
+<meta name="robots" content="noindex, nofollow">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
+</head>
+<body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
+<header class="topbar">
+    <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
+    <span class="running-head">Playlist</span>
+    <nav class="crumbs"><a href="<?= e($back_url) ?>">&larr; <?= e($pl_title) ?></a></nav>
+</header>
+<main class="playlist-page" id="folio-main" tabindex="-1">
+    <div class="playlist-wrap">
+        <p class="playlist-head"><?= e($pl_title) ?> <span class="playlist-count"><?= count($queue) ?> tracks</span></p>
+        <div class="folio-media fm-audio fm-standalone" data-media-kind="audio"
+             data-playlist="<?= e($pl_json) ?>" data-playlist-index="0">
+            <audio class="fm-el" controls preload="metadata" src="<?= e($queue[0]['url']) ?>">
+                <a href="<?= e($queue[0]['url']) ?>">Download audio</a>
+            </audio>
+        </div>
+    </div>
+</main>
+<script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
+</body>
+</html>
+    <?php
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
 /* Legacy file endpoint: redirect to the file's real location          */
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'raw') {
@@ -7501,6 +7637,37 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap_pdf') {
     exit;
 }
 
+if (isset($_GET['action']) && $_GET['action'] === 'sitemap_categories') {
+    if (!SITEMAP_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    $all = index_all_files($mime_map);
+    $cat_latest = [];
+    foreach ($all as $f) {
+        $c = (string) $f['category'];
+        if ($c !== '') {
+            $cat_latest[$c] = max((int) ($cat_latest[$c] ?? 0), (int) $f['lastmod']);
+        }
+    }
+
+    header('Content-Type: application/xml; charset=UTF-8');
+    send_public_cache_headers(900);
+    echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+    echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+    foreach (category_register($all) as $cat_name => $count) {
+        echo "  <url>\n";
+        echo '    <loc>' . htmlspecialchars(url_category($cat_name), ENT_XML1) . "</loc>\n";
+        if (!empty($cat_latest[$cat_name])) {
+            echo '    <lastmod>' . date('c', (int) $cat_latest[$cat_name]) . "</lastmod>\n";
+        }
+        echo "  </url>\n";
+    }
+    echo '</urlset>';
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
     if (!SITEMAP_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
@@ -7554,22 +7721,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         $entries[] = $e;
     }
 
-    $cat_latest = [];
-    foreach ($all as $f) {
-        $c = (string) $f['category'];
-        if ($c !== '') {
-            $cat_latest[$c] = max((int) ($cat_latest[$c] ?? 0), (int) $f['lastmod']);
-        }
-    }
-    foreach (category_register($all) as $cat_name => $count) {
-        $e  = "  <url>\n";
-        $e .= '    <loc>' . htmlspecialchars(url_category($cat_name), ENT_XML1) . "</loc>\n";
-        if (!empty($cat_latest[$cat_name])) {
-            $e .= '    <lastmod>' . date('c', (int) $cat_latest[$cat_name]) . "</lastmod>\n";
-        }
-        $e .= "  </url>\n";
-        $entries[] = $e;
-    }
+    // Categories are not listed here. They have their own sitemap, referenced
+    // from robots.txt: sitemap-categories.xml. Keeping them out of the main
+    // sitemap is deliberate, so the two never duplicate each other.
 
     foreach (pages_menu() as $mslot => $mrec) {
         $e  = "  <url>\n";
@@ -7855,7 +8009,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
           . '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
           . "): every page in the library.\n"
           . '- [Document sitemap](' . url_sitemap_pdf()
-          . "): the PDF files themselves.\n";
+          . "): the PDF files themselves.\n"
+          . '- [Category sitemap](' . url_sitemap_categories()
+          . "): the category archive pages.\n";
     exit($out);
 }
 
@@ -8093,6 +8249,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'ocr')
         'chars'     => $chars,
         'preview'   => str_clip(trim((string) $text), 300),
     ]));
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'folder_meta') {
+    header('Content-Type: application/json');
+    if (!is_admin()) {
+        http_response_code(403);
+        exit(json_encode(['ok' => false, 'error' => 'Not authorised']));
+    }
+    if (!csrf_valid()) {
+        http_response_code(403);
+        exit(json_encode(['ok' => false, 'error' => 'Invalid security token — reload the page']));
+    }
+    $rel = (string) ($_POST['folder'] ?? '');
+    $abs = resolve_path($rel);
+    if ($abs === null || !is_dir($abs)) {
+        http_response_code(404);
+        exit(json_encode(['ok' => false, 'error' => 'Folder not found']));
+    }
+    $rel = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if ($rel === '') {
+        http_response_code(422);
+        exit(json_encode(['ok' => false, 'error' => 'The library root has no description']));
+    }
+    $desc = trim((string) ($_POST['desc'] ?? ''));
+    $desc = function_exists('mb_substr') ? mb_substr($desc, 0, 500) : substr($desc, 0, 500);
+
+    $ok = folder_desc_save($rel, $desc);
+
+    exit(json_encode($ok
+        ? ['ok' => true, 'desc' => $desc]
+        : ['ok' => false, 'error' => 'Could not write to data/. Check that the folder is writable.']));
 }
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta') {
@@ -8375,7 +8562,7 @@ if (isset($_GET['cat'])) {
         <span class="sep">/</span><span><?= e($cat_name) ?></span>
     </nav>
 </header>
-<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
+<main class="layout" id="folio-main" tabindex="-1">
     <section class="listing">
         <div class="filter-bar">
             <div class="filter-chips">
@@ -8493,7 +8680,6 @@ if (isset($_GET['view'])) {
     }
     $ext  = strtolower(pathinfo($abs, PATHINFO_EXTENSION));
     $kind = file_kind($ext);
-    $audio_queue = ($kind === 'audio' && AUDIO_PLAYLIST) ? audio_playlist_for($rel) : [];
     $meta = meta_load();
     $m     = $meta[$rel] ?? [];
     $title = ($m['title'] ?? '') !== '' ? $m['title'] : pathinfo($rel, PATHINFO_FILENAME);
@@ -8651,7 +8837,7 @@ if (isset($_GET['view'])) {
                     </div>
                 </div>
             <?php elseif ($kind === 'audio'): ?>
-                <div class="folio-media fm-audio" data-media-kind="audio"<?php if ($audio_queue): ?> data-playlist="<?= e(json_encode(array_map(fn($t) => ['url' => $t['url'], 'title' => $t['title']], $audio_queue), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)) ?>" data-playlist-index="<?= (int) array_search(true, array_column($audio_queue, 'current'), true) ?>"<?php endif; ?>>
+                <div class="folio-media fm-audio" data-media-kind="audio">
                     <audio class="fm-el" controls preload="metadata" src="<?= e($raw) ?>">
                         <a href="<?= e($raw) ?>">Download audio</a>
                     </audio>
@@ -8730,7 +8916,7 @@ foreach (scandir($abs_dir) as $entry) {
         continue;
     }
     if (is_dir($abs_entry)) {
-        $dirs[] = ['name' => $entry, 'rel' => $rel_entry];
+        $dirs[] = ['name' => $entry, 'rel' => $rel_entry, 'desc' => (string) (folder_desc_load()[$rel_entry] ?? '')];
     } elseif (is_file($abs_entry)) {
         $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
         $m = $meta[$rel_entry] ?? [];
@@ -9005,7 +9191,7 @@ $listing_ld = [
 </nav>
 <?php endif; ?>
 
-<main class="layout" id="folio-main" tabindex="-1" data-audio-playlist="<?= AUDIO_PLAYLIST ? '1' : '' ?>">
+<main class="layout" id="folio-main" tabindex="-1">
     <section class="listing">
         <?php if ($installer_present): ?>
         <p class="msg msg-bad install-warn"><strong>Security notice.</strong> <code>install.php</code> is still present in the Folio folder. It is inert while <code>config.php</code> exists, but delete it now over FTP to keep the installation tidy.</p>
@@ -9020,6 +9206,14 @@ $listing_ld = [
                 <button class="chip chip-clear" id="filter-clear" hidden>&times; Clear filter</button>
             </div>
             <?php endif; ?>
+        </div>
+        <?php endif; ?>
+        <?php
+        $folder_audio = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'audio');
+        if (AUDIO_PLAYLIST && count($folder_audio) >= 2):
+        ?>
+        <div class="listing-toolbar">
+            <a class="btn btn-play-all" href="<?= e(url_playlist($rel_dir)) ?>">&#9654;&nbsp; Play all <span class="play-all-count"><?= count($folder_audio) ?></span></a>
         </div>
         <?php endif; ?>
         <table>
@@ -9063,8 +9257,30 @@ $listing_ld = [
                 </tr>
             <?php endif; ?>
             <?php foreach ($dirs as $d): ?>
-                <tr class="row-dir">
-                    <td colspan="4"><a href="<?= e(root_relative(url_dir($d['rel']))) ?>">&#128193; <?= e($d['name']) ?></a></td>
+                <tr class="row-dir" data-folder="<?= e($d['rel']) ?>">
+                    <td colspan="4">
+                        <div class="dir-row">
+                            <a class="dir-link" href="<?= e(root_relative(url_dir($d['rel']))) ?>">&#128193; <?= e($d['name']) ?></a>
+                            <?php if (is_admin()): ?>
+                            <button type="button" class="btn-small btn-ghost dir-edit" title="Edit folder description">Edit</button>
+                            <?php endif; ?>
+                        </div>
+                        <p class="dir-desc"<?= $d['desc'] === '' ? ' hidden' : '' ?>><?= e($d['desc']) ?></p>
+                        <?php if (is_admin()): ?>
+                        <form class="dir-form" method="post" hidden>
+                            <input type="hidden" name="action" value="folder_meta">
+                            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                            <input type="hidden" name="folder" value="<?= e($d['rel']) ?>">
+                            <label class="meta-form-label">Folder description
+                                <textarea name="desc" rows="2" maxlength="500" placeholder="A short description of what this folder holds"><?= e($d['desc']) ?></textarea>
+                            </label>
+                            <div class="meta-form-actions">
+                                <button type="submit" class="btn-small">Save</button>
+                                <button type="button" class="btn-small btn-ghost dir-cancel">Cancel</button>
+                            </div>
+                        </form>
+                        <?php endif; ?>
+                    </td>
                 </tr>
             <?php endforeach; ?>
             <?php foreach ($page_files as $f): ?>

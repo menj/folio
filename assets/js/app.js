@@ -41,28 +41,6 @@
             }
             mel.src = current.url;
             mwrap.appendChild(mel);
-            /* Playlist: when the feature is on and this is audio, queue the
-               other audio files listed in the current folder so the preview
-               pane plays through them, matching the document page. */
-            var mainEl = document.getElementById("folio-main");
-            if (kind === "audio" && mainEl && mainEl.getAttribute("data-audio-playlist") === "1") {
-                var links = document.querySelectorAll(".file-link[data-kind='audio']");
-                if (links.length > 1) {
-                    var q = [];
-                    var idx = 0;
-                    for (var i = 0; i < links.length; i++) {
-                        var url = links[i].getAttribute("data-raw-url");
-                        var r = links[i].closest("tr");
-                        var t = r ? r.querySelector(".file-title") : null;
-                        q.push({ url: url, title: t ? t.textContent : "" });
-                        if (links[i].getAttribute("data-file") === file) {
-                            idx = i;
-                        }
-                    }
-                    mwrap.setAttribute("data-playlist", JSON.stringify(q));
-                    mwrap.setAttribute("data-playlist-index", String(idx));
-                }
-            }
             body.appendChild(mwrap);
             if (window.FolioMedia) {
                 window.FolioMedia.mount(mwrap);
@@ -158,9 +136,41 @@
             r.querySelector(".meta-form").hidden = true;
             r.querySelector(".file-meta").hidden = false;
         }
+
+        /* Folder description */
+        var dirEditBtn = ev.target.closest(".dir-edit");
+        if (dirEditBtn) {
+            var drow = dirEditBtn.closest("tr");
+            drow.querySelector(".dir-form").hidden = false;
+            drow.querySelector('.dir-form textarea[name="desc"]').focus();
+            return;
+        }
+        var dirCancelBtn = ev.target.closest(".dir-cancel");
+        if (dirCancelBtn) {
+            dirCancelBtn.closest("tr").querySelector(".dir-form").hidden = true;
+        }
     });
 
     document.addEventListener("submit", function (ev) {
+        var dform = ev.target.closest(".dir-form");
+        if (dform) {
+            ev.preventDefault();
+            fetch(window.location.pathname, { method: "POST", body: new FormData(dform) })
+                .then(function (res) { return res.json(); })
+                .then(function (data) {
+                    if (!data.ok) {
+                        alert(data.error || "Could not save.");
+                        return;
+                    }
+                    var drow = dform.closest("tr");
+                    var descEl = drow.querySelector(".dir-desc");
+                    descEl.textContent = data.desc || "";
+                    descEl.hidden = !data.desc;
+                    dform.hidden = true;
+                })
+                .catch(function () { alert("Could not save."); });
+            return;
+        }
         var form = ev.target.closest(".meta-form");
         if (!form) {
             return;

@@ -15,13 +15,16 @@ the operating system's dark-mode preference on a first visit.
 
 ### Added
 
-- **An audio playlist, on by default.** A folder holding more than one audio
-  file plays as a queue: the tracks in listing order, with auto-advance to the
-  next when one ends, previous and next controls, repeat and shuffle toggles,
-  and a track list with the current one marked. It works on the document page
-  and in the listing preview pane, and stays folder-scoped so there is no
-  playlist to store or manage. On by default (`AUDIO_PLAYLIST`), and an admin
-  can turn it off in Settings.
+- **An audio playlist on its own page, on by default.** A folder holding two
+  or more audio files gains a "Play all" button that opens a dedicated playlist
+  page: one player and the folder's tracks as a numbered list, each with its
+  title and running time, the playing track marked with an equaliser. It has
+  auto-advance, previous and next, and repeat and shuffle. The playlist is kept
+  off the individual document pages, where a folder-wide queue makes no sense;
+  a document page plays only its own file. Durations fill in on their own as
+  each track's metadata loads, so nothing is stored on disk, and the whole
+  feature stays folder-scoped with no playlist to manage. On by default
+  (`AUDIO_PLAYLIST`), and an admin can turn it off in Settings.
 
 - **Audio and video play in the page.** Files that were preview-and-download
   only now open in a player styled to the active theme, on the document page
@@ -48,6 +51,19 @@ the operating system's dark-mode preference on a first visit.
   content, past the header and its navigation. It stays off screen until it
   receives focus, so nothing changes visually for a pointer user. The main
   element carries `id="folio-main"` as its target.
+
+- **Descriptions for folders.** A folder can now carry a short description,
+  shown under its name in the listing and edited inline from the dashboard by
+  an admin. Descriptions live in their own flat file,
+  `data/folder-descriptions.json`, kept apart from the document metadata: a
+  folder is not a document, so it never gets a document identity, a slug, or a
+  place in a sitemap. Clearing a description removes its record entirely.
+
+- **A category sitemap.** The category archive pages now have their own
+  sitemap at `sitemap-categories.xml`, announced in `robots.txt` and
+  `llms.txt` beside the page and document sitemaps. Categories were removed
+  from the main `sitemap.xml` at the same time, so the two never duplicate
+  each other.
 
 ### Changed
 
@@ -113,6 +129,11 @@ the operating system's dark-mode preference on a first visit.
   floor (chips 0.8rem, category/tag chips 0.75rem, sort marks to 1em). Desktop
   layout and density are unchanged — the rules are gated behind
   `@media (pointer: coarse)`.
+
+- **The category item count reads as a count.** The number beside a category
+  name in the filter chips was set in the same size and colour as the name, so
+  "Website 2" looked like a name rather than the category Website with two
+  items. The count now sits in its own small, muted pill.
 
 ### Documentation
 

@@ -121,6 +121,7 @@ data/settings.php         settings saved from the admin
 data/metadata.json        titles, descriptions, categories, tags, document_type,
                           transcript, pdf_access, language, placeholder_image
 data/metadata.lock        write lock
+data/folder-descriptions.json  folder descriptions, keyed by folder path
 data/pages.json           standalone page content
 data/aspect.json          cached PDF page shapes; safe to delete
 data/previews/            generated, cached blurred previews for hidden PDFs

@@ -316,29 +316,99 @@
                 bar.appendChild(repeatBtn);
                 bar.appendChild(shuffleBtn);
 
+                function fmtDur(t) {
+                    if (!isFinite(t) || t <= 0) { return ""; }
+                    t = Math.floor(t);
+                    var s = t % 60;
+                    return Math.floor(t / 60) + ":" + (s < 10 ? "0" + s : s);
+                }
+
                 var list = document.createElement("ol");
                 list.className = "fm-list";
+                var durCells = [];
                 queue.forEach(function (track, i) {
                     var li = document.createElement("li");
-                    var b = document.createElement("button");
-                    b.type = "button";
-                    b.className = "fm-track";
-                    b.textContent = track.title || ("Track " + (i + 1));
-                    b.addEventListener("click", function () { load(i, true); });
-                    li.appendChild(b);
+                    li.className = "fm-track";
+                    li.setAttribute("role", "button");
+                    li.setAttribute("tabindex", "0");
+
+                    var mark = document.createElement("span");
+                    mark.className = "fm-mark";
+                    var num = document.createElement("span");
+                    num.className = "fm-num";
+                    num.textContent = i + 1;
+                    mark.appendChild(num);
+
+                    var title = document.createElement("span");
+                    title.className = "fm-track-title";
+                    title.textContent = track.title || ("Track " + (i + 1));
+
+                    var dur = document.createElement("span");
+                    dur.className = "fm-dur";
+                    durCells.push(dur);
+
+                    li.appendChild(mark);
+                    li.appendChild(title);
+                    li.appendChild(dur);
+                    li.addEventListener("click", function () { load(i, true); });
+                    li.addEventListener("keydown", function (ev) {
+                        if (ev.key === "Enter" || ev.key === " ") {
+                            ev.preventDefault();
+                            load(i, true);
+                        }
+                    });
                     list.appendChild(li);
                 });
                 wrap.appendChild(list);
 
-                var order = queue.map(function (_, i) { return i; });
+                /* Durations fill in on their own as each track's metadata
+                   loads. Nothing is stored; these are metadata-only reads,
+                   run a few at a time so a long folder does not open dozens
+                   of connections at once. */
+                (function loadDurations() {
+                    var next = 0;
+                    function pump() {
+                        if (next >= queue.length) { return; }
+                        var i = next++;
+                        var probe = document.createElement("audio");
+                        probe.preload = "metadata";
+                        probe.src = queue[i].url;
+                        probe.addEventListener("loadedmetadata", function () {
+                            durCells[i].textContent = fmtDur(probe.duration);
+                            probe.src = "";
+                            pump();
+                        });
+                        probe.addEventListener("error", function () { pump(); });
+                    }
+                    var lanes = Math.min(3, queue.length);
+                    for (var k = 0; k < lanes; k++) { pump(); }
+                })();
+
+                function eqNode() {
+                    var eq = document.createElement("span");
+                    eq.className = "fm-eq";
+                    eq.setAttribute("aria-hidden", "true");
+                    eq.appendChild(document.createElement("span"));
+                    eq.appendChild(document.createElement("span"));
+                    eq.appendChild(document.createElement("span"));
+                    return eq;
+                }
 
                 function highlight() {
                     var items = list.querySelectorAll(".fm-track");
                     for (var i = 0; i < items.length; i++) {
-                        items[i].classList.toggle("fm-current", i === index);
-                        if (i === index) {
+                        var isCur = i === index;
+                        items[i].classList.toggle("fm-current", isCur);
+                        var mark = items[i].querySelector(".fm-mark");
+                        mark.innerHTML = "";
+                        if (isCur) {
+                            mark.appendChild(eqNode());
                             items[i].setAttribute("aria-current", "true");
                         } else {
+                            var n = document.createElement("span");
+                            n.className = "fm-num";
+                            n.textContent = i + 1;
+                            mark.appendChild(n);
                             items[i].removeAttribute("aria-current");
                         }
                     }

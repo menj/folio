@@ -11,6 +11,8 @@
 ## Features
 
 * Directory listing with subfolder navigation and breadcrumbs
+* Descriptions for folders, shown under the folder name and edited inline by
+  an admin, kept in their own file apart from the document metadata
 * Inline preview and printing for PDF, image, and Markdown files
 * Audio and video play in the page through a transport styled to the active
   theme, with the web server delivering the bytes directly so seeking works.
@@ -185,8 +187,10 @@ The category field suggests categories already in use, which keeps the taxonomy
 consistent. Categories are a real taxonomy: each one has its own archive page at
 `/category/<slug>/`, gathering every document in that category from across all
 folders, with its own title, meta description, canonical URL, breadcrumb, and
-`CollectionPage` structured data. Category archives appear in the XML sitemap and
-are linked from the chip bar on every listing, from each row, and from each file
+`CollectionPage` structured data. Category archives have their own sitemap at
+`sitemap-categories.xml`, announced in `robots.txt` and `llms.txt` and kept
+separate from the main sitemap, and they are linked from the chip bar on every
+listing, from each row, and from each file
 page, which gives search engines a clean internal link graph.
 
 Tags work differently on purpose: they appear only on the rows that carry them,

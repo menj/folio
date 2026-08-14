@@ -308,35 +308,26 @@ body {
 .fm-list {
     list-style: none;
     margin: 0;
-    padding: 0.35rem;
-    max-height: 15rem;
+    padding: 0;
+    max-height: 22rem;
     overflow-y: auto;
     border-top: 1px solid var(--rule);
     background: var(--leaf);
-    font-family: var(--sans);
 }
-
-.fm-list li { margin: 0; }
 
 .fm-track {
-    display: block;
-    width: 100%;
-    text-align: left;
-    padding: 0.5rem 0.6rem;
-    border: 0;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--ink);
-    font: inherit;
-    font-size: 0.9rem;
+    display: grid;
+    grid-template-columns: 1.9rem 1fr auto;
+    align-items: center;
+    gap: 0.7rem;
+    padding: 0.5rem 0.8rem;
+    border-bottom: 1px solid var(--rule);
     cursor: pointer;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
 }
+.fm-track:last-child { border-bottom: 0; }
 
 @media (hover: hover) {
-    .fm-track:hover { background: rgba(127, 127, 127, 0.12); }
+    .fm-track:hover { background: rgba(127, 127, 127, 0.06); }
 }
 
 .fm-track:focus-visible {
@@ -344,19 +335,81 @@ body {
     outline-offset: -2px;
 }
 
-.fm-track.fm-current {
-    color: var(--accent);
-    font-weight: 600;
+.fm-mark { display: flex; align-items: center; justify-content: center; }
+.fm-num {
+    font-family: var(--sans);
+    font-size: 0.78rem;
+    color: var(--quiet);
+    font-variant-numeric: tabular-nums;
+}
+.fm-track-title {
+    font-family: var(--serif);
+    font-size: 0.98rem;
+    color: var(--ink);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.fm-dur {
+    font-family: var(--sans);
+    font-size: 0.76rem;
+    color: var(--quiet);
+    font-variant-numeric: tabular-nums;
 }
 
-.fm-track.fm-current::before {
-    content: "\25B8\00a0\00a0";
+.fm-track.fm-current {
+    border-left: 2px solid var(--accent);
+    background: rgba(110, 29, 29, 0.05);
+}
+[data-theme="night"] .fm-track.fm-current { background: rgba(192, 138, 106, 0.10); }
+.fm-track.fm-current .fm-track-title { color: var(--accent); font-weight: 500; }
+.fm-track.fm-current .fm-dur { color: var(--accent); }
+
+.fm-eq { display: inline-flex; align-items: flex-end; gap: 2px; height: 12px; }
+.fm-eq span { width: 2px; height: 4px; background: var(--accent); animation: fm-eq 0.9s ease-in-out infinite; }
+.fm-eq span:nth-child(2) { animation-delay: 0.15s; }
+.fm-eq span:nth-child(3) { animation-delay: 0.3s; }
+@keyframes fm-eq { 0%, 100% { height: 3px; } 50% { height: 11px; } }
+@media (prefers-reduced-motion: reduce) { .fm-eq span { animation: none; height: 8px; } }
+
+/* Dedicated playlist page */
+.playlist-page { padding: 2rem 1.5rem 4rem; }
+.playlist-wrap { max-width: 640px; margin: 0 auto; }
+.playlist-head {
+    font-family: var(--sans);
+    font-size: 0.66rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin: 0 0 0.7rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+.playlist-count { color: var(--quiet); }
+.fm-standalone .fm-list { max-height: none; }
+
+/* "Play all" on an audio folder */
+.listing-toolbar { padding: 0.6rem 0 0.2rem; }
+.btn-play-all {
+    display: inline-flex;
+    align-items: center;
+    text-decoration: none;
+    font-size: 0.8rem;
+}
+.play-all-count {
+    margin-left: 0.5em;
+    font-size: 0.85em;
+    font-variant-numeric: tabular-nums;
+    padding: 0.1em 0.45em;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 16%, transparent);
 }
 
 /* On coarse pointers the scrubber is hard to grab and drag: a 16px-tall
    strip with a 12px knob is below a comfortable touch target. The visible
    track and buffered/played fills are unchanged; only the hit area and the
-   knob grow, and playlist rows are given a 24px-minimum tap height. Desktop
+   knob grow, and playlist rows are given a comfortable tap height. Desktop
    density is untouched — everything here is gated behind pointer: coarse. */
 @media (pointer: coarse) {
     .fm-scrub { height: 28px; }
@@ -365,10 +418,7 @@ body {
         height: 18px;
         margin-left: -9px;
     }
-    .fm-track {
-        min-height: 24px;
-        padding-block: 0.6rem;
-    }
+    .fm-track { padding-block: 0.7rem; }
 }
 
 /* ---- Running head ----------------------------------------------- */
@@ -506,6 +556,33 @@ td a:hover { color: var(--accent); }
 }
 .row-dir a:hover { color: var(--accent); }
 
+.dir-row { display: flex; align-items: baseline; gap: 0.75rem; }
+.dir-row .dir-edit { flex: none; text-transform: none; letter-spacing: 0; }
+.dir-desc {
+    margin: 0.3rem 0 0;
+    font-size: 0.82rem;
+    color: var(--quiet);
+    line-height: 1.5;
+    max-width: 65ch;
+}
+.dir-form { margin-top: 0.5rem; max-width: 40rem; }
+.dir-form .meta-form-label { display: block; margin-bottom: 0.4rem; }
+.dir-form .meta-form-actions { display: flex; gap: 0.4rem; }
+.dir-form textarea {
+    resize: vertical;
+    min-height: 4.5rem;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--sans);
+    font-size: 0.85rem;
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--paper);
+    color: var(--ink);
+}
+.dir-form textarea:focus { outline: 1px solid var(--accent); outline-offset: 0; }
+
 .empty {
     color: var(--quiet);
     text-align: center;
@@ -560,6 +637,19 @@ td a:hover { color: var(--accent); }
 .chip-clear { border-style: dashed; }
 .chip-mini { font-size: 0.65rem; }
 a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 0.35em; }
+
+/* The item count beside a category name. Set apart so it reads as a tally
+   rather than as part of the name (so "Website 2" reads as Website, 2 items). */
+.chip-count {
+    font-size: 0.85em;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1;
+    padding: 0.15em 0.45em;
+    border-radius: 999px;
+    background: color-mix(in srgb, currentColor 14%, transparent);
+    opacity: 0.85;
+}
 
 /* ---- Search: a nav trigger and an overlay -------------------------
  *
