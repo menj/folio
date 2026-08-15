@@ -3,6 +3,18 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.27.1 — 15 August 2026
+
+### Fixed
+
+- **Video sizes to its own shape and no longer previews as a bar.** The video
+  box had no height of its own, so before a clip's metadata arrived it collapsed
+  into a short wide strip, worst on large files that take a moment to report
+  their dimensions. The box now holds a stable frame while loading, then takes
+  the clip's real aspect ratio once it is known: a portrait clip gets a
+  portrait frame capped by height and centred, a landscape clip fills the width,
+  and fullscreen still fills the screen.
+
 ## 1.27.0 — 15 August 2026
 
 ### Added

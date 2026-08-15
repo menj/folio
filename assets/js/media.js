@@ -171,6 +171,20 @@
             el.addEventListener("progress", refreshBuffered);
             el.addEventListener("durationchange", refreshProgress);
 
+            // Once the video's real dimensions are known, size its box to match
+            // so it is not letterboxed into the default 16:9. A portrait clip
+            // gets a portrait box, capped by height so it does not run off the
+            // screen; the box stays centred either way.
+            if (isVideo) {
+                el.addEventListener("loadedmetadata", function () {
+                    var vw = el.videoWidth;
+                    var vh = el.videoHeight;
+                    if (!vw || !vh) { return; }
+                    wrap.style.setProperty("--fm-ar", vw + " / " + vh);
+                    wrap.style.setProperty("--fm-maxw", vh > vw ? (vw / vh * 80) + "vh" : "100%");
+                });
+            }
+
             function seekFromPointer(clientX) {
                 var rect = scrub.getBoundingClientRect();
                 if (rect.width <= 0 || !(el.duration > 0)) {
