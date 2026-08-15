@@ -3,6 +3,31 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.27.0 — 15 August 2026
+
+### Added
+
+- **A JSON Feed.** Folio now publishes a JSON Feed v1.1 at `/feed.json`, listing
+  the most recent documents, for feed readers and AI agents. It is paired with
+  llms.txt in both directions: the feed carries a link to llms.txt in its
+  `_folio` extension, and llms.txt's machine-readable section links back to the
+  feed. The extension also names the site's sitemaps. A plain JSON Feed reader
+  that ignores the extension still reads every item. Every public page
+  advertises the feed with a `rel="alternate"` link, and it is served with the
+  `application/feed+json` type. Like the sitemaps and llms.txt, it returns 404
+  while the whole site is non-indexable.
+
+## 1.26.3 — 15 August 2026
+
+### Fixed
+
+- **The category sitemap is announced everywhere the others are.** When the
+  category sitemap was added, the static `robots.txt`, the readme URL table, and
+  `docs/ssot.md` were left listing only the page and document sitemaps. All
+  three now name `sitemap-categories.xml` as well, the readme no longer claims
+  the main sitemap still carries categories, and a smoke test now checks that a
+  categorised document appears in the category sitemap and not in the main one.
+
 ## 1.26.2 — 14 August 2026
 
 ### Changed

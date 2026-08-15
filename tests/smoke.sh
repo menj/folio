@@ -178,6 +178,22 @@ grep -Fq '"ok":true' <<<"${META_RESPONSE}" || fail 'second metadata update faile
 grep -Fq 'Smoke Notes' "${APP}/data/metadata.json.bak" || fail 'metadata backup does not contain the previous valid state'
 pass 'authenticated metadata update and atomic storage'
 
+# The category archive pages have their own sitemap, and the main sitemap must
+# not also carry them, so the two never duplicate. notes.txt was just filed
+# under "Tests", so that category must appear in the category sitemap and must
+# not appear in the main one. This is the check that would have caught a
+# category sitemap wired into some surfaces but not others.
+curl -sS "${BASE}?action=sitemap_categories" -o "${TMP}/cat-sitemap.xml"
+grep -Fq '<urlset' "${TMP}/cat-sitemap.xml" || fail 'the category sitemap was not served'
+grep -Eq '[?&]cat=tests|/category/tests/' "${TMP}/cat-sitemap.xml" \
+    || fail 'a categorised document is missing from the category sitemap'
+! grep -Fq 'action=raw' "${TMP}/cat-sitemap.xml" \
+    || fail 'the category sitemap referenced a raw file URL'
+curl -sS "${BASE}?action=sitemap" -o "${TMP}/cat-main-sitemap.xml"
+! grep -Eq '[?&]cat=|/category/' "${TMP}/cat-main-sitemap.xml" \
+    || fail 'categories appear in the main sitemap as well as the category sitemap'
+pass 'category sitemap carries the categories, and the main sitemap does not'
+
 # FOLIO-PDF-001: pdf_access is only enforced once FOLIO_URL_SIGNING_KEY is
 # set AND the routing preflight has been confirmed (PDF_GATE_CONFIRMED,
 # pre-seeded above). This config has both, so foo.pdf set to "hidden" must

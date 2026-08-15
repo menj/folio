@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.26.2');
+define('FOLIO_VERSION', '1.27.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -1051,6 +1051,22 @@ function url_sitemap_categories(): string
         : BASE_URL . '?action=sitemap_categories';
 }
 
+/** URL of the JSON Feed (JSON Feed v1.1) for the library. */
+function url_feed(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/feed.json'
+        : BASE_URL . '?action=feed_json';
+}
+
+/** URL of the llms.txt guidance file. */
+function url_llms(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/llms.txt'
+        : BASE_URL . '?action=llms';
+}
+
 /** URL of one part of a partitioned sitemap. */
 function url_sitemap_part(int $n): string
 {
@@ -1299,6 +1315,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'sitemap_pdf';
     } elseif ($route === 'sitemap-categories.xml') {
         $_GET['action'] = 'sitemap_categories';
+    } elseif ($route === 'feed.json') {
+        $_GET['action'] = 'feed_json';
     } elseif (preg_match('#^sitemap-([0-9]+)\.xml$#', $route, $m)) {
         $_GET['action'] = 'sitemap';
         $_GET['part'] = $m[1];
@@ -2627,6 +2645,7 @@ function reserved_slugs(): array
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
         'diagnostics', 'pages', 'page', 'about', 'faq', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
+        'feed', 'feed.json', 'feed_json',
         'raw', 'render', 'thumb', 'flipbook', 'ocr', 'meta', 'view', 'search',
         'feed', 'rss', 'atom', 'assets', 'lib', 'data', 'docs', 'uploads',
         'install', 'index', 'api', 'relink', 'reconcile',
@@ -6341,6 +6360,7 @@ if (isset($_GET['page'])) {
 <meta name="description" content="<?= e($page_desc) ?>">
 <?php if (!$indexable): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
 <link rel="canonical" href="<?= e($page_url) ?>">
+<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta property="og:type" content="website">
 <meta property="og:title" content="<?= e($seo_title !== '' ? $seo_title : $title) ?>">
 <meta property="og:description" content="<?= e($page_desc) ?>">
@@ -7957,6 +7977,95 @@ if (($_GET['action'] ?? '') === 'logout' || ($_POST['action'] ?? '') === 'logout
 /* ------------------------------------------------------------------ */
 /* llms.txt: a curated map of the library for AI crawlers              */
 /* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'feed_json') {
+    // A JSON Feed v1.1 document (https://jsonfeed.org/version/1.1). Standalone
+    // mode: the library is a single site and its items are its documents. A
+    // generic JSON Feed reader that ignores the _folio extension can still read
+    // every item. Gated on indexability, like the sitemaps and llms.txt, so a
+    // private library does not publish one.
+    if (!SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    header('Content-Type: application/feed+json; charset=UTF-8');
+    send_public_cache_headers(900);
+
+    $all = index_all_files($mime_map);
+    // Most recently changed first; a feed is a recent-items resource, so it
+    // carries the newest documents rather than the whole library.
+    usort($all, static fn($a, $b) => (int) ($b['lastmod'] ?? 0) <=> (int) ($a['lastmod'] ?? 0));
+
+    $items = [];
+    foreach (array_slice($all, 0, 50) as $f) {
+        $title = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
+        // content_text is required by JSON Feed and must be non-empty; the
+        // title is the guaranteed-present fallback when there is no description.
+        $text  = $f['desc'] !== '' ? $f['desc'] : $title;
+        $item  = [
+            'id'           => $f['view'],
+            'url'          => $f['view'],
+            'title'        => $title,
+            'content_text' => $text,
+        ];
+        if (!empty($f['lastmod'])) {
+            $stamp = date('c', (int) $f['lastmod']);
+            $item['date_published'] = $stamp;
+            $item['date_modified']  = $stamp;
+        }
+        $tags = array_values(array_filter((array) ($f['tags'] ?? [])));
+        if ($f['category'] !== '' && !in_array($f['category'], $tags, true)) {
+            $tags[] = $f['category'];
+        }
+        if ($tags) {
+            $item['tags'] = $tags;
+        }
+        if ($f['language'] !== '') {
+            $item['language'] = $f['language'];
+        }
+        // An image document can show its own thumbnail; other kinds do not get
+        // a fabricated image.
+        if ($f['kind'] === 'image' && $f['hotlink'] !== '') {
+            $item['image'] = $f['hotlink'];
+        }
+        $items[] = $item;
+    }
+
+    $base = rtrim(BASE_URL, '/') . '/';
+    $feed = [
+        'version'       => 'https://jsonfeed.org/version/1.1',
+        'title'         => SITE_NAME,
+        'home_page_url' => $base,
+        'feed_url'      => url_feed(),
+        'description'   => SITE_DESCRIPTION,
+        'language'      => SITE_LANGUAGE,
+        'favicon'       => $base . 'assets/img/favicon.ico',
+        'icon'          => $base . 'assets/img/apple-touch-icon.png',
+    ];
+    if (PUBLISHER_NAME !== '') {
+        $author = ['name' => PUBLISHER_NAME];
+        if (PUBLISHER_URL !== '') {
+            $author['url'] = PUBLISHER_URL;
+        }
+        $feed['authors'] = [$author];
+    }
+    // Custom extension. Member names carry no leading underscore and no period,
+    // per the JSON Feed extension rules. This is where feed.json points back at
+    // llms.txt, closing the bidirectional loop, and lists the other
+    // machine-readable resources.
+    $feed['_folio'] = [
+        'host'             => (string) parse_url(BASE_URL, PHP_URL_HOST),
+        'sitename'         => SITE_NAME,
+        'mode'             => 'standalone',
+        'llms'             => url_llms(),
+        'sitemap'          => PRETTY_URLS ? $base . 'sitemap.xml' : BASE_URL . '?action=sitemap',
+        'additionalsitemaps' => [url_sitemap_pdf(), url_sitemap_categories()],
+    ];
+    $feed['items'] = $items;
+
+    echo json_encode($feed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     if (!LLMS_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
@@ -8006,6 +8115,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         $out .= "\n";
     }
     $out .= "## Machine-readable\n\n"
+          . '- [Machine-readable JSON Feed](' . url_feed()
+          . "): standards-compliant JSON Feed v1.1 for this library.\n"
           . '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
           . "): every page in the library.\n"
           . '- [Document sitemap](' . url_sitemap_pdf()
@@ -8542,6 +8653,7 @@ if (isset($_GET['cat'])) {
 <title><?= e($cat_name) ?> &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="description" content="<?= e($cat_desc) ?>">
 <link rel="canonical" href="<?= e($cat_url) ?>">
+<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
@@ -8754,6 +8866,7 @@ if (isset($_GET['view'])) {
 <title><?= e($head_title) ?></title>
 <meta name="description" content="<?= e($meta_desc) ?>">
 <link rel="canonical" href="<?= e($view) ?>">
+<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="<?= $kind === 'image' ? 'website' : 'article' ?>">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
@@ -9107,6 +9220,7 @@ $listing_ld = [
 <title><?= e($page_title) ?></title>
 <meta name="description" content="<?= e($rel_dir === '' ? SITE_DESCRIPTION : basename($rel_dir) . ': documents and images in ' . SITE_NAME) ?>">
 <link rel="canonical" href="<?= e($page_url($page_no)) ?>">
+<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <?php if ($paginated && $page_no > 1): ?><link rel="prev" href="<?= e($page_url($page_no - 1)) ?>"><?php endif; ?>
 <?php if ($paginated && $page_no < $page_count): ?><link rel="next" href="<?= e($page_url($page_no + 1)) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">

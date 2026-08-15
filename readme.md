@@ -332,6 +332,11 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   crawlers at `/llms.txt` (or `?action=llms`), built live from your titles,
   descriptions, and categories, with an optional introduction paragraph you
   write on this screen. Toggle it off to return 404. It also returns 404 while the whole site is non-indexable.
+* **feed.json.** A JSON Feed v1.1 at `/feed.json` (or `?action=feed_json`)
+  listing recent documents, for feed readers and AI agents. It cross-references
+  llms.txt in both directions: the feed points at llms.txt through its `_folio`
+  extension, and llms.txt links back to the feed. Every page advertises it with
+  a `rel="alternate"` link.
 * **robots.txt generator.** The screen shows a robots.txt reflecting the
   settings above, ready to copy into the file at your domain root. Folio never
   writes outside its own folder, so that final step stays manual by design.
@@ -734,8 +739,10 @@ Folio publishes two sitemaps:
 
 | Sitemap | Lists |
 | --- | --- |
-| `/sitemap.xml` | Record pages, categories, and standalone pages |
+| `/sitemap.xml` | Record pages and standalone pages |
 | `/sitemap-pdf.xml` | The PDF files themselves |
+| `/sitemap-categories.xml` | The category archive pages |
+| `/feed.json` | JSON Feed v1.1 of recent documents |
 
 The second matters for a document library. Search engines index PDFs as pages
 in their own right, so a scanned certificate can be found directly rather than
@@ -1070,4 +1077,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.26.2. Single-file application with separated CSS and JS assets.
+1.27.0. Single-file application with separated CSS and JS assets.

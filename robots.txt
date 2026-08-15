@@ -114,3 +114,7 @@ Sitemap: https://example.com/documents/sitemap.xml
 # rather than only the page describing it. Restricted and excluded files are
 # left out automatically.
 Sitemap: https://example.com/documents/sitemap-pdf.xml
+
+# The category archive pages, in their own sitemap so it never duplicates the
+# main one. Each category gathers documents from across the whole library.
+Sitemap: https://example.com/documents/sitemap-categories.xml

@@ -82,6 +82,19 @@ documents, titles, categories, tags, accounts, and settings carry across as
 they are. Where a specific release does migrate something — such as the
 metadata store's move to `document_id` keys — its own section below says so.
 
+## Upgrading to 1.27.0
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.
+There is no required manual step.
+
+New in this release: a JSON Feed at `/feed.json`. It works through the existing
+catch-all, so it needs no configuration. The root `.htaccess` gained one
+optional line, an explicit rewrite for `feed.json`, grouped with the sitemap
+rules; replacing the root `.htaccess` is optional because the catch-all already
+routes that address. This release also finishes announcing the category sitemap
+in the static `robots.txt`, so if you keep a copy of it at your domain root,
+copy the new `Sitemap:` line across.
+
 ## Upgrading to 1.26.2
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`,
