@@ -89,8 +89,18 @@ chmod 600 "${APP}/config.php"
 # Folio actually controls.
 cat > "${APP}/data/settings.php" <<'PHP'
 <?php
-return ['PDF_GATE_CONFIRMED' => true];
+return ['PDF_GATE_CONFIRMED' => true, 'VIDEO_GATE_CONFIRMED' => true];
 PHP
+
+# Video access control is on when the guard file exists. php -S has no
+# .htaccess layer, so the Apache-level refusal of direct video is not
+# something this harness can exercise (that is verified under real Apache);
+# the guard flag here lets the tests verify the PHP-level gate in ?action=raw,
+# which is the enforcement Folio itself performs.
+printf '1\n' > "${APP}/data/.video-guard"
+head -c 2048 /dev/urandom > "${APP}/uploads/pubclip.mp4"
+head -c 2048 /dev/urandom > "${APP}/uploads/viewclip.mp4"
+head -c 2048 /dev/urandom > "${APP}/uploads/hideclip.mp4"
 
 printf '%%PDF-1.4\n' > "${APP}/uploads/foo.pdf"
 printf '%%PDF-1.4\n' > "${APP}/uploads/Foo!.pdf"
@@ -247,6 +257,83 @@ TAMPERED_URL="$(sed -E 's/(token=)[0-9a-f]{64}/\10000000000000000000000000000000
 EXPIRED_URL="$(sed -E 's/expires=[0-9]+/expires=1/' <<<"${SIGNED_URL}")"
 [[ "$(status_code "${EXPIRED_URL}")" == '404' ]] || fail 'expired signed viewer URL was accepted'
 pass 'viewer pdf_access requires a valid, unexpired signature'
+
+# FOLIO-VIDEO-001: with the guard on and confirmed, video_access is enforced by
+# the ?action=raw gate. "hidden" is admin-only, "viewer" needs a valid signed
+# URL, "public" streams. The Apache-level refusal of the direct file is verified
+# separately under real Apache; here we exercise the PHP gate Folio performs.
+curl -sS -b "${COOKIE}" --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
+    --data-urlencode 'file=hideclip.mp4' --data-urlencode 'video_access=hidden' "${BASE}" >/dev/null
+curl -sS -b "${COOKIE}" --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
+    --data-urlencode 'file=viewclip.mp4' --data-urlencode 'video_access=viewer' "${BASE}" >/dev/null
+curl -sS -b "${COOKIE}" --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
+    --data-urlencode 'file=pubclip.mp4' --data-urlencode 'video_access=public' "${BASE}" >/dev/null
+
+# hidden: refused to the public, served to the admin.
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=hideclip.mp4")" == '404' ]] \
+    || fail 'hidden video was reachable by the public via ?action=raw'
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' -b "${COOKIE}" "${BASE}?action=raw&serve=1&file=hideclip.mp4")" == '200' ]] \
+    || fail 'hidden video was not reachable by the admin'
+
+# viewer: refused without a valid signature, served with one.
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=viewclip.mp4")" == '404' ]] \
+    || fail 'viewer video was reachable without a signed URL'
+V_EXP="$(( $(date +%s) + 900 ))"
+V_TOK="$(printf '%s' "viewclip.mp4|${V_EXP}" \
+    | openssl dgst -sha256 -hmac 'smoke-test-signing-key-do-not-use-in-production' -r | cut -d' ' -f1)"
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=viewclip.mp4&expires=${V_EXP}&token=${V_TOK}")" == '200' ]] \
+    || fail 'viewer video was not served for a valid signed URL'
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=viewclip.mp4&expires=${V_EXP}&token=deadbeef")" == '404' ]] \
+    || fail 'viewer video accepted a forged token'
+
+# public: streamed, and range-aware.
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=pubclip.mp4")" == '200' ]] \
+    || fail 'public video was not served'
+PUB_RANGE="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-99' "${BASE}?action=raw&serve=1&file=pubclip.mp4")"
+[[ "${PUB_RANGE}" == '206' ]] || fail "public video did not honour a range request (got ${PUB_RANGE})"
+pass 'video_access gate: hidden admin-only, viewer signed, public streams with range'
+
+# FOLIO-VIDEO-002: a hidden video is kept off every public surface — the
+# sitemap, the JSON feed, and the public listing — while an admin still sees it.
+curl -sS "${BASE}?action=sitemap" -o "${TMP}/vid-sitemap.xml"
+! grep -Fq 'hideclip' "${TMP}/vid-sitemap.xml" || fail 'hidden video appears in the sitemap'
+curl -sS "${BASE}?action=feed_json" -o "${TMP}/vid-feed.json"
+! grep -Fq 'hideclip' "${TMP}/vid-feed.json" || fail 'hidden video appears in the JSON feed'
+curl -sS "${BASE}?dir=" -o "${TMP}/vid-listing-anon.html"
+! grep -Fq 'hideclip' "${TMP}/vid-listing-anon.html" || fail 'hidden video appears in the public listing'
+curl -sS -b "${COOKIE}" "${BASE}?dir=" -o "${TMP}/vid-listing-admin.html"
+grep -Fq 'hideclip' "${TMP}/vid-listing-admin.html" || fail 'admin cannot see the hidden video in the listing'
+pass 'hidden video is absent from sitemap, feed, and public listing but visible to admin'
+
+
+# FOLIO-VIDEO-003: video-only descriptive metadata is accepted for video files
+# and ignored for every other media kind, even if an altered form submits it.
+META_RESPONSE="$(curl -sS -b "${COOKIE}" \
+    --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
+    --data-urlencode 'file=pubclip.mp4' --data-urlencode 'video_access=public' \
+    --data-urlencode 'video_type=interview' --data-urlencode 'video_creator=Test Presenter' \
+    --data-urlencode 'video_series=Smoke Series' --data-urlencode 'video_season=2' \
+    --data-urlencode 'video_episode=7' "${BASE}")"
+grep -Fq '"ok":true' <<<"${META_RESPONSE}" || fail 'video-specific metadata update failed'
+grep -Fq '"video_type": "interview"' "${APP}/data/metadata.json" || fail 'video_type was not stored for video'
+grep -Fq '"video_creator": "Test Presenter"' "${APP}/data/metadata.json" || fail 'video creator was not stored for video'
+META_RESPONSE="$(curl -sS -b "${COOKIE}" \
+    --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
+    --data-urlencode 'file=notes.txt' --data-urlencode 'title=Smoke Notes Revised' \
+    --data-urlencode 'video_type=interview' --data-urlencode 'video_creator=Must Not Persist' "${BASE}")"
+grep -Fq '"ok":true' <<<"${META_RESPONSE}" || fail 'non-video metadata update failed'
+! grep -Fq 'Must Not Persist' "${APP}/data/metadata.json" || fail 'video-only metadata leaked onto a non-video file'
+pass 'video-specific metadata is stored only for video files'
+
+# FOLIO-VIDEO-004: the dedicated video playlist is a public surface and must
+# inherit video_access. Hidden clips stay out; viewer clips use signed URLs.
+curl -sS "${BASE}?action=playlist&dir=&kind=video" -o "${TMP}/video-playlist.html"
+grep -Fq 'pubclip.mp4' "${TMP}/video-playlist.html" || fail 'public video is missing from video playlist'
+grep -Fq 'viewclip.mp4' "${TMP}/video-playlist.html" || fail 'viewer video is missing from video playlist'
+! grep -Fq 'hideclip.mp4' "${TMP}/video-playlist.html" || fail 'hidden video leaked into public video playlist'
+grep -Eq 'viewclip\.mp4[^\"]*expires=[0-9]+(&amp;|&)token=[0-9a-f]{64}' "${TMP}/video-playlist.html" \
+    || fail 'viewer video playlist URL is not signed'
+pass 'video playlist inherits video access control'
 
 # FOLIO-PDF-002: the sitemap, robots meta, and llms.txt must stay exactly as
 # indexable for restricted PDFs as for any other file — pdf_access must

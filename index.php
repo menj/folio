@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.27.1');
+define('FOLIO_VERSION', '1.28.0.1');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -161,6 +161,11 @@ defined('SHOW_ADMIN_LINK')      || define('SHOW_ADMIN_LINK', true);
  * anything. See pdf_access_enforced().
  */
 defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
+/* Whether the video-access preflight has confirmed that the webserver refuses
+   direct HTTP access to video while the guard is on. Fail-closed: until this is
+   confirmed, "viewer"/"hidden" video is not shown to the public. See
+   video_access_enforced(). */
+defined('VIDEO_GATE_CONFIRMED') || define('VIDEO_GATE_CONFIRMED', false);
 /* Rows per page in a folder listing. A folder below this renders whole, and
    behaves exactly as it always has: sorting, filtering and search all happen
    in the browser, instantly. Above it the listing is paginated and sorting
@@ -947,6 +952,33 @@ function pdf_gate_ensure_probe_file(): bool
     ) !== false;
 }
 
+/** Path of the video-gate preflight probe file inside uploads/. */
+function video_gate_probe_path(): string
+{
+    return rtrim(BASE_DIR, '/\\') . DIRECTORY_SEPARATOR . FOLIO_VIDEO_PROBE_NAME;
+}
+
+/**
+ * Create the tiny probe file if it doesn't already exist. Unlike the PDF probe,
+ * this one exists to be refused: while the guard is on, a direct request for it
+ * must come back 403, which is how the preflight proves the webserver honours
+ * the deny.
+ */
+function video_gate_ensure_probe_file(): bool
+{
+    $path = video_gate_probe_path();
+    if (is_file($path)) {
+        return true;
+    }
+    if (!is_dir(BASE_DIR) && !@mkdir(BASE_DIR, 0750, true)) {
+        return false;
+    }
+    return @file_put_contents(
+        $path,
+        "Folio video-gate preflight probe file. Safe to delete; Folio recreates it as needed.\n"
+    ) !== false;
+}
+
 /** Normalise a stored pdf_access value, defaulting unknown/missing to public. */
 function pdf_access_of(array $m): string
 {
@@ -995,32 +1027,6 @@ function pdf_signed_url_valid(string $rel, int $expires, string $token): bool
 }
 
 /**
- * The URL to use for a file's actual bytes, aware of pdf_access.
- *
- * Returns '' for a PDF whose access is "hidden" and is currently enforced —
- * callers must treat an empty string as "do not render any link or embed
- * for this file," not fall back to a raw filename guess.
- *
- * Every other case, including any PDF when enforcement is not confirmed,
- * behaves exactly as url_raw() always has.
- */
-function url_raw_effective(string $rel, array $m): string
-{
-    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
-    if ($ext !== 'pdf' || !pdf_access_enforced()) {
-        return url_raw($rel);
-    }
-    $access = pdf_access_of($m);
-    if ($access === 'hidden') {
-        return '';
-    }
-    if ($access === 'viewer') {
-        return pdf_signed_url($rel);
-    }
-    return url_raw($rel);
-}
-
-/**
  * Whether the full set of "public" affordances — direct link, flip-view
  * download, print — should be offered for this file. False for any PDF
  * currently restricted to "viewer" or "hidden"; true for everything else,
@@ -1033,6 +1039,201 @@ function pdf_full_access(string $rel, array $m): bool
         return true;
     }
     return pdf_access_of($m) === 'public';
+}
+
+define('FOLIO_VIDEO_PROBE_NAME', '.folio-video-probe.mp4');
+
+/**
+ * Video access control, mirroring pdf_access but fail-closed.
+ *
+ * The guard is a single small file in data/. Its presence is what makes the
+ * shipped uploads/.htaccess refuse direct HTTP access to video, so the only
+ * route to a video's bytes becomes ?action=raw, where each file's access level
+ * is checked. Folio writes only this flag; it never rewrites .htaccess.
+ */
+function video_guard_path(): string
+{
+    return dirname(SETTINGS_FILE) . DIRECTORY_SEPARATOR . '.video-guard';
+}
+
+/** Whether video access control is switched on (the guard file exists). */
+function video_guard_active(): bool
+{
+    return is_file(video_guard_path());
+}
+
+/** Create or remove the guard file. */
+/** Path of the uploads .htaccess whose managed block refuses direct video. */
+function video_htaccess_path(): string
+{
+    return BASE_DIR . DIRECTORY_SEPARATOR . '.htaccess';
+}
+
+/**
+ * Fill or clear the Folio-managed block in uploads/.htaccess. On fills the block
+ * with a rule refusing direct HTTP access to video (Require all denied, plus the
+ * 2.2 fallback), which needs no path resolution and works at any folder depth;
+ * off empties it. Returns false if the file or its markers are missing, so the
+ * caller can refuse to enable enforcement rather than believe a refusal that was
+ * never written.
+ */
+function video_htaccess_block(bool $on): bool
+{
+    $path = video_htaccess_path();
+    $begin = '# BEGIN Folio video access control';
+    $end   = '# END Folio video access control';
+    $current = @file_get_contents($path);
+    if ($current === false
+        || strpos($current, $begin) === false
+        || strpos($current, $end) === false) {
+        return false;
+    }
+    $rule = $on
+        ? "\n<FilesMatch \"(?i)\\.(mp4|m4v|webm|ogv|mov)\$\">\n"
+            . "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n"
+            . "<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n"
+            . "</FilesMatch>\n"
+        : "\n";
+    $pattern = '/' . preg_quote($begin, '/') . '.*?' . preg_quote($end, '/') . '/s';
+    $replaced = preg_replace($pattern, $begin . $rule . $end, $current, 1);
+    if ($replaced === null) {
+        return false;
+    }
+    return atomic_replace_file($path, $replaced, 0644);
+}
+
+function video_guard_write(bool $on): bool
+{
+    $p = video_guard_path();
+    if ($on) {
+        // The webserver refusal is what actually protects the file, so write it
+        // first and refuse to enable if it cannot be written: never leave the
+        // guard flag set while direct access is still open.
+        if (!video_htaccess_block(true)) {
+            return false;
+        }
+        $dir = dirname($p);
+        if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+            return false;
+        }
+        return @file_put_contents($p, "Video access control is on. Managed by Folio.\n") !== false;
+    }
+    // Clearing: drop the flag first (so nothing reads as enforced), then empty
+    // the block. Both are attempted; report success only if both land.
+    $flag_ok = !is_file($p) || @unlink($p);
+    $block_ok = video_htaccess_block(false);
+    return $flag_ok && $block_ok;
+}
+
+/** Normalise a stored video_access value, defaulting unknown/missing to public. */
+function video_access_of(array $m): string
+{
+    $v = (string) ($m['video_access'] ?? 'public');
+    return in_array($v, ['public', 'viewer', 'hidden'], true) ? $v : 'public';
+}
+
+/**
+ * Whether "viewer"/"hidden" video can actually be enforced right now. All three
+ * must hold, or non-public video is not shown to the public at all (fail-closed,
+ * unlike PDFs which fall back to public):
+ *   1. The guard is on.
+ *   2. A signing key is configured, so signed URLs are not forgeable.
+ *   3. The preflight confirmed the webserver refuses direct video access.
+ */
+function video_access_enforced(): bool
+{
+    return video_guard_active() && FOLIO_URL_SIGNING_KEY !== '' && !empty(VIDEO_GATE_CONFIRMED);
+}
+
+/** The application URL for a video's bytes (Apache refuses the direct file while the guard is on). */
+function video_raw_url(string $rel): string
+{
+    return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel);
+}
+
+/**
+ * The URL to use for a file's actual bytes, aware of both pdf_access and video
+ * access. Returns '' when nothing should be linked or embedded for this file in
+ * the current context — callers must treat '' as "render no link," never fall
+ * back to a filename guess.
+ */
+function url_raw_effective(string $rel, array $m): string
+{
+    $ext  = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+
+    if ($ext === 'pdf') {
+        if (!pdf_access_enforced()) {
+            return url_raw($rel);
+        }
+        $access = pdf_access_of($m);
+        if ($access === 'hidden') {
+            return '';
+        }
+        if ($access === 'viewer') {
+            return pdf_signed_url($rel);
+        }
+        return url_raw($rel);
+    }
+
+    if (file_kind($ext) === 'video' && video_guard_active()) {
+        $access = video_access_of($m);
+        if ($access === 'public') {
+            return video_raw_url($rel);
+        }
+        // Non-public video. An admin always gets a working URL. The public gets
+        // one only when enforcement is confirmed: a signed, expiring URL for
+        // "viewer", and nothing at all for "hidden". Until the preflight
+        // confirms the webserver refuses the direct file, the public gets
+        // nothing either way — the file is not exposed while unverified.
+        if (is_admin()) {
+            return video_raw_url($rel);
+        }
+        if ($access === 'viewer' && video_access_enforced()) {
+            return pdf_signed_url($rel);
+        }
+        return '';
+    }
+
+    return url_raw($rel);
+}
+
+/**
+ * Whether the download / direct-link affordances should be offered for this
+ * file. False for restricted PDFs and, while the guard is on, for non-public
+ * video; true for everything else.
+ */
+function media_full_access(string $rel, array $m): bool
+{
+    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+    if ($ext === 'pdf') {
+        return pdf_full_access($rel, $m);
+    }
+    if (file_kind($ext) === 'video' && video_guard_active()) {
+        return video_access_of($m) === 'public';
+    }
+    return true;
+}
+
+/**
+ * Whether this file may appear on public surfaces (listing to the public,
+ * sitemaps, feed). False for a "hidden" video while the guard is on, and for a
+ * "viewer" video whose enforcement is not yet confirmed. PDFs keep their own
+ * rules elsewhere.
+ */
+function video_public_visible(string $rel, array $m): bool
+{
+    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+    if (file_kind($ext) !== 'video' || !video_guard_active()) {
+        return true;
+    }
+    $access = video_access_of($m);
+    if ($access === 'public') {
+        return true;
+    }
+    if ($access === 'viewer') {
+        return video_access_enforced();
+    }
+    return false; // hidden
 }
 
 /** The sitemap listing the PDF files themselves. */
@@ -1141,10 +1342,11 @@ function url_flipbook(string $rel): string
     return BASE_URL . '?action=flipbook&file=' . rawurlencode($rel);
 }
 
-/** URL of the dedicated playlist page for an audio folder. Query-string only. */
-function url_playlist(string $rel): string
+/** URL of the dedicated playlist page for an audio or video folder. */
+function url_playlist(string $rel, string $kind = 'audio'): string
 {
-    return BASE_URL . '?action=playlist&dir=' . rawurlencode($rel);
+    $url = BASE_URL . '?action=playlist&dir=' . rawurlencode($rel);
+    return $kind === 'video' ? $url . '&kind=video' : $url;
 }
 
 function url_render(string $rel): string
@@ -1472,6 +1674,22 @@ function is_excluded(string $name, string $rel): bool
  * an item physically/editorially is, category describes its subject area.
  * Keys are what gets stored; values are the admin-facing labels.
  */
+function video_types(): array
+{
+    return [
+        'clip'         => 'Clip',
+        'interview'    => 'Interview',
+        'lecture'      => 'Lecture',
+        'presentation' => 'Presentation',
+        'tutorial'     => 'Tutorial',
+        'documentary'  => 'Documentary',
+        'episode'      => 'Episode',
+        'recording'    => 'Recording',
+        'trailer'      => 'Trailer',
+        'other'        => 'Other',
+    ];
+}
+
 function document_types(): array
 {
     return [
@@ -4402,24 +4620,29 @@ function file_kind(string $ext): string
 }
 
 /**
- * The audio files that share a folder with $rel, in listing order, as a queue
- * for the playlist feature. Each entry is [url, title, view, current].
- *
- * Folder-scoped on purpose: a folder is Folio's unit, so the queue is simply
- * "the audio in this folder" with no playlist entity to store. Returns fewer
- * than two entries when a queue would be pointless; callers skip it then.
+ * Media files of one kind that share a folder with $rel, in listing order.
+ * Audio and video use the same queue model and player controls.
  */
-function audio_playlist_for(string $rel): array
+function media_playlist_for(string $rel, string $kind): array
 {
     global $mime_map;
+    if (!in_array($kind, ['audio', 'video'], true)) {
+        return [];
+    }
     $dir = str_replace('\\', '/', dirname($rel));
     if ($dir === '.' || $dir === '/') {
         $dir = '';
     }
     $queue = [];
     foreach (index_all_files($mime_map ?? []) as $f) {
-        if (($f['dir'] ?? null) !== $dir || ($f['kind'] ?? '') !== 'audio') {
+        if (($f['dir'] ?? null) !== $dir || ($f['kind'] ?? '') !== $kind) {
             continue;
+        }
+        if ($kind === 'video') {
+            $m = meta_load()[$f['rel'] ?? ''] ?? [];
+            if (!is_admin() && !video_public_visible((string) ($f['rel'] ?? ''), $m)) {
+                continue;
+            }
         }
         $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
         $title = ($f['title'] ?? '') !== ''
@@ -4433,6 +4656,16 @@ function audio_playlist_for(string $rel): array
         ];
     }
     return count($queue) >= 2 ? $queue : [];
+}
+
+function audio_playlist_for(string $rel): array
+{
+    return media_playlist_for($rel, 'audio');
+}
+
+function video_playlist_for(string $rel): array
+{
+    return media_playlist_for($rel, 'video');
 }
 
 /**
@@ -4689,10 +4922,11 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     $type  = $document_type !== '' ? document_type_schema_type($document_type) : schema_type($ext);
     $view  = url_view($rel);
     $raw   = url_raw_effective($rel, $m);
-    // A restricted PDF's URL is never permanent metadata: viewer's signed
-    // link expires, and hidden has none at all. contentUrl/associatedMedia/
-    // potentialAction/DownloadAction only ever describe a public file.
-    $show_pdf_url = pdf_full_access($rel, $m);
+    // A restricted PDF's or video's URL is never permanent metadata: viewer's
+    // signed link expires, and hidden has none at all. contentUrl/
+    // associatedMedia/potentialAction/DownloadAction only ever describe a
+    // public file.
+    $show_pdf_url = media_full_access($rel, $m);
     $mtime = (int) filemtime($abs);
     $bytes = (int) filesize($abs);
     $language = (string) ($m['language'] ?? '');
@@ -4771,6 +5005,29 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
             'name' => 'Transcription',
             'value' => 'Available on the document page',
         ];
+    }
+    if ($type === 'VideoObject') {
+        $video_type = (string) ($m['video_type'] ?? '');
+        $video_series = trim((string) ($m['video_series'] ?? ''));
+        $video_creator = trim((string) ($m['video_creator'] ?? ''));
+        $video_season = trim((string) ($m['video_season'] ?? ''));
+        $video_episode = trim((string) ($m['video_episode'] ?? ''));
+        if ($video_type !== '') {
+            $node['genre'] = video_types()[$video_type] ?? $video_type;
+            $node['additionalType'] = 'Video ' . (video_types()[$video_type] ?? $video_type);
+        }
+        if ($video_creator !== '') {
+            $node['creator'] = ['@type' => 'Person', 'name' => $video_creator];
+        }
+        if ($video_series !== '') {
+            $node['isPartOf'] = ['@type' => 'CreativeWorkSeries', 'name' => $video_series];
+        }
+        if ($video_season !== '') {
+            $node['additionalProperty'][] = ['@type' => 'PropertyValue', 'name' => 'Season', 'value' => $video_season];
+        }
+        if ($video_episode !== '') {
+            $node['additionalProperty'][] = ['@type' => 'PropertyValue', 'name' => 'Episode', 'value' => $video_episode];
+        }
     }
     if ($type === 'ImageObject') {
         $node['thumbnailUrl'] = $raw;
@@ -4908,6 +5165,11 @@ function index_all_files(array $mime_map): array
                 'seo_title' => $m['seo_title'] ?? '',
                 'seo_desc' => $m['seo_desc'] ?? '',
                 'language' => $m['language'] ?? '',
+                'video_type' => $m['video_type'] ?? '',
+                'video_series' => $m['video_series'] ?? '',
+                'video_creator' => $m['video_creator'] ?? '',
+                'video_season' => $m['video_season'] ?? '',
+                'video_episode' => $m['video_episode'] ?? '',
                 'pdf_access' => $pdf_access,
                 // Deliberately not the transcript text itself here — this
                 // index is loaded in bulk for the sitemap and category
@@ -5199,6 +5461,61 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 }
                 $error = 'Could not save. Check that data/ is writable.';
 
+            } elseif ($op === 'confirm_video_gate') {
+                if (FOLIO_URL_SIGNING_KEY === '') {
+                    $error = 'Set FOLIO_URL_SIGNING_KEY in config.php before enabling video access control.';
+                } elseif (!video_guard_write(true)) {
+                    $error = 'Could not switch it on. Check that ' . e(UPLOADS_DIRNAME)
+                        . '/.htaccess exists with its Folio markers and is writable, and that data/ is writable.';
+                } elseif (!video_gate_ensure_probe_file()) {
+                    $error = 'Could not create the probe file. Check that ' . e(UPLOADS_DIRNAME) . '/ is writable.';
+                } else {
+                    // The guard is now on. Prove the webserver actually refuses a
+                    // direct request for video by asking for the probe file and
+                    // expecting 403. This is an anonymous request on purpose: the
+                    // public is who must be refused.
+                    $probe_url = rtrim(BASE_URL, '/') . '/' . rawurlencode(UPLOADS_DIRNAME) . '/' . FOLIO_VIDEO_PROBE_NAME;
+                    $ctx = stream_context_create(['http' => [
+                        'method' => 'GET',
+                        'timeout' => 8,
+                        'ignore_errors' => true,
+                    ]]);
+                    $result = @file_get_contents($probe_url, false, $ctx);
+                    $status = 0;
+                    if (isset($http_response_header) && isset($http_response_header[0])
+                        && preg_match('#\s(\d{3})\s#', $http_response_header[0], $mm)) {
+                        $status = (int) $mm[1];
+                    }
+                    $server_forbidden = $status === 403;
+                    $client_forbidden = (string) ($_POST['probe_result'] ?? '') === 'forbidden';
+
+                    if ($server_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed');
+                        exit;
+                    } elseif ($result === false && $client_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed_unverified');
+                        exit;
+                    } else {
+                        // Switched on but not verified. Fail closed: the guard
+                        // stays on, so non-public video is hidden from the public
+                        // rather than served, and this stays unconfirmed.
+                        settings_store(['VIDEO_GATE_CONFIRMED' => false]);
+                        $error = 'Video access control is switched on, but this server did not refuse a '
+                            . 'direct request for a video (it answered '
+                            . ($status ? (string) $status : 'no response')
+                            . ', not 403). Until it does, non-public video is hidden from the public rather '
+                            . 'than served. Check that AllowOverride lets the ' . e(UPLOADS_DIRNAME)
+                            . '/.htaccess rules run on your server, then test again.';
+                    }
+                }
+
+            } elseif ($op === 'disable_video_gate') {
+                if (video_guard_write(false) && settings_store(['VIDEO_GATE_CONFIRMED' => false])) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
+                    exit;
+                }
+                $error = 'Could not switch it off. Check that ' . e(UPLOADS_DIRNAME) . '/.htaccess and data/ are writable.';
+
             } else {
                 $intro = trim((string) ($_POST['llms_intro'] ?? ''));
                 if (strlen($intro) > 1000) {
@@ -5227,6 +5544,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             $notice = 'Confirmed: PDF requests reach the raw action on this server. "Viewer" and "hidden" pdf_access are now enforced.';
         } elseif (($_GET['pdfgate'] ?? '') === 'confirmed_unverified') {
             $notice = 'Enabled based on your browser\'s successful test — this server could not reach its own public URL to verify independently (outbound HTTP may be blocked here). "Viewer" and "hidden" pdf_access are now enforced.';
+        } elseif (($_GET['videogate'] ?? '') === 'confirmed') {
+            $notice = 'Confirmed: this server refuses direct access to video. "Viewer" and "hidden" video access are now enforced.';
+        } elseif (($_GET['videogate'] ?? '') === 'confirmed_unverified') {
+            $notice = 'Enabled based on your browser\'s test showing a refused direct video request — this server could not reach its own public URL to verify independently. "Viewer" and "hidden" video access are now enforced.';
         }
     }
 
@@ -5408,6 +5729,59 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 <input type="hidden" name="probe_result" value="">
                 <div><button type="submit" class="btn">Confirm and enforce</button></div>
             </form>
+        </div>
+    <?php endif; ?>
+
+    <h2 class="detail-title">Video access control</h2>
+    <p class="detail-desc">
+        Video with <code>video_access</code> set to <strong>Viewer</strong> (plays, no download) or
+        <strong>Hidden</strong> (admin only) in the inline editor is only restricted once this is switched on and
+        confirmed. Unlike PDFs, video fails <strong>closed</strong>: while this is on but unconfirmed, non-public video
+        is hidden from the public rather than served. Switching it on has Folio fill a managed block in
+        <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> that refuses direct access to video, so the only route to a
+        clip's bytes is through Folio, which checks each file's access level. Public-only libraries can leave this off
+        and keep the webserver serving video directly.
+    </p>
+    <?php if (FOLIO_URL_SIGNING_KEY === ''): ?>
+        <p class="msg msg-bad">
+            <code>FOLIO_URL_SIGNING_KEY</code> is not set in <code>config.php</code>, so video access
+            control cannot be enforced yet. The same key shown above for PDF access is used here.
+        </p>
+    <?php elseif (video_guard_active() && VIDEO_GATE_CONFIRMED): ?>
+        <p class="field-note">Video access control is <strong>confirmed and enforced</strong>.</p>
+        <form method="post" class="stack-form">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="disable_video_gate">
+            <div><button type="submit" class="btn btn-ghost">Switch off</button></div>
+        </form>
+        <p class="field-note">Switching off empties the managed <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> block, so video is served directly again, without touching any file's stored <code>video_access</code> value.</p>
+    <?php elseif (video_guard_active()): ?>
+        <p class="msg msg-bad">Video access control is <strong>switched on but not verified</strong>: this server did not refuse a direct video request when last tested, so non-public video is hidden from the public until it does. Fix <code>AllowOverride</code> so the <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> rules run, then test again.</p>
+        <div id="video-gate-preflight" data-probe="<?= e(rtrim(BASE_URL, '/')) ?>/<?= e(rawurlencode(UPLOADS_DIRNAME)) ?>/<?= e(FOLIO_VIDEO_PROBE_NAME) ?>">
+            <button type="button" class="btn" id="video-gate-test-btn">Test again</button>
+            <p class="field-note rewrite-result video-gate-result" id="video-gate-result"></p>
+            <form method="post" class="stack-form rewrite-enable-form video-gate-enable-form" id="video-gate-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="confirm_video_gate">
+                <input type="hidden" name="probe_result" value="">
+                <div><button type="submit" class="btn">Verify and enforce</button></div>
+            </form>
+        </div>
+        <form method="post" class="stack-form">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="disable_video_gate">
+            <div><button type="submit" class="btn btn-ghost">Switch off</button></div>
+        </form>
+    <?php else: ?>
+        <p class="field-note">Switching this on refuses direct access to video and routes it through Folio, then checks that the refusal works. Public-only libraries can leave it off.</p>
+        <div id="video-gate-preflight" data-probe="<?= e(rtrim(BASE_URL, '/')) ?>/<?= e(rawurlencode(UPLOADS_DIRNAME)) ?>/<?= e(FOLIO_VIDEO_PROBE_NAME) ?>">
+            <form method="post" class="stack-form video-gate-enable-form" id="video-gate-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="confirm_video_gate">
+                <input type="hidden" name="probe_result" value="">
+                <div><button type="submit" class="btn">Switch on and verify</button></div>
+            </form>
+            <p class="field-note video-gate-result" id="video-gate-result"></p>
         </div>
     <?php endif; ?>
 
@@ -5770,7 +6144,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
 
         <label class="check-row">
             <input type="checkbox" name="audio_playlist" value="1" <?= $cur['audio_playlist'] ? 'checked' : '' ?>>
-            Play a folder's audio as a playlist, with a queue and auto-advance
+            Play a folder's audio or video as a playlist, with a queue and auto-advance
         </label>
 
         <div><button type="submit" class="btn">Save settings</button></div>
@@ -7421,11 +7795,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'flipbook') {
 }
 
 /* ------------------------------------------------------------------ */
-/* Dedicated playlist page: one player and a folder's audio queue.      */
+/* Dedicated playlist page: one player and a folder's media queue.      */
 /* Reached by "Play all" on an audio folder; never on a document page.  */
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
     if (!AUDIO_PLAYLIST) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $playlist_kind = (string) ($_GET['kind'] ?? 'audio');
+    if (!in_array($playlist_kind, ['audio', 'video'], true)) {
         http_response_code(404);
         exit('Not found');
     }
@@ -7438,8 +7817,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
 
     $queue = [];
     foreach (index_all_files($mime_map) as $f) {
-        if (($f['dir'] ?? '') !== $rel_pl || ($f['kind'] ?? '') !== 'audio') {
+        if (($f['dir'] ?? '') !== $rel_pl || ($f['kind'] ?? '') !== $playlist_kind) {
             continue;
+        }
+        if ($playlist_kind === 'video') {
+            $m = meta_load()[$f['rel'] ?? ''] ?? [];
+            if (!is_admin() && !video_public_visible((string) ($f['rel'] ?? ''), $m)) {
+                continue;
+            }
         }
         $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
         $title = ($f['title'] ?? '') !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
@@ -7476,12 +7861,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
 </header>
 <main class="playlist-page" id="folio-main" tabindex="-1">
     <div class="playlist-wrap">
-        <p class="playlist-head"><?= e($pl_title) ?> <span class="playlist-count"><?= count($queue) ?> tracks</span></p>
-        <div class="folio-media fm-audio fm-standalone" data-media-kind="audio"
+        <p class="playlist-head"><?= e($pl_title) ?> <span class="playlist-count"><?= count($queue) ?> <?= $playlist_kind === 'video' ? 'videos' : 'tracks' ?></span></p>
+        <div class="folio-media fm-<?= e($playlist_kind) ?> fm-standalone" data-media-kind="<?= e($playlist_kind) ?>"
              data-playlist="<?= e($pl_json) ?>" data-playlist-index="0">
+            <?php if ($playlist_kind === 'video'): ?>
+            <video class="fm-el" controls playsinline preload="metadata" src="<?= e($queue[0]['url']) ?>">
+                <a href="<?= e($queue[0]['url']) ?>">Open video</a>
+            </video>
+            <?php else: ?>
             <audio class="fm-el" controls preload="metadata" src="<?= e($queue[0]['url']) ?>">
                 <a href="<?= e($queue[0]['url']) ?>">Download audio</a>
             </audio>
+            <?php endif; ?>
         </div>
     </div>
 </main>
@@ -7495,6 +7886,68 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
 /* ------------------------------------------------------------------ */
 /* Legacy file endpoint: redirect to the file's real location          */
 /* ------------------------------------------------------------------ */
+/**
+ * Stream a file's bytes with HTTP range support, so a client can seek and can
+ * begin playing before the whole file arrives. Falls back to a full 200 when no
+ * range is asked for. Reads in chunks so a large video never loads into memory.
+ * $disposition is 'inline' or 'attachment'.
+ */
+function stream_file_bytes(string $abs, string $mime, string $disposition = 'inline'): void
+{
+    $size = filesize($abs);
+    header('Content-Type: ' . $mime);
+    header('X-Content-Type-Options: nosniff');
+    header('Accept-Ranges: bytes');
+    header('Content-Disposition: ' . $disposition . '; filename="'
+        . str_replace(['"', "\r", "\n"], '', basename($abs)) . '"');
+
+    $start = 0;
+    $end   = $size - 1;
+    $range = $_SERVER['HTTP_RANGE'] ?? '';
+    if ($range !== '' && preg_match('/^bytes=(\d*)-(\d*)$/', $range, $m)) {
+        if ($m[1] === '' && $m[2] !== '') {
+            // Suffix range: the last N bytes.
+            $start = max(0, $size - (int) $m[2]);
+        } else {
+            $start = (int) $m[1];
+            $end   = $m[2] === '' ? $size - 1 : min((int) $m[2], $size - 1);
+        }
+        if ($start > $end || $start >= $size) {
+            header('Content-Range: bytes */' . $size);
+            http_response_code(416);
+            return;
+        }
+        http_response_code(206);
+        header('Content-Range: bytes ' . $start . '-' . $end . '/' . $size);
+    }
+
+    header('Content-Length: ' . (string) ($end - $start + 1));
+
+    $fh = @fopen($abs, 'rb');
+    if ($fh === false) {
+        http_response_code(500);
+        return;
+    }
+    if ($start > 0) {
+        fseek($fh, $start);
+    }
+    $remaining = $end - $start + 1;
+    $chunk = 262144; // 256 KiB
+    while ($remaining > 0 && !feof($fh)) {
+        $buf = fread($fh, (int) min($chunk, $remaining));
+        if ($buf === false) {
+            break;
+        }
+        echo $buf;
+        $remaining -= strlen($buf);
+        if (function_exists('ob_get_level') && ob_get_level() > 0) {
+            @ob_flush();
+        }
+        @flush();
+    }
+    fclose($fh);
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'raw') {
     // PDF-routing self-check probe. Lets the Crawlers screen confirm that
     // requests to a real uploads/*.pdf file actually reach this action on
@@ -7539,6 +7992,27 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
         }
     }
 
+    // Video access gate. The single enforcement point for video bytes, mirroring
+    // the PDF gate. Active whenever the guard is on. "hidden" is admin-only;
+    // "viewer" requires a valid signed, expiring URL (or an admin session);
+    // "public" is served. An admin is never blocked from their own library.
+    if (file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) === 'video' && video_guard_active()) {
+        $vaccess = video_access_of(meta_load()[$rel] ?? []);
+        if ($vaccess !== 'public' && !is_admin()) {
+            if ($vaccess === 'hidden') {
+                http_response_code(404);
+                exit('Not found');
+            }
+            // viewer
+            $expires = (int) ($_GET['expires'] ?? 0);
+            $token   = (string) ($_GET['token'] ?? '');
+            if (!video_access_enforced() || $token === '' || !pdf_signed_url_valid($rel, $expires, $token)) {
+                http_response_code(404);
+                exit('Not found');
+            }
+        }
+    }
+
     if (($_GET['serve'] ?? '') === '1') {
         // Fallback delivery for servers whose rewrite does not short-circuit
         // real files. Redirecting here would loop, so stream the bytes.
@@ -7563,6 +8037,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
         }
         if ($ext === 'svg') {
             header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        }
+        // Audio and video, when they reach this fallback, are streamed with
+        // range support so a client can seek and start before the whole file
+        // arrives. Everything else is delivered whole.
+        if (!$force_download && in_array(file_kind($ext), ['audio', 'video'], true)) {
+            stream_file_bytes($abs, $mime, 'inline');
+            exit;
         }
         readfile($abs);
         exit;
@@ -7715,10 +8196,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         if (!isset($mime_map[$f['ext']])) {
             continue;
         }
+        if (!video_public_visible((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
+            continue;
+        }
         $e  = "  <url>\n";
         $e .= '    <loc>' . htmlspecialchars($f['view'], ENT_XML1) . "</loc>\n";
         $e .= '    <lastmod>' . date('c', (int) $f['lastmod']) . "</lastmod>\n";
-        if (!in_array($f['ext'], ['pdf', 'txt', 'md'], true)) {
+        if (file_kind($f['ext']) === 'image' && $f['hotlink'] !== '') {
             $e .= "    <image:image>\n";
             $e .= '      <image:loc>' . htmlspecialchars($f['hotlink'], ENT_XML1) . "</image:loc>\n";
             if ($f['title'] !== '') {
@@ -7991,6 +8475,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'feed_json') {
     send_public_cache_headers(900);
 
     $all = index_all_files($mime_map);
+    // A "hidden" video, or an unverified "viewer" video, is not a public item.
+    $all = array_values(array_filter($all, static function ($f) {
+        return video_public_visible((string) ($f['rel'] ?? ''), meta_load()[$f['rel'] ?? ''] ?? []);
+    }));
     // Most recently changed first; a feed is a recent-items resource, so it
     // carries the newest documents rather than the whole library.
     usort($all, static fn($a, $b) => (int) ($b['lastmod'] ?? 0) <=> (int) ($a['lastmod'] ?? 0));
@@ -8417,6 +8905,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     $transcript = trim((string) ($_POST['transcript'] ?? ''));
     $language   = trim((string) ($_POST['language'] ?? ''));
     $doc_date   = str_clip(trim((string) ($_POST['doc_date'] ?? '')), 60);
+    $kind       = file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION)));
+
+    // Video-only descriptive metadata. Ignore these fields for every other
+    // media kind, including altered POST requests.
+    $video_type = '';
+    $video_series = '';
+    $video_creator = '';
+    $video_season = '';
+    $video_episode = '';
+    if ($kind === 'video') {
+        $video_type = strtolower(trim((string) ($_POST['video_type'] ?? '')));
+        if (!array_key_exists($video_type, video_types())) {
+            $video_type = '';
+        }
+        $video_series  = str_clip(trim((string) ($_POST['video_series'] ?? '')), 120);
+        $video_creator = str_clip(trim((string) ($_POST['video_creator'] ?? '')), 120);
+        $video_season  = str_clip(trim((string) ($_POST['video_season'] ?? '')), 20);
+        $video_episode = str_clip(trim((string) ($_POST['video_episode'] ?? '')), 20);
+    }
     /* Search-result title and description, kept apart from the ones shown on
        the page. A title that reads well above a document is often not the one
        that reads well in a result list, and a description written for a
@@ -8458,6 +8965,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         $pdf_access = 'public';
     }
 
+    $video_access = (string) ($_POST['video_access'] ?? 'public');
+    if (!in_array($video_access, ['public', 'viewer', 'hidden'], true)) {
+        $video_access = 'public';
+    }
+
     // Manual fallback preview for "hidden" PDFs when automatic blurring
     // is not available on this host: a redacted or
     // placeholder image the admin has already placed in uploads/, the same
@@ -8475,8 +8987,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $language, $placeholder_image,
-        $seo_title, $seo_desc
+        $rel, $title, $desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
+        $seo_title, $seo_desc, $video_type, $video_series, $video_creator, $video_season, $video_episode
     ): array {
         // Every field is checked here: a record is only cleared when the
         // administrator has genuinely emptied all of them. Omitting one would
@@ -8484,8 +8996,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         // cleared.
         if ($title === '' && $desc === '' && $cat === '' && !$tags
             && $document_type === '' && $doc_date === '' && $transcript === ''
-            && $pdf_access === 'public' && $language === ''
+            && $pdf_access === 'public' && $video_access === 'public' && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
+            && $video_type === '' && $video_series === '' && $video_creator === ''
+            && $video_season === '' && $video_episode === ''
         ) {
             $meta = meta_put_record($meta, $rel, null);
         } else {
@@ -8502,8 +9016,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'seo_desc' => $seo_desc,
                 'transcript' => $transcript,
                 'pdf_access' => $pdf_access,
+                'video_access' => $video_access,
                 'language' => $language,
                 'placeholder_image' => $placeholder_image,
+                'video_type' => $video_type,
+                'video_series' => $video_series,
+                'video_creator' => $video_creator,
+                'video_season' => $video_season,
+                'video_episode' => $video_episode,
                 'updated_at' => time(),
             ]);
         }
@@ -8805,6 +9325,15 @@ if (isset($_GET['view'])) {
     $size  = human_size((int) filesize($abs));
     $raw   = url_raw_effective($rel, $m);
     $pdf_full_access  = pdf_full_access($rel, $m);
+    $full_access      = media_full_access($rel, $m);
+    $video_guarded    = $kind === 'video' && video_guard_active();
+    $video_access     = $kind === 'video' ? video_access_of($m) : 'public';
+    // A guarded, non-public video for which this viewer gets no URL: show a
+    // restrained "restricted" panel instead of an empty, broken player.
+    $video_restricted = $video_guarded && $video_access !== 'public' && $raw === '';
+    // Admin viewing a non-public video whose protection is not yet verified: the
+    // webserver refusal is unconfirmed, so warn rather than imply it is safe.
+    $video_unverified = is_admin() && $video_guarded && $video_access !== 'public' && !video_access_enforced();
     $pdf_is_hidden    = $kind === 'pdf' && pdf_access_of($m) === 'hidden' && pdf_access_enforced();
     $hidden_preview_url = '';
     if ($pdf_is_hidden) {
@@ -8956,11 +9485,24 @@ if (isset($_GET['view'])) {
                     </audio>
                 </div>
             <?php elseif ($kind === 'video'): ?>
+                <?php if ($video_unverified): ?>
+                <p class="msg msg-bad">This video's access is set to
+                    <strong><?= e($video_access) ?></strong>, but access control is
+                    not verified on this server, so it is hidden from the public.
+                    Confirm video access control on the Crawlers screen to enforce
+                    it. You are seeing it because you are signed in.</p>
+                <?php endif; ?>
+                <?php if ($video_restricted): ?>
+                <div class="folio-media fm-video fm-restricted" aria-label="Restricted video">
+                    <p class="fm-restricted-note">This video is restricted.</p>
+                </div>
+                <?php else: ?>
                 <div class="folio-media fm-video" data-media-kind="video">
                     <video class="fm-el" controls playsinline preload="metadata" src="<?= e($raw) ?>">
-                        <a href="<?= e($raw) ?>">Download video</a>
+                        <?php if ($full_access): ?><a href="<?= e($raw) ?>">Download video</a><?php endif; ?>
                     </video>
                 </div>
+                <?php endif; ?>
             <?php elseif ($kind === 'md'): ?>
                 <div class="md-content"><?= render_markdown($abs) ?></div>
             <?php else: ?>
@@ -8970,8 +9512,8 @@ if (isset($_GET['view'])) {
         <p class="detail-actions">
             <?php if ($kind === 'pdf' && !$pdf_is_hidden): ?><a class="btn" href="<?= e(url_flipbook($rel)) ?>">Flip view</a><?php endif; ?>
             <?php if (in_array($kind, ['pdf', 'image', 'md'], true) && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
-            <?php if ($pdf_full_access): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
-            <?php if (in_array($kind, ['audio', 'video'], true)): ?><a class="btn btn-ghost" href="<?= e($raw) ?>" download>Download</a><?php endif; ?>
+            <?php if ($full_access && !$video_restricted): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
+            <?php if (in_array($kind, ['audio', 'video'], true) && $full_access && !$video_restricted): ?><a class="btn btn-ghost" href="<?= e($raw) ?>" download>Download</a><?php endif; ?>
         </p>
         <?php if ($transcript !== ''): ?>
         <section class="document-transcript">
@@ -9033,13 +9575,19 @@ foreach (scandir($abs_dir) as $entry) {
     } elseif (is_file($abs_entry)) {
         $ext = strtolower(pathinfo($entry, PATHINFO_EXTENSION));
         $m = $meta[$rel_entry] ?? [];
+        // A non-public video is kept out of the public listing entirely; an
+        // admin still sees the row so the file can be managed.
+        if (!is_admin() && !video_public_visible($rel_entry, $m)) {
+            continue;
+        }
         $pdf_access  = pdf_access_of($m);
         $full_access = pdf_full_access($rel_entry, $m);
         // A "hidden" PDF offers no preview affordance of any kind: the hover
         // card, the Preview button, and the listing hotlink must all have
-        // nothing real to point at.
+        // nothing real to point at. A guarded non-public video is the same.
         $previewable = isset($mime_map[$ext]) && $ext !== 'txt'
-            && !($ext === 'pdf' && $pdf_access === 'hidden' && pdf_access_enforced());
+            && !($ext === 'pdf' && $pdf_access === 'hidden' && pdf_access_enforced())
+            && !(file_kind($ext) === 'video' && video_guard_active() && video_access_of($m) !== 'public');
         $files[] = [
             'name' => $entry,
             'rel'  => $rel_entry,
@@ -9065,7 +9613,13 @@ foreach (scandir($abs_dir) as $entry) {
             'seo_desc' => $m['seo_desc'] ?? '',
             'transcript' => $m['transcript'] ?? '',
             'pdf_access' => $pdf_access,
+            'video_access' => video_access_of($m),
             'language' => $m['language'] ?? '',
+            'video_type' => $m['video_type'] ?? '',
+            'video_series' => $m['video_series'] ?? '',
+            'video_creator' => $m['video_creator'] ?? '',
+            'video_season' => $m['video_season'] ?? '',
+            'video_episode' => $m['video_episode'] ?? '',
             'placeholder_image' => $m['placeholder_image'] ?? '',
             'full_access' => $full_access,
             'hotlink' => $previewable ? url_raw_effective($rel_entry, $m) : '',
@@ -9324,10 +9878,16 @@ $listing_ld = [
         <?php endif; ?>
         <?php
         $folder_audio = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'audio');
-        if (AUDIO_PLAYLIST && count($folder_audio) >= 2):
+        $folder_video = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'video');
+        if (AUDIO_PLAYLIST && (count($folder_audio) >= 2 || count($folder_video) >= 2)):
         ?>
         <div class="listing-toolbar">
-            <a class="btn btn-play-all" href="<?= e(url_playlist($rel_dir)) ?>">&#9654;&nbsp; Play all <span class="play-all-count"><?= count($folder_audio) ?></span></a>
+            <?php if (count($folder_audio) >= 2): ?>
+            <a class="btn btn-play-all" href="<?= e(url_playlist($rel_dir, 'audio')) ?>">&#9654;&nbsp; Play audio <span class="play-all-count"><?= count($folder_audio) ?></span></a>
+            <?php endif; ?>
+            <?php if (count($folder_video) >= 2): ?>
+            <a class="btn btn-play-all" href="<?= e(url_playlist($rel_dir, 'video')) ?>">&#9654;&nbsp; Play videos <span class="play-all-count"><?= count($folder_video) ?></span></a>
+            <?php endif; ?>
         </div>
         <?php endif; ?>
         <table>
@@ -9501,6 +10061,34 @@ $listing_ld = [
                                 <p class="field-note">Not enforced yet on this server — behaves as Public until the PDF access preflight is confirmed on the Crawlers screen.</p>
                             <?php endif; ?>
                             <input type="text" name="placeholder_image" maxlength="255" placeholder="Placeholder image path for Hidden (e.g. redactions/cert-blur.jpg)" value="<?= e($f['placeholder_image']) ?>">
+                            <?php endif; ?>
+                            <?php if ($f['kind'] === 'video'): ?>
+                            <fieldset class="meta-video-fields">
+                                <legend>Video metadata</legend>
+                                <label class="meta-form-label">Video type
+                                    <select name="video_type">
+                                        <option value="">Select type</option>
+                                        <?php foreach (video_types() as $vt_value => $vt_label): ?>
+                                            <option value="<?= e($vt_value) ?>" <?= $f['video_type'] === $vt_value ? 'selected' : '' ?>><?= e($vt_label) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+                                <input type="text" name="video_creator" maxlength="120" placeholder="Creator / presenter" value="<?= e($f['video_creator']) ?>">
+                                <input type="text" name="video_series" maxlength="120" placeholder="Series / programme" value="<?= e($f['video_series']) ?>">
+                                <input type="text" name="video_season" maxlength="20" placeholder="Season" value="<?= e($f['video_season']) ?>">
+                                <input type="text" name="video_episode" maxlength="20" placeholder="Episode" value="<?= e($f['video_episode']) ?>">
+                            </fieldset>
+                            <label class="meta-form-label">
+                                Video access
+                                <select name="video_access">
+                                    <option value="public" <?= $f['video_access'] === 'public' ? 'selected' : '' ?>>Public — plays, direct link and download allowed</option>
+                                    <option value="viewer" <?= $f['video_access'] === 'viewer' ? 'selected' : '' ?>>Viewer only — plays, no direct link or download</option>
+                                    <option value="hidden" <?= $f['video_access'] === 'hidden' ? 'selected' : '' ?>>Hidden — admin only, not shown to the public</option>
+                                </select>
+                            </label>
+                            <?php if (!video_access_enforced() && $f['video_access'] !== 'public'): ?>
+                                <p class="field-note">Hidden from the public until video access control is confirmed on the Crawlers screen. Non-public video is never shown to the public while unverified.</p>
+                            <?php endif; ?>
                             <?php endif; ?>
                             <textarea name="transcript" maxlength="100000" placeholder="<?= $av ? 'Transcript of the recording' : 'Document transcription (corrected OCR or manual transcript)' ?>" rows="4"><?= e($f['transcript']) ?></textarea>
                             <div class="meta-form-actions">

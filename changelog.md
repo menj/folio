@@ -3,6 +3,34 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.28.0.1 — 15 August 2026
+
+### Added
+
+- **Video access control.** Video can now be set, per file, to Public (plays,
+  downloadable), Viewer only (plays, no download), or Hidden (admin only), the
+  same three levels PDFs already have. It is opt-in per library and off by
+  default: public-only libraries keep the webserver serving video directly. When
+  switched on under Crawlers, Folio fills a managed block in
+  `uploads/.htaccess` that refuses direct access to video, so the only route to
+  a clip's bytes is through Folio, which checks each file's access level and
+  streams with range support. Folio writes only that managed block and a small
+  flag in `data/`; it never rewrites the rest of your `.htaccess`.
+
+  Unlike PDFs, video fails **closed**: a preflight confirms the webserver
+  refuses direct video, and until it does, Hidden and Viewer video are
+  kept off every public surface rather than served. Hidden video is absent from
+  the listing, the sitemaps, and the JSON feed, and shows a restricted panel to
+  the public; an admin still sees it, with a warning while protection is
+  unverified. Viewer video plays from a signed, expiring URL with no download
+  affordance. Switching the feature off empties the managed block and returns
+  video to direct serving, without touching any file's stored access level.
+
+### Fixed
+
+- The image sitemap no longer lists audio or video files as images; it carries
+  only actual images, as it should have.
+
 ## 1.27.1 — 15 August 2026
 
 ### Fixed

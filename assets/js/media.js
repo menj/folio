@@ -395,7 +395,7 @@
                         var i = next++;
                         if (durCells[i].textContent) { pump(); return; }
                         busy = true;
-                        probe = document.createElement("audio");
+                        probe = document.createElement(el.tagName.toLowerCase() === "video" ? "video" : "audio");
                         probe.preload = "metadata";
                         probe.src = queue[i].url;
                         var done = function () {

@@ -158,6 +158,24 @@ body {
     cursor: pointer;
 }
 
+.fm-video.fm-restricted {
+    aspect-ratio: 16 / 9;
+    max-height: 40vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--leaf);
+    border: 1px solid var(--rule);
+}
+
+.fm-restricted-note {
+    margin: 0;
+    color: var(--muted);
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    letter-spacing: 0.02em;
+}
+
 .fm-audio .fm-el {
     height: 0;
 }

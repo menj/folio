@@ -107,6 +107,46 @@
         });
     }());
 
+    /* Video access-control preflight (Crawlers screen).
+       Fetches the video probe file directly and expects it to be REFUSED with
+       403, which proves the webserver honours the deny block Folio writes into
+       uploads/.htaccess. Anonymous on purpose: the public is who must be
+       refused. On success it flags probe_result=forbidden so the server can
+       enforce even where it cannot reach its own public URL. */
+    (function () {
+        var host = document.getElementById("video-gate-preflight");
+        if (!host) {
+            return;
+        }
+        var btn    = document.getElementById("video-gate-test-btn");
+        var result = document.getElementById("video-gate-result");
+        var form   = document.getElementById("video-gate-form");
+        if (!btn || !result || !form) {
+            return;
+        }
+        btn.addEventListener("click", function () {
+            result.textContent = "Testing…";
+            result.classList.remove("rewrite-ok", "rewrite-bad");
+            fetch(host.dataset.probe, { credentials: "omit", cache: "no-store" })
+                .then(function (r) {
+                    if (r.status === 403) {
+                        result.textContent = "The server refuses direct video access. Safe to verify and enforce.";
+                        result.classList.add("rewrite-ok");
+                        form.classList.add("is-visible");
+                        var input = form.querySelector('input[name="probe_result"]');
+                        if (input) { input.value = "forbidden"; }
+                    } else {
+                        result.textContent = "The server served the video probe (HTTP " + r.status + ") instead of refusing it. The uploads/.htaccess rules are not being applied here. Do not enforce.";
+                        result.classList.add("rewrite-bad");
+                    }
+                })
+                .catch(function () {
+                    result.textContent = "Could not reach the probe. Try again.";
+                    result.classList.add("rewrite-bad");
+                });
+        });
+    }());
+
     /* ---- Run OCR on a scanned PDF ------------------------------------
      *
      * OCR takes tens of seconds to minutes on a long document, so the button

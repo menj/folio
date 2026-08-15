@@ -82,6 +82,23 @@ documents, titles, categories, tags, accounts, and settings carry across as
 they are. Where a specific release does migrate something — such as the
 metadata store's move to `document_id` keys — its own section below says so.
 
+## Upgrading to 1.28.0.1
+
+Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`,
+then copy the single file `uploads/.htaccess` from the release over your
+existing one: it gained the managed `# BEGIN/# END Folio video access control`
+block that the new feature fills in. Leave those two marker lines in place. If
+you do not copy it, video access control simply cannot be switched on; nothing
+else changes.
+
+Video access control is opt-in and off by default, so existing libraries are
+unaffected until you enable it under Crawlers. It reuses `FOLIO_URL_SIGNING_KEY`
+(the same key PDF access uses), and it fails closed: while it is on but the
+preflight has not confirmed your server refuses direct video, non-public video
+is hidden from the public rather than served. `uploads/` must be writable by the
+web server for Folio to manage the block, which is already the case on any
+install that accepts uploads.
+
 ## Upgrading to 1.27.0
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`.

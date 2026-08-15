@@ -55,6 +55,16 @@ Header set Cache-Control "public, max-age=604800"
 </FilesMatch>
 </IfModule>
 
+# Video access control. The block between the markers below is managed by Folio:
+# it is empty while video access control is off (video is served directly), and
+# when you switch it on in the admin (Crawlers) Folio fills it with a rule
+# refusing direct HTTP access to video. The only route to a video's bytes then
+# becomes the application's raw action, which checks each file's access level.
+# Reading from disk, the application is unaffected by the refusal. Leave the two
+# marker comment lines in place.
+# BEGIN Folio video access control
+# END Folio video access control
+
 <FilesMatch "(?i)\.(php|phtml|phar|php[0-9]|cgi|pl|py|sh|shtml|fcgi|asp|aspx|jsp)$">
 <IfModule mod_authz_core.c>
 Require all denied
