@@ -1077,4 +1077,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.28.0. Single-file application with separated CSS and JS assets.
+1.29.0. Single-file application with separated CSS and JS assets.

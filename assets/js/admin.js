@@ -321,3 +321,277 @@
         });
     });
 })();
+
+    /* ---------------------------------------------------------------- */
+    /* PDF redaction editor.                                             */
+    /* Draws opaque boxes over a rendered page; stores each as fractional*/
+    /* {page,x,y,w,h} in a hidden input the meta form submits. Enforcement*/
+    /* is entirely server-side — this is only an authoring surface.      */
+    /* ---------------------------------------------------------------- */
+    (function () {
+        var overlay = null;
+        var state = null;   // { fieldset, input, file, previewBase, pages, page, regions, imgW, imgH }
+
+        function parseRegions(input) {
+            try {
+                var v = JSON.parse(input.value || "[]");
+                return Array.isArray(v) ? v : [];
+            } catch (e) { return []; }
+        }
+
+        function updateCount(fieldset, regions) {
+            var span = fieldset.querySelector(".redact-count");
+            if (span) {
+                span.textContent = regions.length + " region" + (regions.length === 1 ? "" : "s");
+            }
+        }
+
+        function pageMeta(base, cb) {
+            var url = base + "&meta=1";
+            var x = new XMLHttpRequest();
+            x.open("GET", url, true);
+            x.onreadystatechange = function () {
+                if (x.readyState !== 4) { return; }
+                var pages = 1;
+                try {
+                    var r = JSON.parse(x.responseText);
+                    if (r && r.pages) { pages = r.pages; }
+                } catch (e) {}
+                cb(pages);
+            };
+            x.send();
+        }
+
+        function closeEditor() {
+            if (overlay && overlay.parentNode) { overlay.parentNode.removeChild(overlay); }
+            overlay = null;
+            state = null;
+            document.removeEventListener("keydown", onKey);
+        }
+
+        function onKey(ev) {
+            if (ev.key === "Escape") { closeEditor(); }
+        }
+
+        function save() {
+            if (!state) { return; }
+            state.input.value = JSON.stringify(state.regions);
+            updateCount(state.fieldset, state.regions);
+            closeEditor();
+        }
+
+        function drawRegions(canvasWrap) {
+            /* remove existing boxes, redraw current page's */
+            var old = canvasWrap.querySelectorAll(".redact-box");
+            Array.prototype.forEach.call(old, function (b) { b.parentNode.removeChild(b); });
+            state.regions.forEach(function (r, i) {
+                if (r.page !== state.page) { return; }
+                var box = document.createElement("div");
+                box.className = "redact-box";
+                box.style.position = "absolute";
+                box.style.left = (r.x * 100) + "%";
+                box.style.top = (r.y * 100) + "%";
+                box.style.width = (r.w * 100) + "%";
+                box.style.height = (r.h * 100) + "%";
+                box.style.background = "rgba(0,0,0,0.85)";
+                box.style.outline = "1px solid #fff";
+                box.style.cursor = "pointer";
+                box.title = "Click to remove";
+                box.setAttribute("data-idx", String(i));
+                box.addEventListener("click", function (ev) {
+                    ev.stopPropagation();
+                    var idx = parseInt(box.getAttribute("data-idx"), 10);
+                    state.regions.splice(idx, 1);
+                    drawRegions(canvasWrap);
+                });
+                canvasWrap.appendChild(box);
+            });
+        }
+
+        function loadPage(canvasWrap, img, label) {
+            img.src = state.previewBase + "&page=" + state.page + "&_=" + Date.now();
+            label.textContent = "Page " + state.page + " of " + state.pages;
+            drawRegions(canvasWrap);
+        }
+
+        function buildEditor() {
+            overlay = document.createElement("div");
+            overlay.className = "redact-overlay";
+            overlay.style.position = "fixed";
+            overlay.style.inset = "0";
+            overlay.style.background = "rgba(0,0,0,0.6)";
+            overlay.style.zIndex = "9999";
+            overlay.style.display = "flex";
+            overlay.style.alignItems = "center";
+            overlay.style.justifyContent = "center";
+
+            var panel = document.createElement("div");
+            panel.className = "redact-panel";
+            panel.style.background = "#fff";
+            panel.style.maxWidth = "min(900px, 95vw)";
+            panel.style.maxHeight = "95vh";
+            panel.style.overflow = "auto";
+            panel.style.padding = "1rem";
+            panel.style.borderRadius = "6px";
+
+            var bar = document.createElement("div");
+            bar.style.display = "flex";
+            bar.style.gap = "0.5rem";
+            bar.style.alignItems = "center";
+            bar.style.marginBottom = "0.5rem";
+            bar.style.flexWrap = "wrap";
+
+            var prev = mkBtn("‹ Prev");
+            var next = mkBtn("Next ›");
+            var label = document.createElement("span");
+            label.style.fontWeight = "bold";
+            var spacer = document.createElement("span");
+            spacer.style.flex = "1";
+            var saveBtn = mkBtn("Save redactions");
+            var cancelBtn = mkBtn("Cancel");
+            var hint = document.createElement("p");
+            hint.textContent = "Drag on the page to add a box. Click a box to remove it.";
+            hint.style.margin = "0 0 0.5rem";
+            hint.style.fontSize = "0.85em";
+            hint.style.opacity = "0.8";
+
+            bar.appendChild(prev);
+            bar.appendChild(next);
+            bar.appendChild(label);
+            bar.appendChild(spacer);
+            bar.appendChild(saveBtn);
+            bar.appendChild(cancelBtn);
+
+            var canvasWrap = document.createElement("div");
+            canvasWrap.className = "redact-canvas";
+            canvasWrap.style.position = "relative";
+            canvasWrap.style.userSelect = "none";
+            canvasWrap.style.lineHeight = "0";
+            canvasWrap.style.border = "1px solid #ccc";
+
+            var img = document.createElement("img");
+            img.alt = "Document page";
+            img.style.display = "block";
+            img.style.width = "100%";
+            img.style.height = "auto";
+            img.draggable = false;
+            canvasWrap.appendChild(img);
+
+            panel.appendChild(bar);
+            panel.appendChild(hint);
+            panel.appendChild(canvasWrap);
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+
+            prev.addEventListener("click", function () {
+                if (state.page > 1) { state.page--; loadPage(canvasWrap, img, label); }
+            });
+            next.addEventListener("click", function () {
+                if (state.page < state.pages) { state.page++; loadPage(canvasWrap, img, label); }
+            });
+            saveBtn.addEventListener("click", save);
+            cancelBtn.addEventListener("click", closeEditor);
+            overlay.addEventListener("click", function (ev) {
+                if (ev.target === overlay) { closeEditor(); }
+            });
+            document.addEventListener("keydown", onKey);
+
+            /* Drag-to-draw. */
+            var dragging = false, sx = 0, sy = 0, ghost = null;
+            canvasWrap.addEventListener("pointerdown", function (ev) {
+                if (ev.target.classList.contains("redact-box")) { return; }
+                dragging = true;
+                var rect = canvasWrap.getBoundingClientRect();
+                sx = (ev.clientX - rect.left) / rect.width;
+                sy = (ev.clientY - rect.top) / rect.height;
+                ghost = document.createElement("div");
+                ghost.style.position = "absolute";
+                ghost.style.background = "rgba(0,0,0,0.4)";
+                ghost.style.outline = "1px dashed #000";
+                ghost.style.left = (sx * 100) + "%";
+                ghost.style.top = (sy * 100) + "%";
+                canvasWrap.appendChild(ghost);
+                try { canvasWrap.setPointerCapture(ev.pointerId); } catch (e) {}
+            });
+            canvasWrap.addEventListener("pointermove", function (ev) {
+                if (!dragging || !ghost) { return; }
+                var rect = canvasWrap.getBoundingClientRect();
+                var cx = (ev.clientX - rect.left) / rect.width;
+                var cy = (ev.clientY - rect.top) / rect.height;
+                var x = Math.max(0, Math.min(sx, cx));
+                var y = Math.max(0, Math.min(sy, cy));
+                var w = Math.min(1, Math.abs(cx - sx));
+                var h = Math.min(1, Math.abs(cy - sy));
+                ghost.style.left = (x * 100) + "%";
+                ghost.style.top = (y * 100) + "%";
+                ghost.style.width = (w * 100) + "%";
+                ghost.style.height = (h * 100) + "%";
+            });
+            function endDrag(ev) {
+                if (!dragging) { return; }
+                dragging = false;
+                var rect = canvasWrap.getBoundingClientRect();
+                var cx = (ev.clientX - rect.left) / rect.width;
+                var cy = (ev.clientY - rect.top) / rect.height;
+                var x = Math.max(0, Math.min(sx, cx));
+                var y = Math.max(0, Math.min(sy, cy));
+                var w = Math.min(1 - x, Math.abs(cx - sx));
+                var h = Math.min(1 - y, Math.abs(cy - sy));
+                if (ghost && ghost.parentNode) { ghost.parentNode.removeChild(ghost); }
+                ghost = null;
+                if (w > 0.005 && h > 0.005) {
+                    state.regions.push({
+                        page: state.page,
+                        x: +x.toFixed(5), y: +y.toFixed(5),
+                        w: +w.toFixed(5), h: +h.toFixed(5)
+                    });
+                    drawRegions(canvasWrap);
+                }
+            }
+            canvasWrap.addEventListener("pointerup", endDrag);
+            canvasWrap.addEventListener("pointercancel", function () {
+                dragging = false;
+                if (ghost && ghost.parentNode) { ghost.parentNode.removeChild(ghost); }
+                ghost = null;
+            });
+
+            loadPage(canvasWrap, img, label);
+        }
+
+        function mkBtn(text) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "btn-small btn-ghost";
+            b.textContent = text;
+            return b;
+        }
+
+        document.addEventListener("click", function (ev) {
+            var openBtn = ev.target.closest && ev.target.closest(".redact-open");
+            var clearBtn = ev.target.closest && ev.target.closest(".redact-clear");
+            if (!openBtn && !clearBtn) { return; }
+            var fieldset = ev.target.closest(".meta-redact-fields");
+            if (!fieldset) { return; }
+            var input = fieldset.querySelector(".redact-regions-input");
+            if (!input) { return; }
+
+            if (clearBtn) {
+                input.value = "[]";
+                updateCount(fieldset, []);
+                return;
+            }
+            state = {
+                fieldset: fieldset,
+                input: input,
+                file: fieldset.getAttribute("data-redact-file"),
+                previewBase: fieldset.getAttribute("data-redact-preview"),
+                pages: 1,
+                page: 1,
+                regions: parseRegions(input)
+            };
+            pageMeta(state.previewBase, function (pages) {
+                state.pages = pages || 1;
+                buildEditor();
+            });
+        });
+    })();

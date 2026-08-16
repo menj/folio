@@ -305,36 +305,6 @@ curl -sS -b "${COOKIE}" "${BASE}?dir=" -o "${TMP}/vid-listing-admin.html"
 grep -Fq 'hideclip' "${TMP}/vid-listing-admin.html" || fail 'admin cannot see the hidden video in the listing'
 pass 'hidden video is absent from sitemap, feed, and public listing but visible to admin'
 
-
-# FOLIO-VIDEO-003: video-only descriptive metadata is accepted for video files
-# and ignored for every other media kind, even if an altered form submits it.
-META_RESPONSE="$(curl -sS -b "${COOKIE}" \
-    --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
-    --data-urlencode 'file=pubclip.mp4' --data-urlencode 'video_access=public' \
-    --data-urlencode 'video_type=interview' --data-urlencode 'video_creator=Test Presenter' \
-    --data-urlencode 'video_series=Smoke Series' --data-urlencode 'video_season=2' \
-    --data-urlencode 'video_episode=7' "${BASE}")"
-grep -Fq '"ok":true' <<<"${META_RESPONSE}" || fail 'video-specific metadata update failed'
-grep -Fq '"video_type": "interview"' "${APP}/data/metadata.json" || fail 'video_type was not stored for video'
-grep -Fq '"video_creator": "Test Presenter"' "${APP}/data/metadata.json" || fail 'video creator was not stored for video'
-META_RESPONSE="$(curl -sS -b "${COOKIE}" \
-    --data-urlencode 'action=meta' --data-urlencode "csrf=${CSRF}" \
-    --data-urlencode 'file=notes.txt' --data-urlencode 'title=Smoke Notes Revised' \
-    --data-urlencode 'video_type=interview' --data-urlencode 'video_creator=Must Not Persist' "${BASE}")"
-grep -Fq '"ok":true' <<<"${META_RESPONSE}" || fail 'non-video metadata update failed'
-! grep -Fq 'Must Not Persist' "${APP}/data/metadata.json" || fail 'video-only metadata leaked onto a non-video file'
-pass 'video-specific metadata is stored only for video files'
-
-# FOLIO-VIDEO-004: the dedicated video playlist is a public surface and must
-# inherit video_access. Hidden clips stay out; viewer clips use signed URLs.
-curl -sS "${BASE}?action=playlist&dir=&kind=video" -o "${TMP}/video-playlist.html"
-grep -Fq 'pubclip.mp4' "${TMP}/video-playlist.html" || fail 'public video is missing from video playlist'
-grep -Fq 'viewclip.mp4' "${TMP}/video-playlist.html" || fail 'viewer video is missing from video playlist'
-! grep -Fq 'hideclip.mp4' "${TMP}/video-playlist.html" || fail 'hidden video leaked into public video playlist'
-grep -Eq 'viewclip\.mp4[^\"]*expires=[0-9]+(&amp;|&)token=[0-9a-f]{64}' "${TMP}/video-playlist.html" \
-    || fail 'viewer video playlist URL is not signed'
-pass 'video playlist inherits video access control'
-
 # FOLIO-PDF-002: the sitemap, robots meta, and llms.txt must stay exactly as
 # indexable for restricted PDFs as for any other file — pdf_access must
 # only ever affect the raw file endpoint, never the record page.

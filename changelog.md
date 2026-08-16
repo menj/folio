@@ -3,7 +3,57 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
-## 1.28.0.1 — 15 August 2026
+## 1.29.0 — 17 August 2026
+
+### Added
+
+- **PDF redaction.** A PDF can now be redacted per file: an admin draws opaque
+  boxes over parts of a rendered page in the metadata editor, and the public is
+  served a flattened, image-only copy with those areas blacked out. Because
+  every page is rasterised, the text under a box is genuinely removed rather
+  than merely covered — nothing to select, copy, or extract. The admin always
+  sees the untouched original. Regions are stored as fractional coordinates, so
+  they survive re-rendering at any resolution, and are edited through a
+  drag-to-draw modal (an enqueued script, no inline JS). Enforcement funnels
+  through the same points every PDF path already uses — `url_raw_effective()`
+  and the `?action=raw` gate — so the flipbook viewer shows the redacted copy
+  too. It fails **closed**: if the derivative cannot be built (no Poppler or
+  Imagick PDF support, a document over the page cap, or a render error) the
+  public is refused rather than handed the original bytes. The redacted
+  derivative is cached under `data/redacted/`, which already denies direct
+  access and disables PHP. Redaction is content-level and independent of the
+  PDF access levels; the editor warns when a redacted file is not yet behind
+  the direct-access guard.
+- **Idle collection card.** The right-hand preview column, previously blank
+  until a document was hovered, now shows a quiet colophon at rest: the
+  collection name and live counts of folders and documents. It cross-fades to
+  the hover preview and back.
+- **Feed link in the footer.** The JSON Feed, previously discoverable only via
+  the `<link rel="alternate">` in the head, now has a visible **Feed** link in
+  the footer navigation.
+
+### Fixed
+
+- **Playlist could expose restricted media.** The audio/video playlist builders
+  fell back to the unguarded raw URL when a file's access-aware hotlink was
+  empty, which for a Hidden or unverified-Viewer video meant its direct URL was
+  embedded in the playlist for the public. The builders now skip any file
+  without a linkable hotlink and never fall back to the raw URL; audio, which
+  always has a hotlink, is unaffected. The "Play videos" button count now
+  matches the playable queue.
+- **Catalogue reconnect screen overflowed.** The reconnect table reused the
+  fixed-layout diagnostics table styles, so a relink `<select>` listing full
+  file paths grew wider than its cell and pushed the layout past the viewport.
+  The table now has its own auto layout with the select constrained to its cell.
+
+### Changed
+
+- **Footer redesign.** The *Powered by Folio* colophon no longer wraps onto its
+  own row; it sits inline on the identity line and renders Folio as a styled
+  **FOLIO** wordmark. Folder rows in the listing were refined: a stronger folder
+  name, and the description aligned beneath it for clearer hierarchy.
+
+## 1.28.0 — 15 August 2026
 
 ### Added
 

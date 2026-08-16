@@ -82,7 +82,7 @@ documents, titles, categories, tags, accounts, and settings carry across as
 they are. Where a specific release does migrate something — such as the
 metadata store's move to `document_id` keys — its own section below says so.
 
-## Upgrading to 1.28.0.1
+## Upgrading to 1.28.0
 
 Upload the release as usual, excluding `config.php`, `data/`, and `uploads/`,
 then copy the single file `uploads/.htaccess` from the release over your

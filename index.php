@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.28.0.1');
+define('FOLIO_VERSION', '1.29.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -1162,6 +1162,14 @@ function url_raw_effective(string $rel, array $m): string
     $ext  = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
 
     if ($ext === 'pdf') {
+        // Redaction is content-level and independent of the access gate: a
+        // redacted PDF must reach the public only through ?action=raw, where
+        // the image-only derivative is substituted. Force the serve route for
+        // non-admins even when pdf_access enforcement is off, so Apache never
+        // hands out the original file directly. Admins get the original.
+        if (redact_is_on($m) && !is_admin()) {
+            return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel);
+        }
         if (!pdf_access_enforced()) {
             return url_raw($rel);
         }
@@ -1677,16 +1685,16 @@ function is_excluded(string $name, string $rel): bool
 function video_types(): array
 {
     return [
-        'clip'         => 'Clip',
-        'interview'    => 'Interview',
-        'lecture'      => 'Lecture',
-        'presentation' => 'Presentation',
-        'tutorial'     => 'Tutorial',
-        'documentary'  => 'Documentary',
-        'episode'      => 'Episode',
-        'recording'    => 'Recording',
-        'trailer'      => 'Trailer',
-        'other'        => 'Other',
+        'clip'        => 'Clip',
+        'interview'   => 'Interview',
+        'lecture'     => 'Lecture',
+        'presentation'=> 'Presentation',
+        'tutorial'    => 'Tutorial',
+        'documentary' => 'Documentary',
+        'episode'     => 'Episode',
+        'recording'   => 'Recording',
+        'trailer'     => 'Trailer',
+        'other'       => 'Other',
     ];
 }
 
@@ -4502,13 +4510,17 @@ function render_footer(): void
             <span class="footer-site"><?= e(SITE_NAME) ?></span>
             <span class="footer-sep">&middot;</span>
             <span class="footer-year"><?= e($year) ?></span>
+            <span class="footer-sep">&middot;</span>
+            <span class="footer-colophon">Powered by <a class="footer-brand" href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?> <span class="footer-sep">&middot;</span> <span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?></span>
         </p>
-        <p class="footer-colophon">Powered by <a href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?> <span class="footer-sep">&middot;</span> <span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?></p>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>
             <?php foreach ($pages as $slot => $rec): ?>
                 <a href="<?= e(url_page($slot)) ?>"><?= e(page_menu_label($slot, $rec)) ?></a>
             <?php endforeach; ?>
+            <?php if (SITE_INDEXABLE): ?>
+                <a href="<?= e(url_feed()) ?>">Feed</a>
+            <?php endif; ?>
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">Sitemap</a>
             <?php endif; ?>
@@ -4638,13 +4650,15 @@ function media_playlist_for(string $rel, string $kind): array
         if (($f['dir'] ?? null) !== $dir || ($f['kind'] ?? '') !== $kind) {
             continue;
         }
-        if ($kind === 'video') {
-            $m = meta_load()[$f['rel'] ?? ''] ?? [];
-            if (!is_admin() && !video_public_visible((string) ($f['rel'] ?? ''), $m)) {
-                continue;
-            }
+        // hotlink is access-aware (url_raw_effective): '' means this file is
+        // not linkable in the current context — a hidden or unverified-viewer
+        // video for the public. Skip it; never fall back to the raw URL, which
+        // would hand out the guarded file. Audio always has a hotlink, so this
+        // only ever filters restricted video.
+        $url = (string) ($f['hotlink'] ?? '');
+        if ($url === '') {
+            continue;
         }
-        $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
         $title = ($f['title'] ?? '') !== ''
             ? $f['title']
             : pathinfo($f['name'], PATHINFO_FILENAME);
@@ -4759,6 +4773,243 @@ function pdf_blur_generate(string $abs_pdf, string $rel): bool
         return (bool) $ok;
     } catch (Throwable $e) {
         return false;
+    }
+}
+
+/* ================================================================== */
+/* PDF redaction (coordinate-box, image-only derivative).             */
+/*                                                                    */
+/* A redacted PDF is one an admin has drawn opaque rectangles onto.   */
+/* The public is served a RASTERISED, image-only derivative with the  */
+/* boxes burned in: because every page is an image, the text under a  */
+/* box is genuinely gone — nothing to select, extract, or recover.    */
+/* Admins always get the untouched original. Fails closed: if the     */
+/* derivative cannot be built, the public gets the existing hidden-   */
+/* PDF placeholder rather than the original bytes.                    */
+/*                                                                    */
+/* Regions are stored per file as a list of fractional rectangles:    */
+/*   ['page' => int>=1, 'x' => 0..1, 'y' => 0..1, 'w' => 0..1,        */
+/*    'h' => 0..1]. Fractions of page size survive re-rendering at    */
+/* any resolution. y is measured from the page top.                   */
+/* ================================================================== */
+
+/** Hard cap on redactable pages: the whole doc is rasterised, so a huge
+ *  scan would blow the time budget. Over this, redaction is refused and
+ *  the file is treated as hidden instead (fail closed). */
+if (!defined('REDACT_MAX_PAGES')) {
+    define('REDACT_MAX_PAGES', 60);
+}
+/** Render width per page for the derivative. Enough to read body text,
+ *  small enough to keep a multi-page render affordable. */
+if (!defined('REDACT_PAGE_WIDTH')) {
+    define('REDACT_PAGE_WIDTH', 1240);
+}
+
+/** Whether a file's metadata declares any redaction regions. */
+function redact_is_on(array $m): bool
+{
+    return !empty($m['redact']) && is_array($m['redact']);
+}
+
+/** Normalise and validate a raw region list (from POST or storage) into
+ *  clean rectangles. Anything malformed is dropped, never guessed. */
+function redact_sanitise_regions($raw): array
+{
+    if (!is_array($raw)) {
+        return [];
+    }
+    $out = [];
+    foreach ($raw as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        $page = (int) ($r['page'] ?? 0);
+        if ($page < 1 || $page > REDACT_MAX_PAGES) {
+            continue;
+        }
+        $x = isset($r['x']) ? (float) $r['x'] : -1;
+        $y = isset($r['y']) ? (float) $r['y'] : -1;
+        $w = isset($r['w']) ? (float) $r['w'] : -1;
+        $h = isset($r['h']) ? (float) $r['h'] : -1;
+        // Each value in [0,1]; box must have area and stay on the page.
+        if ($x < 0 || $y < 0 || $w <= 0 || $h <= 0
+            || $x > 1 || $y > 1 || $w > 1 || $h > 1
+            || $x + $w > 1.0001 || $y + $h > 1.0001) {
+            continue;
+        }
+        $out[] = [
+            'page' => $page,
+            'x' => round(min(1, max(0, $x)), 5),
+            'y' => round(min(1, max(0, $y)), 5),
+            'w' => round(min(1, max(0, $w)), 5),
+            'h' => round(min(1, max(0, $h)), 5),
+        ];
+        if (count($out) >= 500) {   // a sane ceiling; nobody draws 500 boxes
+            break;
+        }
+    }
+    return $out;
+}
+
+/** Where a redacted derivative PDF is cached. Mirrors pdf_blur_cache_path. */
+function redact_cache_path(string $rel): string
+{
+    return dirname(SETTINGS_FILE) . DIRECTORY_SEPARATOR . 'redacted'
+        . DIRECTORY_SEPARATOR . sha1($rel) . '.pdf';
+}
+
+/** Whether the rasterise+redact pipeline can run on this host at all. */
+function redact_available(): bool
+{
+    // Same requirement as the blur preview: Imagick able to touch PDF, or a
+    // Poppler rasteriser present. We reuse pdf_rasterise_page for the render.
+    if (extension_loaded('imagick') && class_exists('Imagick')) {
+        return true;
+    }
+    return false;
+}
+
+/** Render EVERY page of a PDF to a PNG at the given width. Returns an
+ *  ordered array of temp PNG paths (caller must unlink), or null on any
+ *  failure. Poppler first (no delegate needed); Ghostscript only if the
+ *  admin opted in. */
+function redact_rasterise_all(string $abs, int $width, ?string &$error = null): ?array
+{
+    $tool = tool_have('pdftocairo') ? 'pdftocairo' : (tool_have('pdftoppm') ? 'pdftoppm' : null);
+    if ($tool !== null) {
+        $stem = sys_get_temp_dir() . '/folio-redact-' . bin2hex(random_bytes(8));
+        $args = ['-png', '-scale-to-x', (string) $width, '-scale-to-y', '-1', $abs, $stem];
+        $r = tool_run($tool, $args, 120);
+        // Poppler numbers output -1, -2, ... or -01, -001 depending on total.
+        $found = glob($stem . '-*.png') ?: [];
+        if ($found) {
+            natsort($found);
+            return array_values($found);
+        }
+        $error = trim((string) strtok(trim($r['err']) ?: 'no output', "\n"));
+    }
+    // Imagick/Ghostscript fallback, only when explicitly allowed.
+    if (defined('PDF_ALLOW_GHOSTSCRIPT') && PDF_ALLOW_GHOSTSCRIPT
+        && extension_loaded('imagick') && class_exists('Imagick')) {
+        try {
+            $im = new Imagick();
+            image_apply_limits($im);
+            $im->setResolution(150, 150);
+            $im->readImage($abs);       // reads all pages
+            $im->setImageFormat('png');
+            $paths = [];
+            foreach ($im as $i => $page) {
+                if ($i >= REDACT_MAX_PAGES) {
+                    break;
+                }
+                $p = sys_get_temp_dir() . '/folio-redact-' . bin2hex(random_bytes(8)) . '-' . $i . '.png';
+                $page->writeImage($p);
+                $paths[] = $p;
+            }
+            $im->clear();
+            return $paths ?: null;
+        } catch (Throwable $e) {
+            $error = 'imagick: ' . $e->getMessage();
+            return null;
+        }
+    }
+    return null;
+}
+
+/**
+ * Build (or reuse a cached) redacted, image-only PDF for $rel. Returns the
+ * cache path on success, or null on any failure so the caller can fall back
+ * to the hidden-PDF placeholder rather than ever serving the original.
+ */
+function redact_build(string $abs_pdf, string $rel, array $regions): ?string
+{
+    if (!redact_available() || !$regions) {
+        return null;
+    }
+    $cache = redact_cache_path($rel);
+    // Cache is valid only if newer than BOTH the source file and the stored
+    // regions. The regions' freshness rides on the meta record's updated_at,
+    // which the caller folds into filemtime already by rewriting on save; to
+    // be safe we also key the cache on a hash of the regions themselves.
+    $stamp = $cache . '.stamp';
+    $sig = sha1(json_encode($regions));
+    if (is_file($cache) && is_file($stamp)
+        && filemtime($cache) >= filemtime($abs_pdf)
+        && trim((string) @file_get_contents($stamp)) === $sig) {
+        return $cache;
+    }
+
+    $error = null;
+    $pages = redact_rasterise_all($abs_pdf, REDACT_PAGE_WIDTH, $error);
+    if ($pages === null || !$pages) {
+        error_log('Folio redact: could not rasterise ' . $abs_pdf . ' — ' . (string) $error);
+        return null;
+    }
+    if (count($pages) > REDACT_MAX_PAGES) {
+        foreach ($pages as $p) { @unlink($p); }
+        error_log('Folio redact: ' . $rel . ' exceeds REDACT_MAX_PAGES');
+        return null;
+    }
+
+    // Group regions by page for a single pass each.
+    $by_page = [];
+    foreach ($regions as $r) {
+        $by_page[$r['page']][] = $r;
+    }
+
+    try {
+        $out = new Imagick();
+        image_apply_limits($out);
+        foreach ($pages as $idx => $png) {
+            $pageNo = $idx + 1;              // 1-based to match stored regions
+            $im = new Imagick();
+            image_apply_limits($im);
+            $im->readImage($png);
+            $im->setImageBackgroundColor('white');
+            $im->setImageFormat('png');
+            $pw = (int) $im->getImageWidth();
+            $ph = (int) $im->getImageHeight();
+            if (!empty($by_page[$pageNo]) && $pw > 0 && $ph > 0) {
+                $draw = new ImagickDraw();
+                $draw->setFillColor(new ImagickPixel('#000000'));
+                foreach ($by_page[$pageNo] as $r) {
+                    $x1 = (int) floor($r['x'] * $pw);
+                    $y1 = (int) floor($r['y'] * $ph);
+                    $x2 = (int) ceil(($r['x'] + $r['w']) * $pw);
+                    $y2 = (int) ceil(($r['y'] + $r['h']) * $ph);
+                    $draw->rectangle($x1, $y1, $x2, $y2);
+                }
+                $im->drawImage($draw);
+                $draw->destroy();
+            }
+            // Flatten to kill any alpha, then hand the page to the output doc.
+            $im->setImageAlphaChannel(Imagick::ALPHACHANNEL_REMOVE);
+            $im->setImageFormat('jpeg');
+            $im->setImageCompressionQuality(82);
+            $out->addImage($im);
+            $im->clear();
+            @unlink($png);
+        }
+        $out->setImageFormat('pdf');
+        $dir = dirname($cache);
+        if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+            $out->clear();
+            return null;
+        }
+        // writeImages with adjoin=true produces one multi-page PDF.
+        $ok = $out->writeImages($cache, true);
+        $out->clear();
+        if (!$ok || !is_file($cache)) {
+            return null;
+        }
+        @chmod($cache, 0640);
+        @file_put_contents($stamp, $sig);
+        @chmod($stamp, 0640);
+        return $cache;
+    } catch (Throwable $e) {
+        foreach ($pages as $p) { @unlink($p); }
+        error_log('Folio redact: assembly failed for ' . $rel . ' — ' . $e->getMessage());
+        return null;
     }
 }
 
@@ -5171,6 +5422,7 @@ function index_all_files(array $mime_map): array
                 'video_season' => $m['video_season'] ?? '',
                 'video_episode' => $m['video_episode'] ?? '',
                 'pdf_access' => $pdf_access,
+                'redact' => (isset($m['redact']) && is_array($m['redact'])) ? $m['redact'] : [],
                 // Deliberately not the transcript text itself here — this
                 // index is loaded in bulk for the sitemap and category
                 // pages. Just enough to know whether one exists.
@@ -6888,7 +7140,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
                    Relink those by hand below.</p>
             <?php endif; ?>
 
-            <table class="diag-table">
+            <table class="diag-table catalogue-table">
                 <?php foreach ($survey['orphans'] as $oid => $orec): ?>
                     <tr>
                         <td>
@@ -7820,13 +8072,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
         if (($f['dir'] ?? '') !== $rel_pl || ($f['kind'] ?? '') !== $playlist_kind) {
             continue;
         }
-        if ($playlist_kind === 'video') {
-            $m = meta_load()[$f['rel'] ?? ''] ?? [];
-            if (!is_admin() && !video_public_visible((string) ($f['rel'] ?? ''), $m)) {
-                continue;
-            }
+        // Access-aware: skip files with no linkable URL in this context (a
+        // hidden or unverified-viewer video for the public) rather than falling
+        // back to the unguarded raw URL. Admins keep a working hotlink, so they
+        // still see the full queue.
+        $url = (string) ($f['hotlink'] ?? '');
+        if ($url === '') {
+            continue;
         }
-        $url = $f['hotlink'] !== '' ? $f['hotlink'] : url_raw($f['rel']);
         $title = ($f['title'] ?? '') !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
         $queue[] = ['url' => $url, 'title' => $title];
     }
@@ -7992,6 +8245,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
         }
     }
 
+    // Redaction gate. Independent of pdf_access: a redacted PDF may be at any
+    // access level. An admin always receives the untouched original — they
+    // authored the redaction and need to see what they hid. Everyone else is
+    // served the rasterised, image-only derivative with the boxes burned in.
+    // Fails closed: if the derivative cannot be built (no rasteriser, over the
+    // page cap, render error), the public is refused rather than handed the
+    // original bytes.
+    if (strtolower(pathinfo($abs, PATHINFO_EXTENSION)) === 'pdf' && !is_admin()) {
+        $rmeta = meta_load()[$rel] ?? [];
+        if (redact_is_on($rmeta)) {
+            $regions = redact_sanitise_regions($rmeta['redact']);
+            $derived = $regions ? redact_build($abs, $rel, $regions) : null;
+            if ($derived === null || !is_file($derived)) {
+                // Could not produce a safe copy — do not leak the original.
+                http_response_code(404);
+                exit('Not found');
+            }
+            header('Content-Type: application/pdf');
+            header('Content-Length: ' . (string) filesize($derived));
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: private, max-age=0, no-store');
+            header('X-Robots-Tag: noindex, nofollow');
+            header('Content-Disposition: inline; filename="'
+                . str_replace(['"', "\r", "\n"], '', basename($rel)) . '"');
+            readfile($derived);
+            exit;
+        }
+    }
+
     // Video access gate. The single enforcement point for video bytes, mirroring
     // the PDF gate. Active whenever the guard is on. "hidden" is admin-only;
     // "viewer" requires a valid signed, expiring URL (or an admin session);
@@ -8079,6 +8361,89 @@ if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
     header('X-Content-Type-Options: nosniff');
     header('Cache-Control: public, max-age=86400');
     readfile($cache);
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
+/* Redaction editor page renders. Admin-only: serves a plain rendered   */
+/* image of one PDF page (unredacted) so the admin can draw boxes on it. */
+/* Never reachable by the public — this is the original content.        */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'redact_page') {
+    if (!is_admin()) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    if ($abs === null || !is_file($abs) || strtolower(pathinfo($abs, PATHINFO_EXTENSION)) !== 'pdf') {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if (is_excluded(basename($rel), $rel)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    // 'meta' returns the page count as JSON; 'page' returns one page image.
+    if (($_GET['meta'] ?? '') === '1') {
+        $count = 0;
+        if (tool_have('pdfinfo')) {
+            $r = tool_run('pdfinfo', ['--', $abs], 20);
+            if ($r['code'] === 0 && preg_match('/^Pages:\s*(\d+)/mi', $r['out'], $mm)) {
+                $count = (int) $mm[1];
+            }
+        }
+        if ($count === 0 && extension_loaded('imagick') && class_exists('Imagick')) {
+            try {
+                $im = new Imagick();
+                image_apply_limits($im);
+                $im->pingImage($abs);
+                $count = (int) $im->getNumberImages();
+                $im->clear();
+            } catch (Throwable $e) {
+                $count = 0;
+            }
+        }
+        $count = min($count, REDACT_MAX_PAGES);
+        header('Content-Type: application/json');
+        exit(json_encode(['ok' => $count > 0, 'pages' => $count, 'max' => REDACT_MAX_PAGES]));
+    }
+    $page = max(1, min(REDACT_MAX_PAGES, (int) ($_GET['page'] ?? 1)));
+    $tool = tool_have('pdftocairo') ? 'pdftocairo' : (tool_have('pdftoppm') ? 'pdftoppm' : null);
+    $png = null;
+    if ($tool !== null) {
+        $stem = sys_get_temp_dir() . '/folio-redit-' . bin2hex(random_bytes(8));
+        $args = ['-png', '-f', (string) $page, '-l', (string) $page,
+                 '-scale-to-x', (string) REDACT_PAGE_WIDTH, '-scale-to-y', '-1', $abs, $stem];
+        tool_run($tool, $args, 60);
+        foreach (glob($stem . '*.png') ?: [] as $cand) { $png = $cand; break; }
+    }
+    if ($png === null && defined('PDF_ALLOW_GHOSTSCRIPT') && PDF_ALLOW_GHOSTSCRIPT
+        && extension_loaded('imagick') && class_exists('Imagick')) {
+        try {
+            $im = new Imagick();
+            image_apply_limits($im);
+            $im->setResolution(120, 120);
+            $im->readImage($abs . '[' . ($page - 1) . ']');
+            $im->setImageFormat('png');
+            $png = sys_get_temp_dir() . '/folio-redit-' . bin2hex(random_bytes(8)) . '.png';
+            $im->writeImage($png);
+            $im->clear();
+        } catch (Throwable $e) {
+            $png = null;
+        }
+    }
+    if ($png === null || !is_file($png)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    header('Content-Type: image/png');
+    header('Content-Length: ' . (string) filesize($png));
+    header('Cache-Control: private, max-age=0, no-store');
+    header('X-Content-Type-Options: nosniff');
+    header('X-Robots-Tag: noindex, nofollow');
+    readfile($png);
+    @unlink($png);
     exit;
 }
 
@@ -8907,8 +9272,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     $doc_date   = str_clip(trim((string) ($_POST['doc_date'] ?? '')), 60);
     $kind       = file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION)));
 
-    // Video-only descriptive metadata. Ignore these fields for every other
-    // media kind, including altered POST requests.
+    // Video-only descriptive metadata. These fields are deliberately ignored
+    // for every other media kind so an altered POST cannot attach video
+    // semantics to audio, images, PDFs, or documents.
     $video_type = '';
     $video_series = '';
     $video_creator = '';
@@ -8986,9 +9352,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         }
     }
 
+    // Redaction regions. PDF-only and deliberately ignored for every other
+    // kind, so an altered POST cannot attach redaction data to a non-PDF.
+    // Arrives as a JSON array of {page,x,y,w,h}; sanitised to clean fractional
+    // rectangles, with anything malformed dropped rather than guessed.
+    $redact_regions = [];
+    if ($kind === 'pdf') {
+        $redact_raw = json_decode((string) ($_POST['redact_regions'] ?? '[]'), true);
+        $redact_regions = redact_sanitise_regions($redact_raw);
+    }
+
     $updated = meta_update(static function (array $meta) use (
         $rel, $title, $desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
-        $seo_title, $seo_desc, $video_type, $video_series, $video_creator, $video_season, $video_episode
+        $seo_title, $seo_desc, $video_type, $video_series, $video_creator, $video_season, $video_episode, $redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
         // administrator has genuinely emptied all of them. Omitting one would
@@ -9000,6 +9376,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
             && $video_type === '' && $video_series === '' && $video_creator === ''
             && $video_season === '' && $video_episode === ''
+            && !$redact_regions
         ) {
             $meta = meta_put_record($meta, $rel, null);
         } else {
@@ -9024,6 +9401,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'video_creator' => $video_creator,
                 'video_season' => $video_season,
                 'video_episode' => $video_episode,
+                'redact' => $redact_regions,
                 'updated_at' => time(),
             ]);
         }
@@ -9613,6 +9991,7 @@ foreach (scandir($abs_dir) as $entry) {
             'seo_desc' => $m['seo_desc'] ?? '',
             'transcript' => $m['transcript'] ?? '',
             'pdf_access' => $pdf_access,
+            'redact' => (isset($m['redact']) && is_array($m['redact'])) ? $m['redact'] : [],
             'video_access' => video_access_of($m),
             'language' => $m['language'] ?? '',
             'video_type' => $m['video_type'] ?? '',
@@ -9878,7 +10257,12 @@ $listing_ld = [
         <?php endif; ?>
         <?php
         $folder_audio = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'audio');
-        $folder_video = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'video');
+        // Count only videos that are actually playable in this context: a
+        // non-empty hotlink means a linkable URL exists (always for public
+        // video and for admins; empty for a hidden/unverified-viewer video to
+        // the public). This keeps the button's count in step with the queue the
+        // playlist page will build.
+        $folder_video = array_filter($files, static fn($f) => ($f['kind'] ?? '') === 'video' && ($f['hotlink'] ?? '') !== '');
         if (AUDIO_PLAYLIST && (count($folder_audio) >= 2 || count($folder_video) >= 2)):
         ?>
         <div class="listing-toolbar">
@@ -10007,6 +10391,23 @@ $listing_ld = [
                                 </select>
                             </label>
                             <?php endif; ?>
+                            <?php if ($f['kind'] === 'video'): ?>
+                            <fieldset class="meta-video-fields">
+                                <legend>Video metadata</legend>
+                                <label class="meta-form-label">Video type
+                                    <select name="video_type">
+                                        <option value="">Select type</option>
+                                        <?php foreach (video_types() as $vt_value => $vt_label): ?>
+                                            <option value="<?= e($vt_value) ?>" <?= $f['video_type'] === $vt_value ? 'selected' : '' ?>><?= e($vt_label) ?></option>
+                                        <?php endforeach; ?>
+                                    </select>
+                                </label>
+                                <input type="text" name="video_creator" maxlength="120" placeholder="Creator / presenter" value="<?= e($f['video_creator']) ?>">
+                                <input type="text" name="video_series" maxlength="120" placeholder="Series / programme" value="<?= e($f['video_series']) ?>">
+                                <input type="text" name="video_season" maxlength="20" placeholder="Season" value="<?= e($f['video_season']) ?>">
+                                <input type="text" name="video_episode" maxlength="20" placeholder="Episode" value="<?= e($f['video_episode']) ?>">
+                            </fieldset>
+                            <?php endif; ?>
                             <input type="text" name="language" maxlength="35" placeholder="Language (e.g. en, ms, ar)" value="<?= e($f['language']) ?>">
                             <?php $av = in_array($f['kind'], ['audio', 'video'], true); ?>
                             <label class="meta-form-label">
@@ -10061,23 +10462,33 @@ $listing_ld = [
                                 <p class="field-note">Not enforced yet on this server — behaves as Public until the PDF access preflight is confirmed on the Crawlers screen.</p>
                             <?php endif; ?>
                             <input type="text" name="placeholder_image" maxlength="255" placeholder="Placeholder image path for Hidden (e.g. redactions/cert-blur.jpg)" value="<?= e($f['placeholder_image']) ?>">
+                            <?php
+                            $redact_regions_json = json_encode(
+                                (isset($f['redact']) && is_array($f['redact'])) ? $f['redact'] : [],
+                                JSON_UNESCAPED_SLASHES
+                            );
+                            $redact_count = (isset($f['redact']) && is_array($f['redact'])) ? count($f['redact']) : 0;
+                            ?>
+                            <fieldset class="meta-redact-fields"
+                                data-redact-file="<?= e($f['rel']) ?>"
+                                data-redact-preview="<?= e(root_relative(BASE_URL . '?action=redact_page&file=' . rawurlencode($f['rel']))) ?>">
+                                <legend>Redaction</legend>
+                                <p class="field-note">Draw opaque boxes over parts of the document. The public is served a flattened, image-only copy with those areas blacked out — the hidden text is genuinely removed, not merely covered. You always see the original.</p>
+                                <input type="hidden" name="redact_regions" class="redact-regions-input" value="<?= e($redact_regions_json) ?>">
+                                <div class="meta-form-actions">
+                                    <button type="button" class="btn-small btn-ghost redact-open">Edit redactions</button>
+                                    <button type="button" class="btn-small btn-ghost redact-clear">Clear all</button>
+                                    <span class="redact-count" aria-live="polite"><?= (int) $redact_count ?> region<?= $redact_count === 1 ? '' : 's' ?></span>
+                                </div>
+                                <?php if ($redact_count > 0 && !pdf_access_enforced()): ?>
+                                <p class="field-note field-warn">This document has redactions, but direct PDF access is not blocked on this server yet. Anyone who guesses the file's direct URL could still fetch the original. Confirm the PDF access preflight on the Crawlers screen to close that path.</p>
+                                <?php endif; ?>
+                                <?php if ($redact_count > 0 && !redact_available()): ?>
+                                <p class="field-note field-warn">Redaction regions are saved, but this server cannot render PDFs to images (no Poppler/Imagick), so the redacted copy cannot be built. The document is refused to the public rather than served un-redacted. Install poppler-utils or the Imagick PDF delegate.</p>
+                                <?php endif; ?>
+                            </fieldset>
                             <?php endif; ?>
                             <?php if ($f['kind'] === 'video'): ?>
-                            <fieldset class="meta-video-fields">
-                                <legend>Video metadata</legend>
-                                <label class="meta-form-label">Video type
-                                    <select name="video_type">
-                                        <option value="">Select type</option>
-                                        <?php foreach (video_types() as $vt_value => $vt_label): ?>
-                                            <option value="<?= e($vt_value) ?>" <?= $f['video_type'] === $vt_value ? 'selected' : '' ?>><?= e($vt_label) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </label>
-                                <input type="text" name="video_creator" maxlength="120" placeholder="Creator / presenter" value="<?= e($f['video_creator']) ?>">
-                                <input type="text" name="video_series" maxlength="120" placeholder="Series / programme" value="<?= e($f['video_series']) ?>">
-                                <input type="text" name="video_season" maxlength="20" placeholder="Season" value="<?= e($f['video_season']) ?>">
-                                <input type="text" name="video_episode" maxlength="20" placeholder="Episode" value="<?= e($f['video_episode']) ?>">
-                            </fieldset>
                             <label class="meta-form-label">
                                 Video access
                                 <select name="video_access">
@@ -10189,6 +10600,23 @@ $listing_ld = [
     <aside class="hover-card" id="hover-card" aria-hidden="true" data-pdfjs-base="<?= e(BASE_URL) ?>lib/pdfjs/">
         <div class="hover-card-inner">
             <div class="hover-card-media" id="hover-card-media"></div>
+        </div>
+        <?php
+        $hc_dirs  = is_array($dirs ?? null) ? count($dirs) : 0;
+        $hc_files = (int) ($total_files ?? 0);
+        ?>
+        <div class="hover-card-idle" id="hover-card-idle" aria-hidden="false">
+            <p class="hc-idle-name"><?= e(SITE_NAME) ?></p>
+            <p class="hc-idle-counts">
+                <?php if ($hc_dirs > 0): ?>
+                    <span class="hc-idle-num"><?= $hc_dirs ?></span> <?= $hc_dirs === 1 ? 'folder' : 'folders' ?>
+                <?php endif; ?>
+                <?php if ($hc_dirs > 0 && $hc_files > 0): ?><span class="hc-idle-dot">&middot;</span><?php endif; ?>
+                <?php if ($hc_files > 0): ?>
+                    <span class="hc-idle-num"><?= $hc_files ?></span> <?= $hc_files === 1 ? 'document' : 'documents' ?>
+                <?php endif; ?>
+            </p>
+            <p class="hc-idle-hint">Hover a document to preview it here.</p>
         </div>
     </aside>
 </main>
