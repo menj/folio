@@ -1,9 +1,9 @@
 {
  "assets/css/style.css": {
   "min": "assets/css/style.min.css",
-  "size": 66828,
-  "sha256": "lch3SE/3ESBxBJTyWphcF5bw9z247bHcCvAoNgBp4KE=",
-  "min_size": 40989
+  "size": 67798,
+  "sha256": "z1HLlJJrIQuVte6ngDPwFnzzNxirzjbKlo7GhoQohHM=",
+  "min_size": 41515
  },
  "assets/css/flipbook.css": {
   "min": "assets/css/flipbook.min.css",

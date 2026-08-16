@@ -4518,14 +4518,14 @@ function render_footer(): void
             <?php foreach ($pages as $slot => $rec): ?>
                 <a href="<?= e(url_page($slot)) ?>"><?= e(page_menu_label($slot, $rec)) ?></a>
             <?php endforeach; ?>
+            <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
+                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
+            <?php endif; ?>
             <?php if (SITE_INDEXABLE): ?>
-                <a href="<?= e(url_feed()) ?>">Feed</a>
+                <a href="<?= e(url_feed()) ?>">JSON</a>
             <?php endif; ?>
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">Sitemap</a>
-            <?php endif; ?>
-            <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
             <?php endif; ?>
             <?php if (!is_admin() && SHOW_ADMIN_LINK): ?>
                 <a href="<?= e(BASE_URL) ?>?action=login">Admin</a>

@@ -1526,22 +1526,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 .diag-table td:last-child { padding-right: 1.5rem; }
 
 /* Catalogue reconnect table. Reuses .diag-table's borders and spacing but
-   overrides its diagnostics-tuned column widths: here the second column holds
-   a relink form whose <select> lists full file paths. Without a width cap the
-   select grows to its widest option and, under table-layout:fixed, pushes the
-   whole layout past the viewport. Constrain the select to its cell so long
-   paths are clipped by the control instead of overflowing the page. */
-.catalogue-table { table-layout: auto; }
-.catalogue-table td:first-child { width: auto; }
+   overrides its diagnostics-tuned column widths. The second column holds a
+   relink form whose <select> lists full file paths, so it needs its own
+   layout: fixed proportional columns keep every row aligned, the select is
+   width-capped so long paths are clipped by the control rather than
+   overflowing the page, and the form is top-aligned so the select sits level
+   with the record title on the left instead of floating to the middle of a
+   tall row. */
+.catalogue-table { table-layout: fixed; }
+.catalogue-table td { vertical-align: top; }
+.catalogue-table td:first-child {
+    width: 42%;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
 .catalogue-table td:nth-child(2) {
-    width: auto;
+    width: 58%;
     text-align: left;
     white-space: normal;
 }
 .catalogue-table td:nth-child(2) form {
     display: flex;
     flex-wrap: wrap;
-    align-items: center;
+    align-items: flex-start;
     gap: 0.4rem;
     max-width: 100%;
 }
@@ -1558,6 +1566,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     color: var(--ink);
     text-overflow: ellipsis;
 }
+.catalogue-table td:nth-child(2) .btn-small { flex: 0 0 auto; }
 .catalogue-table td:nth-child(2) select:focus {
     outline: 1px solid var(--accent);
     outline-offset: 0;
@@ -1566,6 +1575,19 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 @media (max-width: 700px) {
     .diag-table td:first-child { width: 9rem; padding-left: 1rem; }
     .diag-table td:nth-child(2) { width: 4.5rem; }
+    /* The reconnect table can't keep two columns on a phone — the select needs
+       the full width. Stack each record's title above its relink control, and
+       undo the narrow diagnostics widths this query would otherwise impose. */
+    .catalogue-table, .catalogue-table tbody, .catalogue-table tr { display: block; width: 100%; }
+    .catalogue-table td,
+    .catalogue-table td:first-child,
+    .catalogue-table td:nth-child(2) {
+        display: block;
+        width: auto;
+    }
+    .catalogue-table td:first-child { padding-bottom: 0.25rem; }
+    .catalogue-table td:nth-child(2) { padding-top: 0; }
+    .catalogue-table tr { padding: 0.6rem 0; border-bottom: 1px solid var(--rule); }
 }
 
 .diag-ok,
