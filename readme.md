@@ -17,7 +17,9 @@
 * Audio and video play in the page through a transport styled to the active
   theme, with the web server delivering the bytes directly so seeking works.
   With JavaScript off, the browser's own player is used. An optional setting
-  plays a folder's audio as a playlist, with a queue and auto-advance
+  plays a folder's audio or video as a playlist, with a queue and auto-advance,
+  on a standalone page that carries the same chrome and colour scheme as the
+  rest of the site
 * Fast thumbnails when the Imagick or GD extension is available: listings and
   hover cards send small cached copies instead of full-size scans, and TIFF,
   HEIC, and AVIF files get a viewable preview. Originals are never modified,
@@ -45,14 +47,16 @@
 * Direct hotlinks to every file, copied to the clipboard in one click
 * SEO layer: per-file detail pages with canonical URLs, Open Graph and Twitter
   Card tags, an XML sitemap with image extensions, a generated llms.txt map for
-  AI crawlers, and optional clean URLs
-* Crawler controls in the admin: indexability switch, sitemap and llms.txt
-  toggles, robots.txt generator, sitemap preview, Bing ping, IndexNow key
+  AI crawlers, an identity.json document, a YAML library index, and optional clean URLs
+* Crawler controls in the admin: indexability switch, sitemap, llms.txt, JSON
+  identity.json and YAML index toggles, robots.txt generator, sitemap preview, Bing ping,
+  IndexNow key
   generation and one-click URL submission, and a clean-URL preflight that
   verifies mod_rewrite before letting the setting be enabled
 * Focused schema.org JSON-LD: WebSite, optional publisher, breadcrumbs,
   CollectionPage and ItemList on archives, with detailed typed nodes on file pages
-* Four colour schemes (Folio, Ledger, Garden, Night), remembered per visitor
+* Four colour schemes (Folio, Ledger, Garden, Night), remembered per visitor and
+  applied on every page, including the standalone playlist pages
 * Admin managed in the browser: Settings, Accounts with multiple users and
   in-app password change, a documentation viewer, and a diagnostics page
 * Hardened by default: CSRF tokens, namespaced login throttling, strict
@@ -122,7 +126,8 @@ assets/css/style.css   Stylesheet and colour schemes
 assets/css/flipbook.css  Styles for the PDF flip-view reader only
 assets/js/app.js       Listing behaviour: preview, print, editing, filtering
 assets/js/view.js      Detail page behaviour: printing
-assets/js/media.js     Themed audio and video transport; listing and detail
+assets/js/media.js     Themed audio and video transport, plus colour-scheme
+                       switching on the standalone playlist pages; listing and detail
 assets/js/admin.js     Admin-only: delete/remove confirmations, rewrite preflight
 assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
@@ -173,7 +178,7 @@ Neither is enforced until you:
 
 Until both are done, every PDF behaves as Public regardless of what's set on it — Diagnostics and each file's editor say so plainly. This is deliberate: a restriction that silently doesn't work would be worse than no restriction at all. **This feature requires Apache or LiteSpeed** (see Requirements above); the routing preflight fails safe on any server that can't confirm the rewrite, so an unsupported server never falsely presents a restriction.
 
-Restricting a PDF never affects its record page's own indexability: the sitemap, the page's `robots` meta tag, and `llms.txt` reference the record page exactly as they would for any other file. Add a `transcript` in the editor and it renders directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not.
+Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Viewer** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the PDF in the page through the signed viewer, with no download. The file's own bytes are never advertised: a Viewer (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is kept off every public surface — listing, page sitemap, and feed — as well as serving no bytes. In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video behaves the same way through its own Viewer and Hidden states.
 
 For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server can render PDF pages (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
 
@@ -332,11 +337,18 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   crawlers at `/llms.txt` (or `?action=llms`), built live from your titles,
   descriptions, and categories, with an optional introduction paragraph you
   write on this screen. Toggle it off to return 404. It also returns 404 while the whole site is non-indexable.
-* **feed.json.** A JSON Feed v1.1 at `/feed.json` (or `?action=feed_json`)
-  listing recent documents, for feed readers and AI agents. It cross-references
-  llms.txt in both directions: the feed points at llms.txt through its `_folio`
-  extension, and llms.txt links back to the feed. Every page advertises it with
-  a `rel="alternate"` link.
+* **identity.json.** A Schema.org identity document at `/identity.json` (or
+  `?action=identity`) describing who the site is and who it is about: a `Person`
+  (the subject the library documents) and the `WebSite` itself, in a linked
+  `@graph`. This is the "who and what is this site" facet for AI systems and
+  search engines, distinct from the sitemap and YAML index (what the library
+  contains) and llms.txt (a reading map). It cross-references its siblings and
+  is cross-referenced by them. Toggle it off to return 404.
+* **library.yaml AI usage policy.** The YAML library index carries a top-level
+  `permissions:` block declaring what AI systems may do with the content — quote,
+  summarise, train, commercial use — plus an optional note, all set on the
+  Settings screen. It states terms; it does not enforce them (robots.txt and the
+  access gates do that).
 * **robots.txt generator.** The screen shows a robots.txt reflecting the
   settings above, ready to copy into the file at your domain root. Folio never
   writes outside its own folder, so that final step stays manual by design.
@@ -744,9 +756,8 @@ Folio publishes two sitemaps:
 | Sitemap | Lists |
 | --- | --- |
 | `/sitemap.xml` | Record pages and standalone pages |
-| `/sitemap-pdf.xml` | The PDF files themselves |
+| `/sitemap-pdf.xml` | The public PDF files themselves |
 | `/sitemap-categories.xml` | The category archive pages |
-| `/feed.json` | JSON Feed v1.1 of recent documents |
 
 The second matters for a document library. Search engines index PDFs as pages
 in their own right, so a scanned certificate can be found directly rather than
@@ -1081,4 +1092,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.30.0. Single-file application with separated CSS and JS assets.
+1.35.0. Single-file application with separated CSS and JS assets.

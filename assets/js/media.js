@@ -541,3 +541,41 @@
         mountAll();
     }
 })();
+
+/* Colour-scheme switching. Mirrors the handler in app.js so pages that load
+   only media.js — the standalone audio and video playlist pages — honour the
+   reader's saved theme and carry a working picker. Idempotent: safe even if
+   app.js has already wired the same controls on a page that loads both. */
+(function () {
+    "use strict";
+    var root = document.documentElement;
+    var saved = null;
+    try { saved = localStorage.getItem("folio-theme"); } catch (e) {}
+    if (saved) {
+        root.setAttribute("data-theme", saved);
+    }
+    function markActive() {
+        var active = root.getAttribute("data-theme");
+        document.querySelectorAll(".theme-picker button").forEach(function (b) {
+            b.classList.toggle("active", b.getAttribute("data-set-theme") === active);
+        });
+    }
+    function wire() {
+        markActive();
+        document.querySelectorAll(".theme-picker button").forEach(function (b) {
+            if (b.dataset.themeWired) { return; }
+            b.dataset.themeWired = "1";
+            b.addEventListener("click", function () {
+                var theme = b.getAttribute("data-set-theme");
+                root.setAttribute("data-theme", theme);
+                try { localStorage.setItem("folio-theme", theme); } catch (e) {}
+                markActive();
+            });
+        });
+    }
+    if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", wire);
+    } else {
+        wire();
+    }
+})();

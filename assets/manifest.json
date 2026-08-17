@@ -1,9 +1,9 @@
 {
  "assets/css/style.css": {
   "min": "assets/css/style.min.css",
-  "size": 67990,
-  "sha256": "m+E1GMM0EkRfFDwlF2z2xSBcpk2mFs+h79eWINXfxnM=",
-  "min_size": 41678
+  "size": 69435,
+  "sha256": "pDknSqB7zFtrsLP2l2Aoqiq2lB148AZr6K4Y13NN3Ag=",
+  "min_size": 42481
  },
  "assets/css/flipbook.css": {
   "min": "assets/css/flipbook.min.css",
@@ -21,7 +21,7 @@
  },
  "assets/js/media.js": {
   "min": "assets/js/media.min.js",
-  "size": 22736
+  "size": 24233
  },
  "assets/js/admin.js": {
   "min": "assets/js/admin.min.js",

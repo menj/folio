@@ -808,6 +808,21 @@ phase it gates.
 
 ### Redaction: a phased plan
 
+**Status (1.30.0): PDFs shipped; images still planned.** PDF redaction now
+exists and follows the model below exactly — fractional rectangles marked in a
+dashboard editor, an image-only rendered copy served to the public with the
+boxes burned in, the original gated, and fail-closed behaviour when the render
+engine is missing. In terms of the phases below, that is R2 (render and cache),
+R4 (the marking tool), and the PDF portion of R3 (every PDF serve path —
+detail, preview, flip reader, hover, thumbnails, structured-data image — routes
+through the derivative). What remains is the **image** side: R1 (extending the
+access gate to image files) and redaction of images rather than PDFs. The
+design record below is kept because the image work still follows it; read the
+PDF feature as the first, proven instance of it. The settled decision from the
+open questions: redaction is its own flag beside `pdf_access`, not a fourth
+state of it, and a document can be partially public — the redacted copy public
+while the original is gated, which is the passport case the feature exists for.
+
 An archive of real documents needs to publish a passport or an identity card
 while hiding the number, the address, and the photograph. This is planned, and
 there is exactly one honest way to build it. The obvious way is a fake, so the

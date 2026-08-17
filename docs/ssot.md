@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.30.0. Update this file in the same commit as any change it describes.
+Version 1.35.0. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.30.0');` |
-| `changelog.md` | `## 1.30.0 — 17 August 2026` |
-| `readme.txt` | `Stable tag: 1.30.0` |
-| `readme.md` | `1.30.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.30.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.35.0');` |
+| `changelog.md` | `## 1.35.0 — 17 August 2026` |
+| `readme.txt` | `Stable tag: 1.35.0` |
+| `readme.md` | `1.35.0.` under `## Version` |
+| `security.md` | `The current supported release is **1.35.0**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -235,7 +235,8 @@ Public:
 | `?action=sitemap_pdf` | the document files themselves |
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
-| `?action=feed_json` | JSON Feed v1.1 of recent documents; references llms.txt |
+| `?action=identity` | Schema.org identity document — Person + WebSite (`/identity.json`) |
+| `?action=yaml` | YAML index of every public document (`/library.yaml`) |
 | `?action=llms` | llms.txt for AI crawlers |
 | `?indexnow_key=` | IndexNow ownership file |
 | `?action=rewrite_probe` | JSON, reports whether rewriting reached PHP |
@@ -263,7 +264,8 @@ Admin, all requiring a session:
 | `?action=logout` | POST, admin: end the session |
 
 Under clean URLs these become `/slug/`, `/category/slug/`, `/sitemap.xml`,
-`/sitemap-pdf.xml`, `/sitemap-categories.xml`, `/feed.json`, `/llms.txt`, and
+`/sitemap-pdf.xml`, `/sitemap-categories.xml`, `/identity.json`, `/llms.txt`,
+`/library.yaml`, and
 `/{key}.txt`. Admin paths keep their query-string form.
 
 ## Derivative images

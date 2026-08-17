@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.30.0**.
+The current supported release is **1.35.0**.
 
 ## Security controls
 
@@ -305,6 +305,13 @@ reachable at its plain URL. Every other file format, and every PDF on a
 server where enforcement isn't confirmed, has no per-file access control —
 `EXCLUDE_PATTERNS` can hide a file from listings and public URLs entirely,
 but there is no partial-access tier for anything other than PDFs.
+
+Note that a "viewer" document's *detail page* is intentionally public and
+indexable — that is the point of the tier: the page (title, description,
+transcript, structured data) is meant to be found in search, while the file's
+bytes stay gated behind the signed viewer. A crawlable page for a gated
+document is by design, not an exposure; only a way to reach the *bytes* without
+a valid signature is. A "hidden" document's page is not public.
 
 ## Reporting a vulnerability
 

@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.30.0');
+define('FOLIO_VERSION', '1.35.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -137,6 +137,7 @@ defined('PUBLISHER_TYPE')       || define('PUBLISHER_TYPE', 'Person');
 defined('PUBLISHER_NAME')       || define('PUBLISHER_NAME', '');
 defined('PUBLISHER_URL')        || define('PUBLISHER_URL', '');
 defined('SITE_LANGUAGE')        || define('SITE_LANGUAGE', 'en');
+defined('SITE_SAMEAS')          || define('SITE_SAMEAS', '');
 /**
  * Clean URLs.
  *
@@ -175,6 +176,13 @@ defined('PER_PAGE')             || define('PER_PAGE', 200);
 
 defined('SITEMAP_ENABLED')      || define('SITEMAP_ENABLED', true);
 defined('LLMS_ENABLED')         || define('LLMS_ENABLED', true);
+defined('YAML_ENABLED')         || define('YAML_ENABLED', true);
+defined('IDENTITY_ENABLED')     || define('IDENTITY_ENABLED', true);
+defined('AI_ALLOW_QUOTE')       || define('AI_ALLOW_QUOTE', true);
+defined('AI_ALLOW_SUMMARISE')   || define('AI_ALLOW_SUMMARISE', true);
+defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', false);
+defined('AI_ALLOW_COMMERCIAL')  || define('AI_ALLOW_COMMERCIAL', false);
+defined('AI_POLICY_NOTE')       || define('AI_POLICY_NOTE', '');
 defined('LLMS_INTRO')           || define('LLMS_INTRO', '');
 defined('SITE_INDEXABLE')       || define('SITE_INDEXABLE', true);
 defined('INDEXNOW_KEY')         || define('INDEXNOW_KEY', '');
@@ -1223,25 +1231,40 @@ function media_full_access(string $rel, array $m): bool
 }
 
 /**
- * Whether this file may appear on public surfaces (listing to the public,
- * sitemaps, feed). False for a "hidden" video while the guard is on, and for a
- * "viewer" video whose enforcement is not yet confirmed. PDFs keep their own
- * rules elsewhere.
+ * Whether a file's *page* may be discovered and indexed — distinct from whether
+ * its *bytes* are freely accessible. This is the "indexed but gated" split: a
+ * "viewer" PDF or video keeps a public, crawlable detail page (title, meta
+ * description, structured data) so search engines list it, while the file
+ * itself stays gated and out of the file sitemap. Only "hidden" is kept off
+ * every public surface.
+ *
+ * Use this for the page listing, the page/URL sitemap, and the feed. Keep using
+ * media_full_access() for anything that exposes the bytes (the file sitemap,
+ * contentUrl, download actions).
  */
-function video_public_visible(string $rel, array $m): bool
+function media_page_visible(string $rel, array $m): bool
 {
-    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
-    if (file_kind($ext) !== 'video' || !video_guard_active()) {
-        return true;
+    $ext  = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+    $kind = file_kind($ext);
+
+    if ($ext === 'pdf' && pdf_access_enforced()) {
+        // public and viewer keep an indexable page; hidden does not.
+        return pdf_access_of($m) !== 'hidden';
     }
-    $access = video_access_of($m);
-    if ($access === 'public') {
-        return true;
+    if ($kind === 'video' && video_guard_active()) {
+        $access = video_access_of($m);
+        if ($access === 'hidden') {
+            return false;
+        }
+        if ($access === 'viewer') {
+            // Only expose the page once the gate is actually enforced; an
+            // unverified viewer file is not yet safely gated, so treat it as
+            // not-yet-public rather than advertise a page whose bytes leak.
+            return video_access_enforced();
+        }
+        return true; // public
     }
-    if ($access === 'viewer') {
-        return video_access_enforced();
-    }
-    return false; // hidden
+    return true;
 }
 
 /** The sitemap listing the PDF files themselves. */
@@ -1260,12 +1283,12 @@ function url_sitemap_categories(): string
         : BASE_URL . '?action=sitemap_categories';
 }
 
-/** URL of the JSON Feed (JSON Feed v1.1) for the library. */
-function url_feed(): string
+/** URL of the Schema.org identity document for the site. */
+function url_identity(): string
 {
     return PRETTY_URLS
-        ? rtrim(BASE_URL, '/') . '/feed.json'
-        : BASE_URL . '?action=feed_json';
+        ? rtrim(BASE_URL, '/') . '/identity.json'
+        : BASE_URL . '?action=identity';
 }
 
 /** URL of the llms.txt guidance file. */
@@ -1274,6 +1297,48 @@ function url_llms(): string
     return PRETTY_URLS
         ? rtrim(BASE_URL, '/') . '/llms.txt'
         : BASE_URL . '?action=llms';
+}
+
+/** URL of the YAML library index. */
+function url_yaml(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/library.yaml'
+        : BASE_URL . '?action=yaml';
+}
+
+/**
+ * An XML comment block listing the sibling machine-readable resources, for the
+ * head of each sitemap. XML sitemaps have no schema slot for cross-references,
+ * so a comment is the correct idiom — it cross-links the family without
+ * breaking validation. Only enabled resources are listed. The text is
+ * comment-safe (no "--" or ">" can appear in these URLs).
+ */
+function sitemap_sibling_comment(): string
+{
+    $base = rtrim(BASE_URL, '/') . '/';
+    $lines = [];
+    if (SITEMAP_ENABLED) {
+        $lines[] = 'document sitemap: ' . url_sitemap_pdf();
+        $lines[] = 'category sitemap: ' . url_sitemap_categories();
+    }
+    if (IDENTITY_ENABLED) {
+        $lines[] = 'identity: ' . url_identity();
+    }
+    if (YAML_ENABLED) {
+        $lines[] = 'YAML index: ' . url_yaml();
+    }
+    if (LLMS_ENABLED) {
+        $lines[] = 'llms.txt: ' . url_llms();
+    }
+    if (!$lines) {
+        return '';
+    }
+    // Strip anything that could close the comment early, defensively.
+    $safe = array_map(static fn($l) => str_replace(['--', '>'], ['- ', ''], $l), $lines);
+    return "<!-- Related resources for this library:\n     "
+         . implode("\n     ", $safe)
+         . " -->\n";
 }
 
 /** URL of one part of a partitioned sitemap. */
@@ -1519,14 +1584,16 @@ if (PRETTY_URLS) {
         $_GET['indexnow_key'] = $m[1];
     } elseif ($route === 'llms.txt') {
         $_GET['action'] = 'llms';
+    } elseif ($route === 'library.yaml') {
+        $_GET['action'] = 'yaml';
     } elseif ($route === 'sitemap.xml') {
         $_GET['action'] = 'sitemap';
     } elseif ($route === 'sitemap-pdf.xml') {
         $_GET['action'] = 'sitemap_pdf';
     } elseif ($route === 'sitemap-categories.xml') {
         $_GET['action'] = 'sitemap_categories';
-    } elseif ($route === 'feed.json') {
-        $_GET['action'] = 'feed_json';
+    } elseif ($route === 'identity.json') {
+        $_GET['action'] = 'identity';
     } elseif (preg_match('#^sitemap-([0-9]+)\.xml$#', $route, $m)) {
         $_GET['action'] = 'sitemap';
         $_GET['part'] = $m[1];
@@ -2871,7 +2938,8 @@ function reserved_slugs(): array
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
         'diagnostics', 'pages', 'page', 'about', 'faq', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
-        'feed', 'feed.json', 'feed_json',
+        'yaml', 'library.yaml',
+        'identity', 'identity.json',
         'raw', 'render', 'thumb', 'flipbook', 'ocr', 'meta', 'view', 'search',
         'feed', 'rss', 'atom', 'assets', 'lib', 'data', 'docs', 'uploads',
         'install', 'index', 'api', 'relink', 'reconcile',
@@ -4566,8 +4634,11 @@ function render_footer(): void
             <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
             <?php endif; ?>
-            <?php if (SITE_INDEXABLE): ?>
-                <a href="<?= e(url_feed()) ?>">JSON</a>
+            <?php if (YAML_ENABLED && SITE_INDEXABLE): ?>
+                <a href="<?= e(url_yaml()) ?>">YAML</a>
+            <?php endif; ?>
+            <?php if (IDENTITY_ENABLED && SITE_INDEXABLE): ?>
+                <a href="<?= e(url_identity()) ?>">Identity</a>
             <?php endif; ?>
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">Sitemap</a>
@@ -5820,6 +5891,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 } elseif (settings_store([
                     'SITEMAP_ENABLED' => !empty($_POST['sitemap_enabled']),
                     'LLMS_ENABLED' => !empty($_POST['llms_enabled']),
+                    'YAML_ENABLED' => !empty($_POST['yaml_enabled']),
+                    'IDENTITY_ENABLED' => !empty($_POST['identity_enabled']),
                     'LLMS_INTRO' => $intro,
                     'SITE_INDEXABLE' => !empty($_POST['site_indexable']),
                 ])) {
@@ -5850,6 +5923,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
     $sitemap_url = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap';
     $llms_url    = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms';
+    $identity_url = url_identity();
+    $yaml_url    = url_yaml();
 
     /* Sitemap preview: URL count and a small sample. */
     $all_indexed    = index_all_files($mime_map);
@@ -5952,6 +6027,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
         <label for="c-intro">llms.txt introduction (optional)</label>
         <textarea id="c-intro" name="llms_intro" rows="3" maxlength="1000" placeholder="A paragraph of context for AI systems reading the library."><?= e(LLMS_INTRO) ?></textarea>
+
+        <label class="check-row">
+            <input type="checkbox" name="identity_enabled" value="1" <?= IDENTITY_ENABLED ? 'checked' : '' ?>>
+            Serve the identity.json document
+        </label>
+        <p class="field-note">A Schema.org identity document (Person + WebSite) telling AI systems who the site is and who it is about. Currently at <a href="<?= e($identity_url) ?>"><?= e($identity_url) ?></a><?= IDENTITY_ENABLED ? '' : ' (disabled, returns 404)' ?>.</p>
+
+        <label class="check-row">
+            <input type="checkbox" name="yaml_enabled" value="1" <?= YAML_ENABLED ? 'checked' : '' ?>>
+            Serve the YAML library index
+        </label>
+        <p class="field-note">A full YAML index of every public document — title, URL, category, tags, and date. There is no crawler convention for this; it is a clean export for YAML tooling. Currently at <a href="<?= e($yaml_url) ?>"><?= e($yaml_url) ?></a><?= YAML_ENABLED ? '' : ' (disabled, returns 404)' ?>.</p>
 
         <div><button type="submit" class="btn">Save</button></div>
     </form>
@@ -6319,6 +6406,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             $purl  = trim((string) ($_POST['publisher_url'] ?? ''));
             $lang  = trim((string) ($_POST['site_language'] ?? 'en'));
 
+            // sameAs: one profile URL per line. Each must be a valid http(s)
+            // URL; anything else is rejected so identity.json never carries a
+            // malformed or non-URL sameAs entry. Stored newline-separated.
+            $sameas_raw   = (string) ($_POST['site_sameas'] ?? '');
+            $sameas_list  = array_values(array_filter(array_map('trim', preg_split('/[\r\n]+/', $sameas_raw))));
+            $sameas_bad   = [];
+            foreach ($sameas_list as $u) {
+                if (!preg_match('#^https?://#', $u) || !filter_var($u, FILTER_VALIDATE_URL)) {
+                    $sameas_bad[] = $u;
+                }
+            }
+            $sameas = implode("\n", $sameas_list);
+
             if ($name === '' || strlen($name) > 100) {
                 $error = 'The site name is required and must be at most 100 characters.';
             } elseif (strlen($desc) > 300) {
@@ -6327,6 +6427,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                 $error = 'The publisher type must be Person or Organization.';
             } elseif ($purl !== '' && !preg_match('#^https?://#', $purl)) {
                 $error = 'The publisher URL must start with http:// or https://.';
+            } elseif ($sameas_bad) {
+                $error = 'Each "same as" profile must be a full http(s) URL. Not valid: ' . implode(', ', array_slice($sameas_bad, 0, 3)) . '.';
             } elseif (!preg_match('/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/', $lang)) {
                 $error = 'The language must be a BCP 47 tag such as en or ms.';
             } else {
@@ -6336,7 +6438,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_TYPE' => $ptype,
                     'PUBLISHER_NAME' => $pname,
                     'PUBLISHER_URL' => $purl,
+                    'SITE_SAMEAS' => $sameas,
                     'SITE_LANGUAGE' => $lang,
+                    'AI_ALLOW_QUOTE' => !empty($_POST['ai_allow_quote']),
+                    'AI_ALLOW_SUMMARISE' => !empty($_POST['ai_allow_summarise']),
+                    'AI_ALLOW_TRAIN' => !empty($_POST['ai_allow_train']),
+                    'AI_ALLOW_COMMERCIAL' => !empty($_POST['ai_allow_commercial']),
+                    'AI_POLICY_NOTE' => trim((string) ($_POST['ai_policy_note'] ?? '')),
                     'SHOW_ADMIN_LINK' => !empty($_POST['show_admin_link']),
                     'AUDIO_PLAYLIST' => !empty($_POST['audio_playlist']),
                 ];
@@ -6359,15 +6467,25 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_name' => PUBLISHER_NAME,
         'publisher_url' => PUBLISHER_URL,
         'site_language' => SITE_LANGUAGE,
+        'site_sameas' => SITE_SAMEAS,
+        'ai_allow_quote' => AI_ALLOW_QUOTE,
+        'ai_allow_summarise' => AI_ALLOW_SUMMARISE,
+        'ai_allow_train' => AI_ALLOW_TRAIN,
+        'ai_allow_commercial' => AI_ALLOW_COMMERCIAL,
+        'ai_policy_note' => AI_POLICY_NOTE,
         'show_admin_link' => SHOW_ADMIN_LINK,
         'audio_playlist' => AUDIO_PLAYLIST,
     ];
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '') {
-        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'site_language'] as $k) {
+        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'site_language', 'site_sameas', 'ai_policy_note'] as $k) {
             if (isset($_POST[$k])) {
                 $cur[$k] = (string) $_POST[$k];
             }
         }
+        $cur['ai_allow_quote'] = !empty($_POST['ai_allow_quote']);
+        $cur['ai_allow_summarise'] = !empty($_POST['ai_allow_summarise']);
+        $cur['ai_allow_train'] = !empty($_POST['ai_allow_train']);
+        $cur['ai_allow_commercial'] = !empty($_POST['ai_allow_commercial']);
         $cur['show_admin_link'] = !empty($_POST['show_admin_link']);
         $cur['audio_playlist'] = !empty($_POST['audio_playlist']);
     }
@@ -6431,8 +6549,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         <label for="s-purl">Publisher URL</label>
         <input type="text" id="s-purl" name="publisher_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_url']) ?>">
 
+        <label for="s-sameas">Verified profiles (one URL per line)</label>
+        <textarea id="s-sameas" name="site_sameas" rows="3" placeholder="https://www.wikidata.org/wiki/…&#10;https://linkedin.com/in/…&#10;https://twitter.com/…"><?= e((string) $cur['site_sameas']) ?></textarea>
+        <p class="field-note">Added to <code>identity.json</code> as <code>sameAs</code>, linking the site's subject to authoritative profiles (Wikidata, LinkedIn, ORCID, etc.). Use only real, verified URLs — an absent list is safer than an incorrect one. Leave empty to omit.</p>
+
         <label for="s-lang">Language (BCP 47, e.g. en or ms)</label>
         <input type="text" id="s-lang" name="site_language" maxlength="20" value="<?= e((string) $cur['site_language']) ?>">
+
+        <h3 class="detail-subtitle">AI usage policy</h3>
+        <p class="field-note">A site-wide statement, published in <code>library.yaml</code> under <code>permissions:</code>, of what you permit AI systems to do with this library's content. This is a declaration of intent, not enforcement — it states your terms; it does not compel anyone.</p>
+
+        <label class="check-row">
+            <input type="checkbox" name="ai_allow_quote" value="1" <?= $cur['ai_allow_quote'] ? 'checked' : '' ?>>
+            Allow AI systems to quote content
+        </label>
+        <label class="check-row">
+            <input type="checkbox" name="ai_allow_summarise" value="1" <?= $cur['ai_allow_summarise'] ? 'checked' : '' ?>>
+            Allow AI systems to summarise content
+        </label>
+        <label class="check-row">
+            <input type="checkbox" name="ai_allow_train" value="1" <?= $cur['ai_allow_train'] ? 'checked' : '' ?>>
+            Allow use of content for AI model training
+        </label>
+        <label class="check-row">
+            <input type="checkbox" name="ai_allow_commercial" value="1" <?= $cur['ai_allow_commercial'] ? 'checked' : '' ?>>
+            Allow commercial use of content by AI systems
+        </label>
+
+        <label for="s-ainote">Policy note (optional)</label>
+        <textarea id="s-ainote" name="ai_policy_note" rows="2" maxlength="500" placeholder="Any additional terms, in plain language."><?= e((string) $cur['ai_policy_note']) ?></textarea>
 
         <label class="check-row">
             <input type="checkbox" name="show_admin_link" value="1" <?= $cur['show_admin_link'] ? 'checked' : '' ?>>
@@ -7031,7 +7176,6 @@ if (isset($_GET['page'])) {
 <meta name="description" content="<?= e($page_desc) ?>">
 <?php if (!$indexable): ?><meta name="robots" content="noindex, nofollow"><?php endif; ?>
 <link rel="canonical" href="<?= e($page_url) ?>">
-<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta property="og:type" content="website">
 <meta property="og:title" content="<?= e($seo_title !== '' ? $seo_title : $title) ?>">
 <meta property="og:description" content="<?= e($page_desc) ?>">
@@ -8169,6 +8313,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
     <span class="running-head">Playlist</span>
     <nav class="crumbs"><a href="<?= e($back_url) ?>">&larr; <?= e($pl_title) ?></a></nav>
+    <div class="theme-picker" role="group" aria-label="Colour scheme">
+        <button data-set-theme="folio" title="Folio"></button>
+        <button data-set-theme="ledger" title="Ledger"></button>
+        <button data-set-theme="garden" title="Garden"></button>
+        <button data-set-theme="night" title="Night"></button>
+    </div>
 </header>
 <main class="playlist-page" id="folio-main" tabindex="-1">
     <div class="playlist-wrap">
@@ -8187,6 +8337,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
         </div>
     </div>
 </main>
+<?php render_footer(); ?>
 <script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
 </body>
 </html>
@@ -8529,10 +8680,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap_pdf') {
             continue;
         }
         $rel = (string) $f['rel'];
-        // Every PDF in the library is listed. Files matching EXCLUDE_PATTERNS
-        // never reach this loop at all: index_all_files() has already dropped
-        // them, and they return 404 on every route, so listing them would only
-        // send crawlers to a dead address.
+        // Every *public* PDF in the library is listed. Files matching
+        // EXCLUDE_PATTERNS never reach this loop at all: index_all_files() has
+        // already dropped them, and they return 404 on every route, so listing
+        // them would only send crawlers to a dead address. A gated ("viewer"
+        // or "hidden") PDF is also skipped here: this sitemap advertises file
+        // bytes, and a gated file's bytes are not public. Its indexable detail
+        // *page* still appears in the main page sitemap — that is the
+        // "indexed page, gated file" split.
+        if (!media_full_access($rel, meta_load()[$rel] ?? [])) {
+            continue;
+        }
         $abs = resolve_path($rel);
         if ($abs === null || !is_file($abs)) {
             continue;
@@ -8549,6 +8707,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap_pdf') {
     send_public_cache_headers(900);
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
     echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+    echo sitemap_sibling_comment();
     foreach ($entries as $e) {
         echo "  <url>\n";
         echo '    <loc>' . htmlspecialchars($e['loc'], ENT_XML1) . "</loc>\n";
@@ -8580,6 +8739,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap_categories') {
     send_public_cache_headers(900);
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
     echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+    echo sitemap_sibling_comment();
     foreach (category_register($all) as $cat_name => $count) {
         echo "  <url>\n";
         echo '    <loc>' . htmlspecialchars(url_category($cat_name), ENT_XML1) . "</loc>\n";
@@ -8619,7 +8779,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         if (!isset($mime_map[$f['ext']])) {
             continue;
         }
-        if (!video_public_visible((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
+        if (!media_page_visible((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
             continue;
         }
         $e  = "  <url>\n";
@@ -8690,6 +8850,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
         echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
            . ' xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">' . "\n";
+        echo sitemap_sibling_comment();
         foreach ($entries as $e) {
             echo $e;
         }
@@ -8701,6 +8862,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         // Index listing every part.
         echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
         echo '<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">' . "\n";
+        echo sitemap_sibling_comment();
         for ($i = 1; $i <= $parts; $i++) {
             $slice = array_slice($entries, ($i - 1) * SITEMAP_MAX_URLS, SITEMAP_MAX_URLS);
             $newest = 0;
@@ -8729,6 +8891,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
     echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
     echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
        . ' xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">' . "\n";
+    echo sitemap_sibling_comment();
     foreach (array_slice($entries, ($requested_part - 1) * SITEMAP_MAX_URLS, SITEMAP_MAX_URLS) as $e) {
         echo $e;
     }
@@ -8882,98 +9045,218 @@ if (($_GET['action'] ?? '') === 'logout' || ($_POST['action'] ?? '') === 'logout
 }
 
 /* ------------------------------------------------------------------ */
-/* llms.txt: a curated map of the library for AI crawlers              */
+/* identity.json: a Schema.org identity document for the site          */
 /* ------------------------------------------------------------------ */
-if (isset($_GET['action']) && $_GET['action'] === 'feed_json') {
-    // A JSON Feed v1.1 document (https://jsonfeed.org/version/1.1). Standalone
-    // mode: the library is a single site and its items are its documents. A
-    // generic JSON Feed reader that ignores the _folio extension can still read
-    // every item. Gated on indexability, like the sitemaps and llms.txt, so a
-    // private library does not publish one.
-    if (!SITE_INDEXABLE) {
+if (isset($_GET['action']) && $_GET['action'] === 'identity') {
+    // A machine-parseable identity document for AI systems and search engines:
+    // who this site is and who it is about, expressed as a Schema.org @graph.
+    // Unlike the sitemap/YAML index (what the library contains) or llms.txt (a
+    // reading map), this answers "what and who is this site" — the canonical
+    // Person the biography is about, and the WebSite itself. Gated on its own
+    // toggle and indexability, like the other discovery files.
+    if (!IDENTITY_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
         exit('Not found');
     }
-    header('Content-Type: application/feed+json; charset=UTF-8');
+    header('Content-Type: application/json; charset=UTF-8');
     send_public_cache_headers(900);
 
+    $base    = rtrim(BASE_URL, '/') . '/';
+    $person_id  = $base . '#person';
+    $website_id = $base . '#website';
+
+    // The site's subject. PUBLISHER_NAME is the human the library documents;
+    // PUBLISHER_TYPE lets a library that is really an organisation say so.
+    $subjectType = in_array(PUBLISHER_TYPE, ['Person', 'Organization'], true) ? PUBLISHER_TYPE : 'Person';
+    $subject = [
+        '@type' => $subjectType,
+        '@id'   => $person_id,
+        'name'  => PUBLISHER_NAME !== '' ? PUBLISHER_NAME : SITE_NAME,
+    ];
+    if (PUBLISHER_URL !== '') {
+        $subject['url'] = PUBLISHER_URL;
+    }
+    if (SITE_DESCRIPTION !== '') {
+        $subject['description'] = SITE_DESCRIPTION;
+    }
+    // sameAs is deliberately omitted unless real verified profiles exist: an
+    // absent sameAs is safer than an unverifiable one. SITE_SAMEAS, when set,
+    // is a comma- or newline-separated list of canonical profile URLs.
+    $sameAs = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
+    $sameAs = array_values(array_filter($sameAs, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
+    if ($sameAs) {
+        $subject['sameAs'] = $sameAs;
+    }
+
+    $website = [
+        '@type'   => 'WebSite',
+        '@id'     => $website_id,
+        'name'    => SITE_NAME,
+        'url'     => $base,
+        'inLanguage' => SITE_LANGUAGE,
+    ];
+    if (SITE_DESCRIPTION !== '') {
+        $website['description'] = SITE_DESCRIPTION;
+    }
+    // The site is about, and published by, its subject.
+    $website['about']     = ['@id' => $person_id];
+    $website['publisher'] = ['@id' => $person_id];
+    if (SITE_ICON !== '') {
+        $website['image'] = $base . ltrim(SITE_ICON, '/');
+    }
+
+    // Point at the sibling discovery files so a consumer that finds identity
+    // first can reach the rest. Only enabled resources are listed.
+    $related = [];
+    if (SITEMAP_ENABLED) {
+        $related[] = PRETTY_URLS ? $base . 'sitemap.xml' : BASE_URL . '?action=sitemap';
+    }
+    if (LLMS_ENABLED) {
+        $related[] = url_llms();
+    }
+    if (YAML_ENABLED) {
+        $related[] = url_yaml();
+    }
+    if ($related) {
+        // subjectOf ties the discovery files to the WebSite entity.
+        $website['subjectOf'] = array_map(static fn($u) => ['@type' => 'CreativeWork', 'url' => $u], $related);
+    }
+
+    $doc = [
+        '@context' => 'https://schema.org',
+        '@graph'   => [$subject, $website],
+    ];
+    echo json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
+/* library.yaml: a YAML index of every public document                 */
+/* ------------------------------------------------------------------ */
+
+if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
+    // A YAML index of the whole public library. Unlike the sitemap, feed and
+    // llms.txt, there is no crawler convention for a YAML site index; this is a
+    // clean, well-formed machine- and human-readable export for anyone who
+    // prefers YAML tooling. Gated on indexability and its own toggle, like the
+    // other index files, and it lists only public items (media_page_visible),
+    // so a gated document's file never appears here.
+    if (!YAML_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    header('Content-Type: application/yaml; charset=UTF-8');
+    send_public_cache_headers(900);
+
+    /**
+     * Emit a scalar safe for YAML. Quotes and escapes anything that could be
+     * misread as structure, a number, a bool, or null; plain strings are left
+     * bare. Always double-quoted output uses JSON string escaping, which YAML
+     * is a superset of, so control characters and quotes are handled.
+     */
+    $y = static function ($v): string {
+        if ($v === null) {
+            return '""';
+        }
+        if (is_bool($v)) {
+            return $v ? 'true' : 'false';
+        }
+        if (is_int($v) || is_float($v)) {
+            return (string) $v;
+        }
+        $s = (string) $v;
+        if ($s === '') {
+            return '""';
+        }
+        // Bare only when it cannot be confused with YAML structure/types.
+        $reserved = ['true','false','null','yes','no','on','off','~'];
+        $looksNumber = preg_match('/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/', $s) === 1;
+        $safeBare = preg_match('/^[A-Za-z0-9][A-Za-z0-9 _.\/@()#-]*$/', $s) === 1
+            && !in_array(strtolower($s), $reserved, true)
+            && !$looksNumber
+            && substr($s, -1) !== ' ';
+        if ($safeBare) {
+            return $s;
+        }
+        // JSON-encode gives a valid double-quoted YAML scalar.
+        return json_encode($s, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    };
+
     $all = index_all_files($mime_map);
-    // A "hidden" video, or an unverified "viewer" video, is not a public item.
     $all = array_values(array_filter($all, static function ($f) {
-        return video_public_visible((string) ($f['rel'] ?? ''), meta_load()[$f['rel'] ?? ''] ?? []);
+        return media_page_visible((string) ($f['rel'] ?? ''), meta_load()[$f['rel'] ?? ''] ?? []);
     }));
-    // Most recently changed first; a feed is a recent-items resource, so it
-    // carries the newest documents rather than the whole library.
     usort($all, static fn($a, $b) => (int) ($b['lastmod'] ?? 0) <=> (int) ($a['lastmod'] ?? 0));
 
-    $items = [];
-    foreach (array_slice($all, 0, 50) as $f) {
+    $base = rtrim(BASE_URL, '/') . '/';
+    $out  = "# " . SITE_NAME . " — library index\n";
+    $out .= "# Generated by Folio " . FOLIO_VERSION . ". A YAML index of every public document.\n";
+    $out .= "site:\n";
+    $out .= "  name: " . $y(SITE_NAME) . "\n";
+    $out .= "  url: " . $y($base) . "\n";
+    if (SITE_DESCRIPTION !== '') {
+        $out .= "  description: " . $y(SITE_DESCRIPTION) . "\n";
+    }
+    $out .= "  language: " . $y(SITE_LANGUAGE) . "\n";
+    if (PUBLISHER_NAME !== '') {
+        $out .= "  publisher: " . $y(PUBLISHER_NAME) . "\n";
+    }
+    $out .= "  count: " . count($all) . "\n";
+    // Point back at the sibling discovery files, closing the loop between them.
+    $out .= "  resources:\n";
+    if (SITEMAP_ENABLED) {
+        $out .= "    sitemap: " . $y(PRETTY_URLS ? $base . 'sitemap.xml' : BASE_URL . '?action=sitemap') . "\n";
+        $out .= "    document_sitemap: " . $y(url_sitemap_pdf()) . "\n";
+        $out .= "    category_sitemap: " . $y(url_sitemap_categories()) . "\n";
+    }
+    if (IDENTITY_ENABLED) {
+        $out .= "    identity: " . $y(url_identity()) . "\n";
+    }
+    if (LLMS_ENABLED) {
+        $out .= "    llms: " . $y(url_llms()) . "\n";
+    }
+    // Site-wide AI usage policy. A declaration of intent for AI systems that
+    // read this file — what the publisher permits doing with the library's
+    // content. Not an enforcement mechanism (robots.txt and the access gates
+    // are that); a clear, machine-readable statement of terms.
+    $out .= "  permissions:\n";
+    $out .= "    quote: "     . ($y(AI_ALLOW_QUOTE ? true : false))      . "\n";
+    $out .= "    summarise: " . ($y(AI_ALLOW_SUMMARISE ? true : false))  . "\n";
+    $out .= "    train: "     . ($y(AI_ALLOW_TRAIN ? true : false))      . "\n";
+    $out .= "    commercial: ". ($y(AI_ALLOW_COMMERCIAL ? true : false)) . "\n";
+    if (AI_POLICY_NOTE !== '') {
+        $out .= "    note: " . $y(AI_POLICY_NOTE) . "\n";
+    }
+    $out .= "documents:\n";
+    if (!$all) {
+        $out .= "  []\n";
+    }
+    foreach ($all as $f) {
         $title = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
-        // content_text is required by JSON Feed and must be non-empty; the
-        // title is the guaranteed-present fallback when there is no description.
-        $text  = $f['desc'] !== '' ? $f['desc'] : $title;
-        $item  = [
-            'id'           => $f['view'],
-            'url'          => $f['view'],
-            'title'        => $title,
-            'content_text' => $text,
-        ];
-        if (!empty($f['lastmod'])) {
-            $stamp = date('c', (int) $f['lastmod']);
-            $item['date_published'] = $stamp;
-            $item['date_modified']  = $stamp;
+        $out .= "  - title: " . $y($title) . "\n";
+        $out .= "    url: " . $y($f['view']) . "\n";
+        if (($f['category'] ?? '') !== '') {
+            $out .= "    category: " . $y($f['category']) . "\n";
+        }
+        if (($f['desc'] ?? '') !== '') {
+            $out .= "    description: " . $y($f['desc']) . "\n";
         }
         $tags = array_values(array_filter((array) ($f['tags'] ?? [])));
-        if ($f['category'] !== '' && !in_array($f['category'], $tags, true)) {
-            $tags[] = $f['category'];
-        }
         if ($tags) {
-            $item['tags'] = $tags;
+            $out .= "    tags:\n";
+            foreach ($tags as $t) {
+                $out .= "      - " . $y($t) . "\n";
+            }
         }
-        if ($f['language'] !== '') {
-            $item['language'] = $f['language'];
+        if (($f['language'] ?? '') !== '') {
+            $out .= "    language: " . $y($f['language']) . "\n";
         }
-        // An image document can show its own thumbnail; other kinds do not get
-        // a fabricated image.
-        if ($f['kind'] === 'image' && $f['hotlink'] !== '') {
-            $item['image'] = $f['hotlink'];
+        if (!empty($f['lastmod'])) {
+            $out .= "    modified: " . $y(date('c', (int) $f['lastmod'])) . "\n";
         }
-        $items[] = $item;
     }
 
-    $base = rtrim(BASE_URL, '/') . '/';
-    $feed = [
-        'version'       => 'https://jsonfeed.org/version/1.1',
-        'title'         => SITE_NAME,
-        'home_page_url' => $base,
-        'feed_url'      => url_feed(),
-        'description'   => SITE_DESCRIPTION,
-        'language'      => SITE_LANGUAGE,
-        'favicon'       => $base . 'assets/img/favicon.ico',
-        'icon'          => $base . 'assets/img/apple-touch-icon.png',
-    ];
-    if (PUBLISHER_NAME !== '') {
-        $author = ['name' => PUBLISHER_NAME];
-        if (PUBLISHER_URL !== '') {
-            $author['url'] = PUBLISHER_URL;
-        }
-        $feed['authors'] = [$author];
-    }
-    // Custom extension. Member names carry no leading underscore and no period,
-    // per the JSON Feed extension rules. This is where feed.json points back at
-    // llms.txt, closing the bidirectional loop, and lists the other
-    // machine-readable resources.
-    $feed['_folio'] = [
-        'host'             => (string) parse_url(BASE_URL, PHP_URL_HOST),
-        'sitename'         => SITE_NAME,
-        'mode'             => 'standalone',
-        'llms'             => url_llms(),
-        'sitemap'          => PRETTY_URLS ? $base . 'sitemap.xml' : BASE_URL . '?action=sitemap',
-        'additionalsitemaps' => [url_sitemap_pdf(), url_sitemap_categories()],
-    ];
-    $feed['items'] = $items;
-
-    echo json_encode($feed, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    echo $out;
     exit;
 }
 
@@ -9025,15 +9308,23 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         }
         $out .= "\n";
     }
-    $out .= "## Machine-readable\n\n"
-          . '- [Machine-readable JSON Feed](' . url_feed()
-          . "): standards-compliant JSON Feed v1.1 for this library.\n"
-          . '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
-          . "): every page in the library.\n"
-          . '- [Document sitemap](' . url_sitemap_pdf()
-          . "): the PDF files themselves.\n"
-          . '- [Category sitemap](' . url_sitemap_categories()
-          . "): the category archive pages.\n";
+    $out .= "## Machine-readable\n\n";
+    if (IDENTITY_ENABLED) {
+        $out .= '- [Identity](' . url_identity()
+              . "): Schema.org identity document — who the site is and who it is about.\n";
+    }
+    if (YAML_ENABLED) {
+        $out .= '- [YAML index](' . url_yaml()
+              . "): every public document as YAML — title, URL, category, tags, date.\n";
+    }
+    if (SITEMAP_ENABLED) {
+        $out .= '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
+              . "): every page in the library.\n"
+              . '- [Document sitemap](' . url_sitemap_pdf()
+              . "): the public PDF files themselves.\n"
+              . '- [Category sitemap](' . url_sitemap_categories()
+              . "): the category archive pages.\n";
+    }
     exit($out);
 }
 
@@ -9609,7 +9900,6 @@ if (isset($_GET['cat'])) {
 <title><?= e($cat_name) ?> &ndash; <?= e(SITE_NAME) ?></title>
 <meta name="description" content="<?= e($cat_desc) ?>">
 <link rel="canonical" href="<?= e($cat_url) ?>">
-<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
@@ -9831,7 +10121,6 @@ if (isset($_GET['view'])) {
 <title><?= e($head_title) ?></title>
 <meta name="description" content="<?= e($meta_desc) ?>">
 <link rel="canonical" href="<?= e($view) ?>">
-<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="<?= $kind === 'image' ? 'website' : 'article' ?>">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
@@ -10013,7 +10302,7 @@ foreach (scandir($abs_dir) as $entry) {
         $m = $meta[$rel_entry] ?? [];
         // A non-public video is kept out of the public listing entirely; an
         // admin still sees the row so the file can be managed.
-        if (!is_admin() && !video_public_visible($rel_entry, $m)) {
+        if (!is_admin() && !media_page_visible($rel_entry, $m)) {
             continue;
         }
         $pdf_access  = pdf_access_of($m);
@@ -10211,7 +10500,6 @@ $listing_ld = [
 <title><?= e($page_title) ?></title>
 <meta name="description" content="<?= e($rel_dir === '' ? SITE_DESCRIPTION : basename($rel_dir) . ': documents and images in ' . SITE_NAME) ?>">
 <link rel="canonical" href="<?= e($page_url($page_no)) ?>">
-<?php if (SITE_INDEXABLE): ?><link rel="alternate" type="application/feed+json" title="<?= e(SITE_NAME) ?>" href="<?= e(url_feed()) ?>"><?php endif; ?>
 <?php if ($paginated && $page_no > 1): ?><link rel="prev" href="<?= e($page_url($page_no - 1)) ?>"><?php endif; ?>
 <?php if ($paginated && $page_no < $page_count): ?><link rel="next" href="<?= e($page_url($page_no + 1)) ?>"><?php endif; ?>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
@@ -10360,21 +10648,30 @@ $listing_ld = [
                              . '<a class="col-sort" href="' . e($href) . '">' . e($label)
                              . '<span class="sort-mark" aria-hidden="true"></span></a></th>';
                     };
-                    echo $col('name', 'Name'), $col('size', 'Size'), $col('date', 'Date');
+                    echo $col('name', 'Name');
+                    // Size and Date describe files, not folders. On a
+                    // folders-only view (no files anywhere in this directory)
+                    // they would head two permanently empty columns, so drop
+                    // them and let the folder rows use the full width. The
+                    // colspan below tracks this so the header and body agree.
+                    if ($total_files > 0) {
+                        echo $col('size', 'Size'), $col('date', 'Date');
+                    }
+                    $listing_cols = ($total_files > 0) ? 4 : 1;
                     ?>
-                    <th></th>
+                    <?php if ($total_files > 0): ?><th></th><?php endif; ?>
                 </tr>
             </thead>
             <tbody>
             <?php ob_start(); ?>
             <?php if ($rel_dir !== ''): ?>
                 <tr class="row-dir">
-                    <td colspan="4"><a href="<?= e(root_relative(url_dir(dirname($rel_dir) === '.' ? '' : dirname($rel_dir)))) ?>">&#8617; Up one level</a></td>
+                    <td colspan="<?= (int) $listing_cols ?>"><a href="<?= e(root_relative(url_dir(dirname($rel_dir) === '.' ? '' : dirname($rel_dir)))) ?>">&#8617; Up one level</a></td>
                 </tr>
             <?php endif; ?>
             <?php foreach ($dirs as $d): ?>
                 <tr class="row-dir" data-folder="<?= e($d['rel']) ?>">
-                    <td colspan="4">
+                    <td colspan="<?= (int) $listing_cols ?>">
                         <div class="dir-row">
                             <a class="dir-link" href="<?= e(root_relative(url_dir($d['rel']))) ?>">&#128193; <?= e($d['name']) ?></a>
                             <?php if (is_admin()): ?>
@@ -10598,10 +10895,10 @@ $listing_ld = [
                 </tr>
             <?php endforeach; ?>
             <?php if (!$dirs && !$files): ?>
-                <tr><td colspan="4" class="empty">This folder is empty.</td></tr>
+                <tr><td colspan="<?= (int) $listing_cols ?>" class="empty">This folder is empty.</td></tr>
             <?php endif; ?>
             <tr class="row-search-empty" id="search-empty" hidden>
-                <td colspan="4" class="empty">No files match that search.</td>
+                <td colspan="<?= (int) $listing_cols ?>" class="empty">No files match that search.</td>
             </tr>
             <?php echo collapse_markup_ws((string) ob_get_clean()); ?>
             </tbody>

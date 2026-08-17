@@ -3,6 +3,154 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.35.0 — 17 August 2026
+
+### Added
+
+- **Site-wide AI usage policy.** The Settings screen now carries an AI usage
+  policy: toggles for whether AI systems may quote, summarise, train on, or make
+  commercial use of the library's content, plus an optional free-text note. The
+  policy is published in `library.yaml` under a top-level `permissions:` block
+  (above the document list, so a consumer reads the terms first). Quote and
+  summarise default on; training and commercial use default off, matching the
+  conservative posture appropriate to a personal archive. This is a declaration
+  of intent for AI systems that read the file — a clear statement of terms, not
+  an enforcement mechanism; robots.txt and the access gates remain the things
+  with teeth.
+
+## 1.34.1 — 17 August 2026
+
+### Changed
+
+- **`sameAs` profiles are now edited in the admin.** The identity.json `sameAs`
+  list (verified profile URLs — Wikidata, LinkedIn, ORCID, etc.) is now a field
+  on the Settings screen, alongside the other identity settings, instead of a
+  config constant that could only be set by editing a file. Each line is
+  validated as a full http(s) URL on save, so identity.json never carries a
+  malformed entry. Leaving it empty omits `sameAs` entirely.
+
+## 1.34.0 — 17 August 2026
+
+### Added
+
+- **identity.json — a Schema.org identity document.** A new discovery file at
+  `/identity.json` (or `?action=identity`) describing who the site is and who it
+  is about: a `Person` (the subject the library documents) and the `WebSite`
+  itself, in a linked `@graph`, following the AI Visibility Definition's
+  `identity.json` shape. This is the "who and what is this site" facet for AI
+  systems — distinct from the sitemaps and library index (what the library
+  contains) and llms.txt (a reading map). Toggleable from the Crawlers screen.
+  An optional `SITE_SAMEAS` setting (a list of verified profile URLs) adds a
+  `sameAs` array; it is omitted when unset, since an absent `sameAs` is safer
+  than an unverified one.
+
+### Changed
+
+- **The JSON feed has been replaced by identity.json.** The JSON Feed v1.1
+  (`/feed.json`) has been removed. It listed recent documents — a facet the
+  sitemaps and YAML library index already cover — whereas an identity document
+  covers a facet nothing else did. Its admin toggle becomes the identity.json
+  toggle. Old `/feed.json` requests now return 404.
+- **The YAML index moved to `/library.yaml`.** Renamed from `/index.yaml`, which
+  read like a directory-index convention; `library.yaml` names what the file
+  actually is. `?action=yaml` is unchanged.
+- **All discovery files reference identity.json.** llms.txt, the YAML index, and
+  the XML sitemaps now cross-reference identity.json in place of the old feed,
+  and identity.json references them back, so an AI system that finds any one
+  file can reach the whole set.
+
+## 1.33.1 — 17 August 2026
+
+### Changed
+
+- **The machine-readable index files now cross-reference each other.** Each of
+  the four resources points at the others in its own idiom: llms.txt lists them
+  under its "Machine-readable" heading, the JSON feed lists them in its `_folio`
+  extension, the YAML index lists them under `resources:`, and the XML sitemaps
+  carry an XML comment naming the siblings (the correct approach, since a sitemap
+  has no schema slot for cross-links and a comment keeps it valid). Every
+  reference respects the resource's own on/off toggle, so a disabled resource is
+  never advertised by the others.
+
+## 1.33.0 — 17 August 2026
+
+### Added
+
+- **YAML library index.** A new machine- and human-readable index of every
+  public document — title, page URL, category, tags, language, and date — served
+  at `/index.yaml` (or `?action=yaml`) and linked in the footer as **YAML**,
+  before JSON. It lists only public items, so a gated document's file never
+  appears. Note there is no crawler convention for a YAML site index (unlike the
+  sitemap, JSON feed, and llms.txt); this is a clean export for anyone who
+  prefers YAML tooling. Toggleable from the Crawlers screen.
+- **JSON feed and YAML index toggles.** The Crawlers screen now has on/off
+  switches for the JSON feed and the YAML index, alongside the existing sitemap
+  and llms.txt controls, so all four machine-readable resources are
+  admin-controllable. When a resource is off, its endpoint returns 404 and its
+  footer link and `<head>` alternate link disappear. Both default to on, so
+  existing installs are unaffected.
+
+## 1.32.0 — 17 August 2026
+
+### Changed
+
+- **"Viewer" documents are now indexable while their file stays gated.** A PDF
+  or video set to **viewer** now keeps a public, crawlable detail page — title,
+  meta description and structured data — so search engines list it and a
+  searcher can find it. Clicking through still shows the document in the page
+  (a signed, expiring, non-downloadable view), exactly as viewer already meant.
+  Previously a gated item was dropped from the public listing and the page
+  sitemap, so its page was never discovered. **Hidden** is unchanged: still off
+  every public surface. This is the "indexed page, gated file" split: the *page*
+  is public, the *bytes* are not.
+
+### Fixed
+
+- **Gated PDFs no longer appear in the file sitemap.** The PDF file sitemap
+  listed every PDF's direct byte URL regardless of access, which pointed
+  crawlers straight at the bytes of a viewer or hidden document. It now lists
+  only fully public PDF files; a gated document's indexable detail page still
+  appears in the main page sitemap, but its file is no longer advertised.
+
+## 1.31.0 — 17 August 2026
+
+### Added
+
+- **Colour scheme switching on playlist pages.** The standalone audio and video
+  playlist pages now honour the reader's chosen colour scheme and carry the same
+  theme picker as the rest of the site. Previously these pages loaded only the
+  media script and so ignored a saved theme, always showing the default.
+
+### Changed
+
+- **Playlist page brought to parity with the site.** The playlist page now
+  renders the full footer and sits in a centred, framed card instead of a bare
+  column, so the player and its track list read as one unit with room to
+  breathe rather than looking cramped and chrome-less.
+
+## 1.30.2 — 17 August 2026
+
+### Fixed
+
+- **Listing columns adapt to their contents.** A folder-only view no longer
+  shows empty Size and Date column headers: those columns describe files, so
+  when a directory holds only sub-folders the listing collapses to a single
+  full-width column. Views with files keep Name, Size, Date and the action
+  column as before, and mixed views are unchanged. Folder descriptions now use
+  the full row width (a comfortable reading measure) instead of being confined
+  to a narrow band, and every empty/placeholder row spans the correct number of
+  columns for the view.
+
+## 1.30.1 — 17 August 2026
+
+### Fixed
+
+- **Category archive header was unstyled.** The category page's title and its
+  "N documents, most recent…" note had no CSS and rendered as a bare heading and
+  paragraph flush against the filter chips and the table. The title now uses the
+  site's serif treatment and the note reads as a quiet meta line, with spacing
+  that aligns to the filter bar and opens a clear gap before the listing.
+
 ## 1.30.0 — 17 August 2026
 
 ### Added
