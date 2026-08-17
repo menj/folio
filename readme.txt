@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.29.0
+Stable tag: 1.30.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -181,7 +181,9 @@ they were, and nothing on disk is touched.
 
 If a file was renamed AND edited, its contents no longer match and Folio will
 not guess. It shows the document as missing its file alongside the new
-uncatalogued file, and you can relink them by hand.
+uncatalogued file, and you can relink them by hand. A record you no longer want
+can be removed with the Forget button on its row; only records whose file is
+missing can be forgotten, and no file on disk is touched.
 
 = Can I change a document URL? =
 

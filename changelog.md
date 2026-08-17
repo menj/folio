@@ -3,6 +3,27 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.30.0 — 17 August 2026
+
+### Added
+
+- **Forget orphan records.** The catalogue reconnect screen can now remove a
+  record whose file has gone missing, for cases where you don't want to relink
+  it. Each orphan row has a *Forget* button (with a confirmation prompt) that
+  deletes the catalogue entry — title, URL, description and tags. The action is
+  guarded to orphans only: a record whose file still exists is refused, and no
+  file on disk is ever touched. Deletion runs through the same validated
+  metadata write as relinking, so the catalogue stays consistent.
+
+### Fixed
+
+- **Catalogue reconnect alignment.** The relink dropdown was vertically centred
+  in its row while the record title sat at the top, leaving the two columns out
+  of line; the form is now top-aligned so the control sits level with its title.
+  The table also uses balanced proportional columns instead of auto widths, and
+  stacks the title above the control on narrow screens (previously the shared
+  diagnostics-table rule squeezed the dropdown column on phones).
+
 ## 1.29.0 — 17 August 2026
 
 ### Added

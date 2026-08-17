@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.29.0');
+define('FOLIO_VERSION', '1.30.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -3805,6 +3805,51 @@ function document_relink(string $document_id, string $rel, string &$error = ''):
 }
 
 /**
+ * Delete a catalogue record whose file has gone missing. Guarded to orphans
+ * only: if the record's stored file_path still resolves to a real, non-excluded
+ * file, the deletion is refused — this screen must never be able to forget a
+ * document whose file is present. Touches the metadata record only; no file on
+ * disk is ever removed (FTP owns those).
+ */
+function document_forget(string $document_id, string &$error = ''): bool
+{
+    $result = meta_update(static function (array $store) use ($document_id, &$error) {
+        $original = $store;
+        if (!meta_is_migrated($store)) {
+            $store = meta_migrate($store);
+        }
+        if (!isset($store['documents'][$document_id])) {
+            $error = 'That document is no longer in the catalogue.';
+            return $original;
+        }
+        $rec  = $store['documents'][$document_id];
+        $path = (string) ($rec['file_path'] ?? '');
+        // Only orphans may be forgotten. A record whose file still exists is
+        // not adrift, so refuse rather than silently drop a live document.
+        if ($path !== '') {
+            $abs = resolve_path($path);
+            if ($abs !== null && is_file($abs) && !is_excluded(basename($path), $path)) {
+                $error = 'That document still has its file, so it was not removed.';
+                return $original;
+            }
+        }
+        unset($store['documents'][$document_id]);
+
+        $check = '';
+        if (!meta_validate($store, $check)) {
+            $error = 'That change would make the catalogue inconsistent: ' . $check;
+            return $original;
+        }
+        return $store;
+    });
+    if ($result === false) {
+        $error = $error ?: 'The catalogue could not be written.';
+        return false;
+    }
+    return $error === '';
+}
+
+/**
  * The <link> tags for the site icon.
  *
  * Resolution order: an explicit SITE_ICON, then anything in branding/, then
@@ -7075,6 +7120,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
             } else {
                 $error = $rl_error !== '' ? $rl_error : 'That document could not be relinked.';
             }
+        } elseif (($_POST['op'] ?? '') === 'forget') {
+            $fg_error = '';
+            if (document_forget((string) ($_POST['document_id'] ?? ''), $fg_error)) {
+                $notice = 'Record removed from the catalogue. No file on disk was touched.';
+            } else {
+                $error = $fg_error !== '' ? $fg_error : 'That record could not be removed.';
+            }
         }
     }
 
@@ -7164,6 +7216,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
                             <?php else: ?>
                                 <span class="field-note">No uncatalogued file to attach it to.</span>
                             <?php endif; ?>
+                            <form method="post" class="catalogue-forget-form" data-title="<?= e($orec['title'] !== '' ? $orec['title'] : $orec['slug']) ?>">
+                                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                                <input type="hidden" name="op" value="forget">
+                                <input type="hidden" name="document_id" value="<?= e($oid) ?>">
+                                <button class="btn-small btn-ghost btn-forget" type="submit">Forget</button>
+                            </form>
                         </td>
                     </tr>
                 <?php endforeach; ?>

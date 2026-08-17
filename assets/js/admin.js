@@ -15,6 +15,18 @@
         }
     });
 
+    /* Confirm before forgetting an orphan catalogue record. */
+    document.addEventListener("submit", function (event) {
+        var form = event.target.closest(".catalogue-forget-form");
+        if (!form) {
+            return;
+        }
+        var title = form.getAttribute("data-title") || "this record";
+        if (!window.confirm("Forget the record \u201C" + title + "\u201D? Its title, URL, description and tags are deleted from the catalogue. The file on disk is not touched.")) {
+            event.preventDefault();
+        }
+    });
+
     /* Confirm before removing an IndexNow key. */
     document.addEventListener("submit", function (event) {
         var form = event.target.closest(".indexnow-clear-form");

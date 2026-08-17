@@ -567,7 +567,11 @@ you to choose. The same applies when several files share identical contents.
 
 Those cases appear in Diagnostics as a document whose file is missing
 alongside a file that is not yet catalogued, and you can relink them by hand.
-Relinking changes only which file the record points at.
+Relinking changes only which file the record points at. If a record is one you
+no longer want — its file is gone for good and you don't intend to replace it —
+the **Forget** button on that row deletes the catalogue entry. Only records
+whose file is genuinely missing can be forgotten, and no file on disk is ever
+removed.
 
 ### Folders
 
@@ -1077,4 +1081,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.29.0. Single-file application with separated CSS and JS assets.
+1.30.0. Single-file application with separated CSS and JS assets.

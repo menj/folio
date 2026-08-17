@@ -1571,6 +1571,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     outline: 1px solid var(--accent);
     outline-offset: 0;
 }
+.catalogue-forget-form { margin-top: 0.5rem; }
+.catalogue-table .btn-forget { color: var(--quiet); }
+.catalogue-table .btn-forget:hover {
+    color: #b91c1c;
+    border-color: currentColor;
+}
 
 @media (max-width: 700px) {
     .diag-table td:first-child { width: 9rem; padding-left: 1rem; }
