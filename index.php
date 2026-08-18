@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.37.0');
+define('FOLIO_VERSION', '1.38.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -162,10 +162,11 @@ defined('SHOW_ADMIN_LINK')      || define('SHOW_ADMIN_LINK', true);
  * anything. See pdf_access_enforced().
  */
 defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
-/* Whether the video-access preflight has confirmed that the webserver refuses
-   direct HTTP access to video while the guard is on. Fail-closed: until this is
-   confirmed, "viewer"/"hidden" video is not shown to the public. See
-   video_access_enforced(). */
+/* Deprecated as of 1.38.0. The video access model no longer uses a webserver
+   guard or preflight: every video is served directly (fast), and restricted or
+   hidden video withholds the link and shows a notice to the public instead of
+   routing bytes through Folio. These two constants are retained only so older
+   settings files load cleanly; nothing reads them for behaviour any more. */
 defined('VIDEO_GATE_CONFIRMED') || define('VIDEO_GATE_CONFIRMED', false);
 /* Set by the video preflight: true only when a signed direct video request is
    served by the webserver (mod_rewrite present and honouring the token rule),
@@ -992,11 +993,15 @@ function video_gate_ensure_probe_file(): bool
     ) !== false;
 }
 
-/** Normalise a stored pdf_access value, defaulting unknown/missing to public. */
+/** Normalise a stored pdf_access value, defaulting unknown/missing to public.
+ *  Legacy "viewer" is migrated to "restricted" (the renamed tier). */
 function pdf_access_of(array $m): string
 {
     $v = (string) ($m['pdf_access'] ?? 'public');
-    return in_array($v, ['public', 'viewer', 'hidden'], true) ? $v : 'public';
+    if ($v === 'viewer') {
+        $v = 'restricted';
+    }
+    return in_array($v, ['public', 'restricted', 'hidden'], true) ? $v : 'public';
 }
 
 /**
@@ -1157,11 +1162,15 @@ function video_guard_write(bool $on): bool
     return $flag_ok && $block_ok;
 }
 
-/** Normalise a stored video_access value, defaulting unknown/missing to public. */
+/** Normalise a stored video_access value, defaulting unknown/missing to public.
+ *  Legacy "viewer" is migrated to "restricted" (the renamed tier). */
 function video_access_of(array $m): string
 {
     $v = (string) ($m['video_access'] ?? 'public');
-    return in_array($v, ['public', 'viewer', 'hidden'], true) ? $v : 'public';
+    if ($v === 'viewer') {
+        $v = 'restricted';
+    }
+    return in_array($v, ['public', 'restricted', 'hidden'], true) ? $v : 'public';
 }
 
 /**
@@ -1224,47 +1233,35 @@ function url_raw_effective(string $rel, array $m): string
 {
     $ext  = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
 
+    // An admin sees and plays everything, in every tier, with no restriction.
+    $admin = is_admin();
+
     if ($ext === 'pdf') {
-        // Redaction is content-level and independent of the access gate: a
+        // Redaction is content-level and independent of the access tier: a
         // redacted PDF must reach the public only through ?action=raw, where
-        // the image-only derivative is substituted. Force the serve route for
-        // non-admins even when pdf_access enforcement is off, so Apache never
-        // hands out the original file directly. Admins get the original.
-        if (redact_is_on($m) && !is_admin()) {
+        // the image-only derivative is substituted. Admins get the original.
+        if (redact_is_on($m) && !$admin) {
             return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel);
         }
-        if (!pdf_access_enforced()) {
+        if ($admin || !pdf_access_enforced()) {
             return url_raw($rel);
         }
-        $access = pdf_access_of($m);
-        if ($access === 'hidden') {
-            return '';
-        }
-        if ($access === 'viewer') {
-            return pdf_signed_url($rel);
-        }
-        return url_raw($rel);
+        // Restricted and hidden both withhold the file from the public: the
+        // page shows a "restricted" notice instead of the document. Only public
+        // PDFs are served.
+        return pdf_access_of($m) === 'public' ? url_raw($rel) : '';
     }
 
-    if (file_kind($ext) === 'video' && video_guard_active()) {
-        $access = video_access_of($m);
-        if ($access === 'public') {
-            // Fast path: a signed direct URL Apache serves itself. No byte of a
-            // public video passes through PHP any more.
-            return video_direct_signed_url($rel);
+    if (file_kind($ext) === 'video') {
+        // Every video is served directly by the webserver — fast, with seeking —
+        // because the public never receives the bytes of a restricted or hidden
+        // video at all: they get a notice, and the URL is simply not emitted.
+        // (Protection is UI-level: an unguessable direct URL, by design.) An
+        // admin always gets a working URL regardless of tier.
+        if ($admin) {
+            return url_raw($rel);
         }
-        // Non-public video. An admin always gets a working URL. The public gets
-        // one only when enforcement is confirmed: a signed, expiring direct URL
-        // for "viewer" (fast, token-gated), and nothing at all for "hidden".
-        // Until the preflight confirms the webserver refuses an unsigned direct
-        // request, the public gets nothing either way.
-        if (is_admin()) {
-            return video_direct_signed_url($rel);
-        }
-        if ($access === 'viewer' && video_access_enforced()) {
-            return video_direct_signed_url($rel);
-        }
-        return '';
+        return video_access_of($m) === 'public' ? url_raw($rel) : '';
     }
 
     return url_raw($rel);
@@ -1281,7 +1278,7 @@ function media_full_access(string $rel, array $m): bool
     if ($ext === 'pdf') {
         return pdf_full_access($rel, $m);
     }
-    if (file_kind($ext) === 'video' && video_guard_active()) {
+    if (file_kind($ext) === 'video') {
         return video_access_of($m) === 'public';
     }
     return true;
@@ -1304,23 +1301,29 @@ function media_page_visible(string $rel, array $m): bool
     $ext  = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
     $kind = file_kind($ext);
 
-    if ($ext === 'pdf' && pdf_access_enforced()) {
-        // public and viewer keep an indexable page; hidden does not.
+    // Folder listing visibility. "hidden" is kept out of the listing entirely;
+    // "public" and "restricted" both appear (restricted shows a page with a
+    // notice in place of the file). See media_page_indexable() for the sitemap,
+    // which DOES include hidden so its page stays findable via search.
+    if ($ext === 'pdf') {
         return pdf_access_of($m) !== 'hidden';
     }
-    if ($kind === 'video' && video_guard_active()) {
-        $access = video_access_of($m);
-        if ($access === 'hidden') {
-            return false;
-        }
-        if ($access === 'viewer') {
-            // Only expose the page once the gate is actually enforced; an
-            // unverified viewer file is not yet safely gated, so treat it as
-            // not-yet-public rather than advertise a page whose bytes leak.
-            return video_access_enforced();
-        }
-        return true; // public
+    if ($kind === 'video') {
+        return video_access_of($m) !== 'hidden';
     }
+    return true;
+}
+
+/**
+ * Whether a file's detail page may be indexed and listed in the sitemap. Unlike
+ * the folder listing (media_page_visible), this INCLUDES "hidden": a hidden
+ * file has no folder link, but its page is deliberately indexable, so a search
+ * engine can surface it and the public reaches it only by that route (where
+ * they meet the same "restricted" notice). Every tier is indexable; only the
+ * bytes are withheld.
+ */
+function media_page_indexable(string $rel, array $m): bool
+{
     return true;
 }
 
@@ -1895,12 +1898,24 @@ function tool_path(string $name): ?string
     $override = (array) TOOL_PATHS;
     if (isset($override[$name])) {
         $p = (string) $override[$name];
-        return $cache[$name] = (is_file($p) && is_executable($p)) ? $p : null;
+        // An explicit override is a deliberate choice by the operator. Prefer
+        // it when is_file()/is_executable() confirm it, but do not reject it
+        // when they cannot: on some hosts open_basedir stops PHP from stat-ing
+        // /bin even though proc_open can still execute there. If the stat fails
+        // but a path was named, trust it and let the actual run be the test.
+        if (is_file($p) && is_executable($p)) {
+            return $cache[$name] = $p;
+        }
+        return $cache[$name] = ($p !== '' ? $p : null);
     }
 
     foreach (tool_search_dirs() as $dir) {
         $p = rtrim($dir, '/') . '/' . $name;
-        if (is_file($p) && is_executable($p)) {
+        // is_executable() is unreliable on some hosts (restrictive open_basedir,
+        // unusual mounts) — it reports a runnable binary as non-executable. So
+        // the gate is a present regular file; proc_open is the final arbiter of
+        // whether it actually runs.
+        if (is_file($p)) {
             return $cache[$name] = $p;
         }
     }
@@ -5746,6 +5761,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $notice = '';
     $error  = '';
 
+    // The video access model no longer uses a webserver block: every video is
+    // served directly (fast); restricted/hidden withhold the link and show a
+    // notice. A guard block left by an earlier version would keep forcing video
+    // through PHP and cause slow buffering, so clear it once when an admin opens
+    // this screen.
+    if (video_guard_active()) {
+        video_guard_write(false);
+    }
+
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_valid()) {
             $error = 'Security token expired. Reload the page and try again.';
@@ -6194,7 +6218,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
     <h2 class="detail-title">PDF access control</h2>
     <p class="detail-desc">
-        Documents with <code>pdf_access</code> set to <strong>Viewer</strong> or <strong>Hidden</strong> in the inline
+        Documents with <code>pdf_access</code> set to <strong>Restricted</strong> or <strong>Hidden</strong> in the inline
         editor are only actually restricted once this preflight is confirmed — it proves that requests to a real PDF
         under <code>uploads/</code> reach Folio's <code>raw</code> action instead of being served directly by the
         webserver. Until then, every PDF behaves as <strong>Public</strong> regardless of what is set on it, and a
@@ -6242,56 +6266,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
     <h2 class="detail-title">Video access control</h2>
     <p class="detail-desc">
-        Video with <code>video_access</code> set to <strong>Viewer</strong> (plays, no download) or
-        <strong>Hidden</strong> (admin only) in the inline editor is only restricted once this is switched on and
-        confirmed. Unlike PDFs, video fails <strong>closed</strong>: while this is on but unconfirmed, non-public video
-        is hidden from the public rather than served. Switching it on has Folio fill a managed block in
-        <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> that refuses direct access to video, so the only route to a
-        clip's bytes is through Folio, which checks each file's access level. Public-only libraries can leave this off
-        and keep the webserver serving video directly.
+        Set a video's access with <code>video_access</code> in the inline editor:
+        <strong>Public</strong> plays for everyone; <strong>Restricted</strong> keeps the document
+        page listed and indexable but shows a &ldquo;restricted&rdquo; notice in place of the player
+        for the public; <strong>Hidden</strong> also removes the page from the folder listing while
+        keeping it findable through search. A signed-in admin always sees and plays every video,
+        regardless of tier. Every video is served directly by the webserver, so playback is fast in
+        all cases &mdash; restricted and hidden simply withhold the link and show the notice rather
+        than routing bytes through Folio.
     </p>
-    <?php if (FOLIO_URL_SIGNING_KEY === ''): ?>
-        <p class="msg msg-bad">
-            <code>FOLIO_URL_SIGNING_KEY</code> is not set in <code>config.php</code>, so video access
-            control cannot be enforced yet. The same key shown above for PDF access is used here.
-        </p>
-    <?php elseif (video_guard_active() && VIDEO_GATE_CONFIRMED): ?>
-        <p class="field-note">Video access control is <strong>confirmed and enforced</strong>.</p>
-        <form method="post" class="stack-form">
-            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-            <input type="hidden" name="op" value="disable_video_gate">
-            <div><button type="submit" class="btn btn-ghost">Switch off</button></div>
-        </form>
-        <p class="field-note">Switching off empties the managed <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> block, so video is served directly again, without touching any file's stored <code>video_access</code> value.</p>
-    <?php elseif (video_guard_active()): ?>
-        <p class="msg msg-bad">Video access control is <strong>switched on but not verified</strong>: this server did not refuse a direct video request when last tested, so non-public video is hidden from the public until it does. Fix <code>AllowOverride</code> so the <code><?= e(UPLOADS_DIRNAME) ?>/.htaccess</code> rules run, then test again.</p>
-        <div id="video-gate-preflight" data-probe="<?= e(rtrim(BASE_URL, '/')) ?>/<?= e(rawurlencode(UPLOADS_DIRNAME)) ?>/<?= e(FOLIO_VIDEO_PROBE_NAME) ?>">
-            <button type="button" class="btn" id="video-gate-test-btn">Test again</button>
-            <p class="field-note rewrite-result video-gate-result" id="video-gate-result"></p>
-            <form method="post" class="stack-form rewrite-enable-form video-gate-enable-form" id="video-gate-form">
-                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                <input type="hidden" name="op" value="confirm_video_gate">
-                <input type="hidden" name="probe_result" value="">
-                <div><button type="submit" class="btn">Verify and enforce</button></div>
-            </form>
-        </div>
-        <form method="post" class="stack-form">
-            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-            <input type="hidden" name="op" value="disable_video_gate">
-            <div><button type="submit" class="btn btn-ghost">Switch off</button></div>
-        </form>
-    <?php else: ?>
-        <p class="field-note">Switching this on refuses direct access to video and routes it through Folio, then checks that the refusal works. Public-only libraries can leave it off.</p>
-        <div id="video-gate-preflight" data-probe="<?= e(rtrim(BASE_URL, '/')) ?>/<?= e(rawurlencode(UPLOADS_DIRNAME)) ?>/<?= e(FOLIO_VIDEO_PROBE_NAME) ?>">
-            <form method="post" class="stack-form video-gate-enable-form" id="video-gate-form">
-                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
-                <input type="hidden" name="op" value="confirm_video_gate">
-                <input type="hidden" name="probe_result" value="">
-                <div><button type="submit" class="btn">Switch on and verify</button></div>
-            </form>
-            <p class="field-note video-gate-result" id="video-gate-result"></p>
-        </div>
-    <?php endif; ?>
+    <p class="field-note">
+        Protection here is page-level: the public is never shown the file&rsquo;s address, but the
+        file is served directly, so a restricted or hidden video is not secret from someone who
+        already holds its direct URL. For a personal archive this is usually the right balance of
+        speed and privacy.
+    </p>
 
     <h2 class="detail-title">Sitemap preview</h2>
     <p class="detail-desc">Folio publishes three sitemaps, and the <code>robots.txt</code> below announces all three.</p>
@@ -8743,8 +8732,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'redact_page') {
             }
         }
         $count = min($count, REDACT_MAX_PAGES);
+        // Report whether this server can actually render a page to an image, so
+        // the editor can warn before the admin marks anything. The count can
+        // succeed (pdfinfo/Imagick-ping) on a server that still cannot render.
+        $can_render = tool_have('pdftocairo') || tool_have('pdftoppm')
+            || (defined('PDF_ALLOW_GHOSTSCRIPT') && PDF_ALLOW_GHOSTSCRIPT
+                && extension_loaded('imagick') && class_exists('Imagick'));
         header('Content-Type: application/json');
-        exit(json_encode(['ok' => $count > 0, 'pages' => $count, 'max' => REDACT_MAX_PAGES]));
+        exit(json_encode(['ok' => $count > 0, 'pages' => $count, 'max' => REDACT_MAX_PAGES, 'render' => $can_render]));
     }
     $page = max(1, min(REDACT_MAX_PAGES, (int) ($_GET['page'] ?? 1)));
     $tool = tool_have('pdftocairo') ? 'pdftocairo' : (tool_have('pdftoppm') ? 'pdftoppm' : null);
@@ -8908,7 +8903,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         if (!isset($mime_map[$f['ext']])) {
             continue;
         }
-        if (!media_page_visible((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
+        if (!media_page_indexable((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
             continue;
         }
         $e  = "  <url>\n";
@@ -9863,12 +9858,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $pdf_access = (string) ($_POST['pdf_access'] ?? 'public');
-    if (!in_array($pdf_access, ['public', 'viewer', 'hidden'], true)) {
+    if ($pdf_access === 'viewer') { $pdf_access = 'restricted'; }
+    if (!in_array($pdf_access, ['public', 'restricted', 'hidden'], true)) {
         $pdf_access = 'public';
     }
 
     $video_access = (string) ($_POST['video_access'] ?? 'public');
-    if (!in_array($video_access, ['public', 'viewer', 'hidden'], true)) {
+    if ($video_access === 'viewer') { $video_access = 'restricted'; }
+    if (!in_array($video_access, ['public', 'restricted', 'hidden'], true)) {
         $video_access = 'public';
     }
 
@@ -10239,15 +10236,16 @@ if (isset($_GET['view'])) {
     $raw   = url_raw_effective($rel, $m);
     $pdf_full_access  = pdf_full_access($rel, $m);
     $full_access      = media_full_access($rel, $m);
-    $video_guarded    = $kind === 'video' && video_guard_active();
     $video_access     = $kind === 'video' ? video_access_of($m) : 'public';
-    // A guarded, non-public video for which this viewer gets no URL: show a
-    // restrained "restricted" panel instead of an empty, broken player.
-    $video_restricted = $video_guarded && $video_access !== 'public' && $raw === '';
-    // Admin viewing a non-public video whose protection is not yet verified: the
-    // webserver refusal is unconfirmed, so warn rather than imply it is safe.
-    $video_unverified = is_admin() && $video_guarded && $video_access !== 'public' && !video_access_enforced();
-    $pdf_is_hidden    = $kind === 'pdf' && pdf_access_of($m) === 'hidden' && pdf_access_enforced();
+    $pdf_access       = $kind === 'pdf'   ? pdf_access_of($m)   : 'public';
+    // The public gets a "restricted" notice in place of the player/viewer for
+    // any non-public video whose bytes are withheld from them ($raw === '').
+    // An admin always has a URL, so never sees the notice.
+    $video_restricted = $kind === 'video' && $video_access !== 'public' && $raw === '';
+    // A restricted or hidden PDF withholds the document from the public too;
+    // show the notice (with an optional redacted/placeholder preview) rather
+    // than an embedded viewer. Admins get the real document.
+    $pdf_is_hidden    = $kind === 'pdf' && $pdf_access !== 'public' && $raw === '';
     $hidden_preview_url = '';
     if ($pdf_is_hidden) {
         $placeholder_rel = trim((string) ($m['placeholder_image'] ?? ''));
@@ -10397,13 +10395,6 @@ if (isset($_GET['view'])) {
                     </audio>
                 </div>
             <?php elseif ($kind === 'video'): ?>
-                <?php if ($video_unverified): ?>
-                <p class="msg msg-bad">This video's access is set to
-                    <strong><?= e($video_access) ?></strong>, but access control is
-                    not verified on this server, so it is hidden from the public.
-                    Confirm video access control on the Crawlers screen to enforce
-                    it. You are seeing it because you are signed in.</p>
-                <?php endif; ?>
                 <?php if ($video_restricted): ?>
                 <div class="folio-media fm-video fm-restricted" aria-label="Restricted video">
                     <p class="fm-restricted-note">This video is restricted.</p>
@@ -10494,12 +10485,13 @@ foreach (scandir($abs_dir) as $entry) {
         }
         $pdf_access  = pdf_access_of($m);
         $full_access = pdf_full_access($rel_entry, $m);
-        // A "hidden" PDF offers no preview affordance of any kind: the hover
-        // card, the Preview button, and the listing hotlink must all have
-        // nothing real to point at. A guarded non-public video is the same.
+        // A "hidden" or "restricted" PDF offers no preview affordance of any
+        // kind: the hover card, the Preview button, and the listing hotlink must
+        // all have nothing real to point at. A non-public video is the same —
+        // the public gets a notice, not a player.
         $previewable = isset($mime_map[$ext]) && $ext !== 'txt'
-            && !($ext === 'pdf' && $pdf_access === 'hidden' && pdf_access_enforced())
-            && !(file_kind($ext) === 'video' && video_guard_active() && video_access_of($m) !== 'public');
+            && !($ext === 'pdf' && $pdf_access !== 'public' && pdf_access_enforced())
+            && !(file_kind($ext) === 'video' && video_access_of($m) !== 'public' && !is_admin());
         $files[] = [
             'name' => $entry,
             'rel'  => $rel_entry,
@@ -10995,9 +10987,9 @@ $listing_ld = [
                             <label class="meta-form-label">
                                 PDF access
                                 <select name="pdf_access">
-                                    <option value="public" <?= $f['pdf_access'] === 'public' ? 'selected' : '' ?>>Public — direct link and download allowed</option>
-                                    <option value="viewer" <?= $f['pdf_access'] === 'viewer' ? 'selected' : '' ?>>Viewer only — no direct link or download</option>
-                                    <option value="hidden" <?= $f['pdf_access'] === 'hidden' ? 'selected' : '' ?>>Hidden — no preview, only the transcription</option>
+                                    <option value="public" <?= pdf_access_of($f) === 'public' ? 'selected' : '' ?>>Public — direct link and download allowed</option>
+                                    <option value="restricted" <?= pdf_access_of($f) === 'restricted' ? 'selected' : '' ?>>Restricted — page shown with a notice, document withheld from the public</option>
+                                    <option value="hidden" <?= pdf_access_of($f) === 'hidden' ? 'selected' : '' ?>>Hidden — removed from the folder listing, page still findable via search</option>
                                 </select>
                             </label>
                             <?php if (!pdf_access_enforced() && $f['pdf_access'] !== 'public'): ?>
@@ -11034,14 +11026,11 @@ $listing_ld = [
                             <label class="meta-form-label">
                                 Video access
                                 <select name="video_access">
-                                    <option value="public" <?= $f['video_access'] === 'public' ? 'selected' : '' ?>>Public — plays, direct link and download allowed</option>
-                                    <option value="viewer" <?= $f['video_access'] === 'viewer' ? 'selected' : '' ?>>Viewer only — plays, no direct link or download</option>
-                                    <option value="hidden" <?= $f['video_access'] === 'hidden' ? 'selected' : '' ?>>Hidden — admin only, not shown to the public</option>
+                                    <option value="public" <?= video_access_of($f) === 'public' ? 'selected' : '' ?>>Public — plays for everyone, direct link and download allowed</option>
+                                    <option value="restricted" <?= video_access_of($f) === 'restricted' ? 'selected' : '' ?>>Restricted — page shown with a notice, video withheld from the public</option>
+                                    <option value="hidden" <?= video_access_of($f) === 'hidden' ? 'selected' : '' ?>>Hidden — removed from the folder listing, page still findable via search</option>
                                 </select>
                             </label>
-                            <?php if (!video_access_enforced() && $f['video_access'] !== 'public'): ?>
-                                <p class="field-note">Hidden from the public until video access control is confirmed on the Crawlers screen. Non-public video is never shown to the public while unverified.</p>
-                            <?php endif; ?>
                             <?php endif; ?>
                             <textarea name="transcript" maxlength="100000" placeholder="<?= $av ? 'Transcript of the recording' : 'Document transcription (corrected OCR or manual transcript)' ?>" rows="4"><?= e($f['transcript']) ?></textarea>
                             <div class="meta-form-actions">

@@ -3,6 +3,75 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.38.0 — 17 August 2026
+
+### Changed
+
+- **Simpler, faster three-tier access model for PDF and video.** The middle tier
+  is renamed from **Viewer** to **Restricted**, and the three tiers now behave
+  consistently for both PDFs and video:
+  - **Public** — no restriction; served directly by the webserver (fast).
+  - **Restricted** — the detail page stays listed in its folder and indexable,
+    but the public sees a "restricted" notice in place of the player/viewer; the
+    file itself is withheld.
+  - **Hidden** — additionally removed from the folder listing, while the detail
+    page stays indexable so it can still be found through search; the public
+    reaches it only that way and meets the same notice.
+  - A signed-in **admin** always sees and opens the file in every tier, with no
+    restriction.
+  Existing files set to the old "viewer" value are migrated to "restricted"
+  automatically on load and on save.
+
+### Fixed
+
+- **Video buffering.** Video is no longer routed through PHP. Because the public
+  never receives the bytes of a restricted or hidden video (they get a notice,
+  and the direct URL is simply not shown to them), every video — public included
+  — is now served directly by the webserver, with byte-range seeking. The
+  webserver `.htaccess` block that previously forced all video through PHP is
+  removed automatically the next time an admin opens the Crawlers screen. This
+  removes the signed-URL/token machinery and its preflight entirely.
+
+### Security
+
+- Protection for restricted and hidden media is now **page-level**: the public
+  is never shown the file's address, but the file is served directly, so it is
+  not secret from someone who already holds its exact URL. This is a deliberate
+  trade-off (chosen for speed) and is appropriate for a personal archive; it is
+  weaker than the previous byte-gating for video. PDFs set to restricted/hidden
+  still withhold the document from the public via the existing raw-serve route.
+
+## 1.37.2 — 17 August 2026
+
+### Fixed
+
+- **External tools are found on more hosts.** Tool discovery no longer rejects a
+  binary because PHP's `is_executable()` reports it as non-executable — a false
+  negative on some hosts (restrictive `open_basedir`, unusual mounts) where the
+  binary runs fine. A present file is now accepted and `proc_open` is the real
+  test. In addition, an explicit `TOOL_PATHS` override is now trusted even when
+  PHP cannot stat the file, so pinning a path like `/bin/pdftocairo` works even
+  where `open_basedir` hides `/bin` from auto-discovery. This fixes PDF page
+  rendering (and so redaction) on hosts where poppler-utils is installed but was
+  not being detected.
+
+## 1.37.1 — 17 August 2026
+
+### Fixed
+
+- **The redaction editor now explains itself when a server can't render PDF
+  pages.** Previously, on a host without a PDF-to-image renderer, the editor
+  opened but showed only a broken-image icon — the page count worked (it uses
+  pdfinfo/Imagick-ping) while the page image silently failed (it needs
+  poppler-utils' pdftocairo/pdftoppm, or Ghostscript). The editor now checks for
+  a renderer before opening and says plainly what to install if none is present,
+  and if an individual page still fails it shows a clear message in place of the
+  broken image rather than leaving it blank.
+
+  Note: this makes the failure legible; it does not add a renderer. Redaction
+  still requires poppler-utils (or the Ghostscript fallback with Imagick) on the
+  server to actually mark and burn in pages.
+
 ## 1.37.0 — 17 August 2026
 
 ### Fixed

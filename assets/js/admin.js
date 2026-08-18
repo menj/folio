@@ -364,12 +364,15 @@
             x.open("GET", url, true);
             x.onreadystatechange = function () {
                 if (x.readyState !== 4) { return; }
-                var pages = 1;
+                var meta = { pages: 1, render: true };
                 try {
                     var r = JSON.parse(x.responseText);
-                    if (r && r.pages) { pages = r.pages; }
+                    if (r && r.pages) { meta.pages = r.pages; }
+                    // Only treat rendering as unavailable when the server
+                    // explicitly says so, so older responses default to trying.
+                    if (r && r.render === false) { meta.render = false; }
                 } catch (e) {}
-                cb(pages);
+                cb(meta);
             };
             x.send();
         }
@@ -421,6 +424,31 @@
         }
 
         function loadPage(canvasWrap, img, label) {
+            // Clear any prior error notice.
+            var priorMsg = canvasWrap.querySelector(".redact-error");
+            if (priorMsg) { priorMsg.parentNode.removeChild(priorMsg); }
+            img.style.display = "block";
+            img.onload = function () {
+                img.style.display = "block";
+            };
+            img.onerror = function () {
+                // The page render failed — almost always because the server has
+                // no PDF-to-image tool (poppler-utils' pdftocairo/pdftoppm, or
+                // Ghostscript). Replace the broken-image icon with a real
+                // explanation instead of leaving the admin guessing.
+                img.style.display = "none";
+                if (canvasWrap.querySelector(".redact-error")) { return; }
+                var msg = document.createElement("div");
+                msg.className = "redact-error";
+                msg.style.padding = "1.5rem";
+                msg.style.lineHeight = "1.5";
+                msg.style.color = "#7a1f1f";
+                msg.style.font = "14px/1.5 system-ui, sans-serif";
+                msg.textContent = "This server can’t render PDF pages, so redaction can’t show the page to mark. "
+                    + "Install poppler-utils (pdftocairo/pdftoppm) on the server, or enable the Ghostscript "
+                    + "fallback (PDF_ALLOW_GHOSTSCRIPT with Imagick). Once a renderer is available, reopen this editor.";
+                canvasWrap.appendChild(msg);
+            };
             img.src = state.previewBase + "&page=" + state.page + "&_=" + Date.now();
             label.textContent = "Page " + state.page + " of " + state.pages;
             drawRegions(canvasWrap);
@@ -601,8 +629,17 @@
                 page: 1,
                 regions: parseRegions(input)
             };
-            pageMeta(state.previewBase, function (pages) {
-                state.pages = pages || 1;
+            pageMeta(state.previewBase, function (meta) {
+                state.pages = (meta && meta.pages) || 1;
+                if (meta && meta.render === false) {
+                    // Tell the admin plainly rather than opening an editor that
+                    // can only show a broken image.
+                    window.alert("Redaction needs a PDF renderer this server doesn’t have. "
+                        + "Install poppler-utils (pdftocairo/pdftoppm), or enable the Ghostscript "
+                        + "fallback (PDF_ALLOW_GHOSTSCRIPT with Imagick), then try again.");
+                    state = null;
+                    return;
+                }
                 buildEditor();
             });
         });
