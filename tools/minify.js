@@ -31,6 +31,7 @@ const TARGETS = [
     'assets/js/app.js',
     'assets/js/view.js',
     'assets/js/media.js',
+    'assets/js/library-view.js',
     'assets/js/admin.js',
     'assets/js/flipbook.js',
 ];

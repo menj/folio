@@ -133,6 +133,7 @@ assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
 lib/parsedown/         Parsedown 1.8.0 (MIT), renders Markdown files
 lib/pdfjs/             PDF.js (Apache 2.0), powers both PDF readers
+lib/js-yaml/           js-yaml 5.3.0 (MIT), renders library.html in the browser
 lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), with its licences
 changelog.md           Version history
 .htaccess              Apache rules, active as shipped
@@ -1066,6 +1067,11 @@ domain: nothing is fetched from a CDN and no document is ever sent to a
 third-party viewer. It loads only when someone opens the flip reader, so
 visitors who never use it never download it.
 
+The human-readable library view (`library.html`) uses js-yaml 5.3.0 by Vitaly
+Puzrin, distributed under the MIT licence, vendored in `lib/js-yaml/` with its
+licence text. Like pdf.js it is served from your own domain, needs no
+Content-Security-Policy exception, and loads only on that page.
+
 Two deliberate limitations are worth knowing:
 
 * The character maps and standard font files that pdf.js can optionally use
@@ -1092,4 +1098,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.35.0. Single-file application with separated CSS and JS assets.
+1.37.0. Single-file application with separated CSS and JS assets.

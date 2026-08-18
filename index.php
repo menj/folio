@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.35.0');
+define('FOLIO_VERSION', '1.37.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -167,6 +167,11 @@ defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
    confirmed, "viewer"/"hidden" video is not shown to the public. See
    video_access_enforced(). */
 defined('VIDEO_GATE_CONFIRMED') || define('VIDEO_GATE_CONFIRMED', false);
+/* Set by the video preflight: true only when a signed direct video request is
+   served by the webserver (mod_rewrite present and honouring the token rule),
+   so public/viewer video can be served fast and direct. False keeps video on
+   the reliable PHP path. */
+defined('VIDEO_FAST_DIRECT')    || define('VIDEO_FAST_DIRECT', false);
 /* Rows per page in a folder listing. A folder below this renders whole, and
    behaves exactly as it always has: sorting, filtering and search all happen
    in the browser, instantly. Above it the listing is paginated and sorting
@@ -1097,10 +1102,29 @@ function video_htaccess_block(bool $on): bool
         return false;
     }
     $rule = $on
-        ? "\n<FilesMatch \"(?i)\\.(mp4|m4v|webm|ogv|mov)\$\">\n"
+        ? "\n<IfModule mod_rewrite.c>\n"
+            . "RewriteEngine On\n"
+            . "# Video files are served directly by the webserver (fast, with byte-range\n"
+            . "# seeking) ONLY when the request carries a Folio-issued signed token in the\n"
+            . "# query string. A request for a video without a token is refused, so the\n"
+            . "# file cannot be fetched by guessing its URL. Folio hands the signed URL\n"
+            . "# only to viewers it has authorised. (The webserver checks the token is\n"
+            . "# present and well-formed; Folio's HMAC is what makes it unforgeable.)\n"
+            . "RewriteCond %{QUERY_STRING} (^|&)token=[0-9a-f]{64}(&|\$) [NC]\n"
+            . "RewriteCond %{QUERY_STRING} (^|&)expires=[0-9]{8,} [NC]\n"
+            . "# A valid-format token: allow the webserver to serve the file directly.\n"
+            . "RewriteRule (?i)\\.(mp4|m4v|webm|ogv|mov)\$ - [L]\n"
+            . "# Any other video request (no token): refuse.\n"
+            . "RewriteRule (?i)\\.(mp4|m4v|webm|ogv|mov)\$ - [F,L]\n"
+            . "</IfModule>\n"
+            . "<IfModule !mod_rewrite.c>\n"
+            . "# No mod_rewrite: fall back to denying all direct video access. Playback\n"
+            . "# still works — Folio streams these through PHP instead — just slower.\n"
+            . "<FilesMatch \"(?i)\\.(mp4|m4v|webm|ogv|mov)\$\">\n"
             . "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n"
             . "<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n"
             . "</FilesMatch>\n"
+            . "</IfModule>\n"
         : "\n";
     $pattern = '/' . preg_quote($begin, '/') . '.*?' . preg_quote($end, '/') . '/s';
     $replaced = preg_replace($pattern, $begin . $rule . $end, $current, 1);
@@ -1160,6 +1184,37 @@ function video_raw_url(string $rel): string
 }
 
 /**
+ * A DIRECT uploads/ URL for a video, carrying a signed, time-limited token.
+ * When the video guard is active, its .htaccess denies video requests that
+ * lack a token but allows those that carry one — so Apache serves this URL
+ * itself, at full speed with byte-range seeking, instead of streaming every
+ * byte through PHP. The token is a real HMAC (so it cannot be forged without
+ * the signing key); note, however, that Apache only checks a token is present
+ * and well-formed, not that the HMAC verifies — this is the documented, weaker
+ * "fast but token-gated" trade-off, chosen so protected video need not buffer.
+ */
+function video_direct_signed_url(string $rel, int $ttl = 3600): string
+{
+    if (!video_access_enforced()) {
+        // Guard off: the direct uploads/ URL already works, served by the
+        // webserver at full speed with no token needed.
+        return url_raw($rel);
+    }
+    if (!VIDEO_FAST_DIRECT) {
+        // The preflight could not confirm the webserver serves a signed direct
+        // request (no mod_rewrite, or the token rule isn't honoured). Use the
+        // reliable PHP serve path instead — slower, but it always works and
+        // still range-streams. This is the auto-chosen safe fallback.
+        return video_raw_url($rel);
+    }
+    $expires = time() + $ttl;
+    $token   = pdf_sign($rel, $expires);
+    $base    = url_raw($rel); // direct uploads/ path for a video
+    $sep     = strpos($base, '?') === false ? '?' : '&';
+    return $base . $sep . 'expires=' . $expires . '&token=' . $token;
+}
+
+/**
  * The URL to use for a file's actual bytes, aware of both pdf_access and video
  * access. Returns '' when nothing should be linked or embedded for this file in
  * the current context — callers must treat '' as "render no link," never fall
@@ -1194,18 +1249,20 @@ function url_raw_effective(string $rel, array $m): string
     if (file_kind($ext) === 'video' && video_guard_active()) {
         $access = video_access_of($m);
         if ($access === 'public') {
-            return video_raw_url($rel);
+            // Fast path: a signed direct URL Apache serves itself. No byte of a
+            // public video passes through PHP any more.
+            return video_direct_signed_url($rel);
         }
         // Non-public video. An admin always gets a working URL. The public gets
-        // one only when enforcement is confirmed: a signed, expiring URL for
-        // "viewer", and nothing at all for "hidden". Until the preflight
-        // confirms the webserver refuses the direct file, the public gets
-        // nothing either way — the file is not exposed while unverified.
+        // one only when enforcement is confirmed: a signed, expiring direct URL
+        // for "viewer" (fast, token-gated), and nothing at all for "hidden".
+        // Until the preflight confirms the webserver refuses an unsigned direct
+        // request, the public gets nothing either way.
         if (is_admin()) {
-            return video_raw_url($rel);
+            return video_direct_signed_url($rel);
         }
         if ($access === 'viewer' && video_access_enforced()) {
-            return pdf_signed_url($rel);
+            return video_direct_signed_url($rel);
         }
         return '';
     }
@@ -1307,6 +1364,14 @@ function url_yaml(): string
         : BASE_URL . '?action=yaml';
 }
 
+/** URL of the human-readable HTML rendering of library.yaml. */
+function url_yaml_view(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/library.html'
+        : BASE_URL . '?action=yaml_view';
+}
+
 /**
  * An XML comment block listing the sibling machine-readable resources, for the
  * head of each sitemap. XML sitemaps have no schema slot for cross-references,
@@ -1331,6 +1396,7 @@ function sitemap_sibling_comment(): string
     if (LLMS_ENABLED) {
         $lines[] = 'llms.txt: ' . url_llms();
     }
+    $lines[] = 'robots.txt: ' . rtrim(BASE_URL, '/') . '/robots.txt';
     if (!$lines) {
         return '';
     }
@@ -1586,6 +1652,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'llms';
     } elseif ($route === 'library.yaml') {
         $_GET['action'] = 'yaml';
+    } elseif ($route === 'library.html') {
+        $_GET['action'] = 'yaml_view';
     } elseif ($route === 'sitemap.xml') {
         $_GET['action'] = 'sitemap';
     } elseif ($route === 'sitemap-pdf.xml') {
@@ -2938,7 +3006,7 @@ function reserved_slugs(): array
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
         'diagnostics', 'pages', 'page', 'about', 'faq', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
-        'yaml', 'library.yaml',
+        'yaml', 'library.yaml', 'yaml_view', 'library.html',
         'identity', 'identity.json',
         'raw', 'render', 'thumb', 'flipbook', 'ocr', 'meta', 'view', 'search',
         'feed', 'rss', 'atom', 'assets', 'lib', 'data', 'docs', 'uploads',
@@ -4628,20 +4696,18 @@ function render_footer(): void
         </p>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>
-            <?php foreach ($pages as $slot => $rec): ?>
-                <a href="<?= e(url_page($slot)) ?>"><?= e(page_menu_label($slot, $rec)) ?></a>
-            <?php endforeach; ?>
             <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
             <?php endif; ?>
             <?php if (YAML_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(url_yaml()) ?>">YAML</a>
+                <a href="<?= e(url_yaml_view()) ?>">HTML</a>
             <?php endif; ?>
             <?php if (IDENTITY_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(url_identity()) ?>">Identity</a>
+                <a href="<?= e(url_identity()) ?>">JSON</a>
             <?php endif; ?>
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">Sitemap</a>
+                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">XML</a>
             <?php endif; ?>
             <?php if (!is_admin() && SHOW_ADMIN_LINK): ?>
                 <a href="<?= e(BASE_URL) ?>?action=login">Admin</a>
@@ -5857,10 +5923,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                     $server_forbidden = $status === 403;
                     $client_forbidden = (string) ($_POST['probe_result'] ?? '') === 'forbidden';
 
-                    if ($server_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
-                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed');
+                    // Second probe: does a SIGNED direct request succeed? If the
+                    // host has mod_rewrite and honours the allow-with-token rule,
+                    // this returns 200/206 and public video can be served fast,
+                    // straight from the webserver. If not (no mod_rewrite, or the
+                    // fallback deny-all applies), it is refused and we keep video
+                    // on the reliable PHP path. Detected here, acted on by
+                    // video_fast_direct().
+                    $fast_direct = false;
+                    if ($server_forbidden) {
+                        $signed_expires = time() + 300;
+                        // A well-formed token so the .htaccess allow-rule matches;
+                        // the probe path is what it signs.
+                        $signed_token   = pdf_sign(FOLIO_VIDEO_PROBE_NAME, $signed_expires);
+                        $signed_url = $probe_url . '?expires=' . $signed_expires . '&token=' . $signed_token;
+                        $sctx = stream_context_create(['http' => [
+                            'method' => 'GET', 'timeout' => 8, 'ignore_errors' => true,
+                        ]]);
+                        $sres = @file_get_contents($signed_url, false, $sctx);
+                        $sstatus = 0;
+                        if (isset($http_response_header) && isset($http_response_header[0])
+                            && preg_match('#\s(\d{3})\s#', $http_response_header[0], $sm)) {
+                            $sstatus = (int) $sm[1];
+                        }
+                        $fast_direct = ($sstatus === 200 || $sstatus === 206);
+                    }
+
+                    if ($server_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true, 'VIDEO_FAST_DIRECT' => $fast_direct])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed' . ($fast_direct ? '_fast' : ''));
                         exit;
-                    } elseif ($result === false && $client_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
+                    } elseif ($result === false && $client_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true, 'VIDEO_FAST_DIRECT' => false])) {
                         header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed_unverified');
                         exit;
                     } else {
@@ -5940,11 +6032,21 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         if (strtolower((string) $f['ext']) !== 'pdf') {
             continue;
         }
+        // Match the endpoint exactly: a gated ("viewer"/"hidden") PDF is not in
+        // the document sitemap, so it must not be counted here either.
+        if (!media_full_access((string) $f['rel'], meta_load()[$f['rel']] ?? [])) {
+            continue;
+        }
         $pdf_abs = resolve_path((string) $f['rel']);
         if ($pdf_abs !== null && is_file($pdf_abs)) {
             $pdf_sitemap_count++;
         }
     }
+
+    /* The category sitemap lists one URL per category archive page. Counted
+       with the same register the endpoint uses, so it cannot drift. */
+    $cat_sitemap_url   = url_sitemap_categories();
+    $cat_sitemap_count = count(category_register($all_indexed));
 
     /* IndexNow key file URL, if a key exists. */
     $indexnow_key_url = INDEXNOW_KEY !== ''
@@ -5968,6 +6070,28 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         // Category archive pages have their own sitemap, kept apart from the
         // main one so the two never duplicate each other.
         $robots .= 'Sitemap: ' . url_sitemap_categories() . "\n";
+    }
+    // The AI-discovery files have no standard robots.txt directive the way
+    // sitemaps do, so they are named in comments — universally safe to parse,
+    // and they close the reference loop: robots.txt (read first by every
+    // crawler) now points at the rest of the family. Only enabled files listed.
+    if (SITE_INDEXABLE) {
+        $related = [];
+        if (LLMS_ENABLED) {
+            $related[] = 'llms.txt (reading map for AI): ' . url_llms();
+        }
+        if (IDENTITY_ENABLED) {
+            $related[] = 'identity.json (who the site is): ' . url_identity();
+        }
+        if (YAML_ENABLED) {
+            $related[] = 'library.yaml (full index + AI usage policy): ' . url_yaml();
+        }
+        if ($related) {
+            $robots .= "\n# AI-discovery files:\n";
+            foreach ($related as $line) {
+                $robots .= '# ' . str_replace(["\r", "\n"], '', $line) . "\n";
+            }
+        }
     }
 
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
@@ -6170,7 +6294,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     <?php endif; ?>
 
     <h2 class="detail-title">Sitemap preview</h2>
-    <p class="detail-desc">Folio publishes two sitemaps, and the <code>robots.txt</code> below announces both.</p>
+    <p class="detail-desc">Folio publishes three sitemaps, and the <code>robots.txt</code> below announces all three.</p>
     <ul class="sitemap-list">
         <li>
             <a href="<?= e($sitemap_url) ?>">Page sitemap</a>
@@ -6182,6 +6306,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             &mdash; <strong><?= (int) $pdf_sitemap_count ?></strong> PDF<?= $pdf_sitemap_count === 1 ? '' : 's' ?>:
             the files themselves, so a search engine indexes what is inside them rather than
             only the pages describing them.
+        </li>
+        <li>
+            <a href="<?= e($cat_sitemap_url) ?>">Category sitemap</a>
+            &mdash; <strong><?= (int) $cat_sitemap_count ?></strong> categor<?= $cat_sitemap_count === 1 ? 'y' : 'ies' ?>:
+            one archive page per category, so each subject area can be discovered on its own.
         </li>
     </ul>
     <?php if ($sitemap_sample): ?>
@@ -9117,6 +9246,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     if (YAML_ENABLED) {
         $related[] = url_yaml();
     }
+    $related[] = rtrim(BASE_URL, '/') . '/robots.txt';
     if ($related) {
         // subjectOf ties the discovery files to the WebSite entity.
         $website['subjectOf'] = array_map(static fn($u) => ['@type' => 'CreativeWork', 'url' => $u], $related);
@@ -9215,6 +9345,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
     if (LLMS_ENABLED) {
         $out .= "    llms: " . $y(url_llms()) . "\n";
     }
+    $out .= "    robots: " . $y(rtrim(BASE_URL, '/') . '/robots.txt') . "\n";
     // Site-wide AI usage policy. A declaration of intent for AI systems that
     // read this file — what the publisher permits doing with the library's
     // content. Not an enforcement mechanism (robots.txt and the access gates
@@ -9257,6 +9388,60 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
     }
 
     echo $out;
+    exit;
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'yaml_view') {
+    // Human-readable HTML rendering of library.yaml, parsed in the browser by
+    // the bundled js-yaml (lib/js-yaml/). Shares the YAML endpoint's gating, so
+    // it is available exactly when library.yaml is. Progressive enhancement: a
+    // reader without JavaScript still gets a link to the raw file.
+    if (!YAML_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $has_jsyaml = is_file(__DIR__ . '/lib/js-yaml/js-yaml.min.js');
+    header('Content-Type: text/html; charset=UTF-8');
+    send_public_cache_headers(900);
+    send_security_headers();
+    ?>
+<!DOCTYPE html>
+<html lang="<?= e(SITE_LANGUAGE) ?>" data-theme="folio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library — <?= e(SITE_NAME) ?></title>
+<meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
+<link rel="canonical" href="<?= e(rtrim(BASE_URL, '/') . '/library.html') ?>">
+<?= stylesheet_tag() ?>
+<?= site_icon_tags() ?>
+</head>
+<body>
+<header class="topbar">
+    <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
+    <span class="running-head">Library index</span>
+    <div class="theme-picker" role="group" aria-label="Colour scheme">
+        <button data-set-theme="folio" title="Folio"></button>
+        <button data-set-theme="ledger" title="Ledger"></button>
+        <button data-set-theme="garden" title="Garden"></button>
+        <button data-set-theme="night" title="Night"></button>
+    </div>
+</header>
+<main class="library-view-page" id="folio-main" tabindex="-1">
+    <div id="library-view" data-yaml-url="<?= e(url_yaml()) ?>">
+        <p>This page renders <a href="<?= e(url_yaml()) ?>">library.yaml</a> in a readable form.
+        <?php if (!$has_jsyaml): ?>The YAML viewer library is not installed; open the raw file directly.<?php else: ?>If it does not load, your browser may have JavaScript disabled — the raw file is linked above.<?php endif; ?></p>
+    </div>
+</main>
+<?php render_footer(); ?>
+<?php if ($has_jsyaml): ?>
+<script src="<?= e(asset_url('lib/js-yaml/js-yaml.min.js')) ?>"></script>
+<script src="<?= e(asset_url('assets/js/library-view.js')) ?>" defer></script>
+<script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
+<?php endif; ?>
+</body>
+</html>
+    <?php
     exit;
 }
 
@@ -9325,6 +9510,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
               . '- [Category sitemap](' . url_sitemap_categories()
               . "): the category archive pages.\n";
     }
+    $out .= '- [robots.txt](' . rtrim(BASE_URL, '/') . '/robots.txt'
+          . "): crawler directives and links to these files.\n";
     exit($out);
 }
 

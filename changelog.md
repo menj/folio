@@ -3,6 +3,72 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.37.0 — 17 August 2026
+
+### Fixed
+
+- **Video no longer buffers slowly when the access guard is on.** With video
+  access control enabled, every video — public ones included — was streamed
+  through PHP, which is far slower than letting the webserver deliver the file
+  directly and caused long buffering. Public and viewer video are now served
+  through signed, time-limited direct URLs that the webserver delivers itself
+  (full speed, with byte-range seeking), while unsigned direct requests are
+  still refused. Removed the footer's About/FAQ/Privacy links (they remain in
+  the header nav).
+
+### Added
+
+- **Fast-path preflight for video.** When you confirm the video gate, Folio now
+  runs a second probe that checks whether a signed direct request is actually
+  served by your webserver (it needs `mod_rewrite` honouring the token rule).
+  If so, video takes the fast direct path; if not — no `mod_rewrite`, or the
+  rule isn't honoured — it automatically falls back to the reliable PHP path, so
+  video always plays, just slower on such hosts.
+
+### Security
+
+- The webserver check on the video token verifies only that a token is present
+  and well-formed, not that its HMAC is valid (a webserver cannot compute the
+  HMAC). This makes the fast, gated path measurably weaker than the previous
+  all-PHP gate: a leaked signed URL is reusable until it expires. This is a
+  deliberate trade-off for playback speed. For maximum protection, keep the
+  gate's fast path off (video then uses the slower PHP gate, which does verify
+  the HMAC on every request). Hidden video remains admin-only regardless.
+
+## 1.36.0 — 17 August 2026
+
+### Added
+
+- **Human-readable library view (`library.html`).** A browser-rendered version
+  of `library.yaml` — the same content (resources, AI usage policy, and the full
+  document list) formatted as a readable page rather than raw YAML. It fetches
+  `library.yaml` and parses it client-side with a bundled copy of js-yaml
+  (5.3.0, MIT, in `lib/js-yaml/`), served from Folio's own origin so it needs no
+  Content-Security-Policy change. Progressive enhancement: without JavaScript,
+  the page links to the raw YAML. Linked in the footer as **HTML**, beside YAML.
+
+## 1.35.2 — 17 August 2026
+
+### Changed
+
+- **robots.txt joined the cross-reference web.** robots.txt now names the
+  AI-discovery files (llms.txt, identity.json, library.yaml) in comments —
+  the correct idiom, since only `Sitemap:` is a standard robots directive — so
+  the file every crawler reads first points at the rest of the family. In turn,
+  each of the other discovery files now references robots.txt back, completing
+  the loop in both directions. Every reference respects the resource's toggle.
+
+## 1.35.1 — 17 August 2026
+
+### Fixed
+
+- **The Crawlers screen now shows all three sitemaps.** The sitemap preview
+  listed only the page and document sitemaps; the category sitemap — which is
+  generated, announced in robots.txt, and referenced by the other discovery
+  files — was missing, and the copy still said "two sitemaps." All three are now
+  shown with their live counts. The document-sitemap count was also corrected to
+  exclude gated PDFs, matching what that sitemap actually serves.
+
 ## 1.35.0 — 17 August 2026
 
 ### Added
