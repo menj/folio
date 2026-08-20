@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.38.0');
+define('FOLIO_VERSION', '1.40.2');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -168,11 +168,6 @@ defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
    routing bytes through Folio. These two constants are retained only so older
    settings files load cleanly; nothing reads them for behaviour any more. */
 defined('VIDEO_GATE_CONFIRMED') || define('VIDEO_GATE_CONFIRMED', false);
-/* Set by the video preflight: true only when a signed direct video request is
-   served by the webserver (mod_rewrite present and honouring the token rule),
-   so public/viewer video can be served fast and direct. False keeps video on
-   the reliable PHP path. */
-defined('VIDEO_FAST_DIRECT')    || define('VIDEO_FAST_DIRECT', false);
 /* Rows per page in a folder listing. A folder below this renders whole, and
    behaves exactly as it always has: sorting, filtering and search all happen
    in the browser, instantly. Above it the listing is paginated and sorting
@@ -192,6 +187,16 @@ defined('AI_POLICY_NOTE')       || define('AI_POLICY_NOTE', '');
 defined('LLMS_INTRO')           || define('LLMS_INTRO', '');
 defined('SITE_INDEXABLE')       || define('SITE_INDEXABLE', true);
 defined('INDEXNOW_KEY')         || define('INDEXNOW_KEY', '');
+/** Google Indexing API service-account credentials. Stored in data/settings.php, never rendered. */
+defined('GOOGLE_INDEXING_PROJECT_ID')   || define('GOOGLE_INDEXING_PROJECT_ID', '');
+defined('GOOGLE_INDEXING_CLIENT_EMAIL') || define('GOOGLE_INDEXING_CLIENT_EMAIL', '');
+defined('GOOGLE_INDEXING_PRIVATE_KEY')  || define('GOOGLE_INDEXING_PRIVATE_KEY', '');
+defined('GOOGLE_INDEXING_LAST_SUBMITTED') || define('GOOGLE_INDEXING_LAST_SUBMITTED', '');
+defined('GOOGLE_INDEXING_LAST_COUNT')   || define('GOOGLE_INDEXING_LAST_COUNT', 0);
+defined('GOOGLE_INDEXING_LAST_FAILED')  || define('GOOGLE_INDEXING_LAST_FAILED', 0);
+defined('GOOGLE_INDEXING_LAST_ERROR')   || define('GOOGLE_INDEXING_LAST_ERROR', '');
+defined('GOOGLE_INDEXING_QUOTA_EXCEEDED') || define('GOOGLE_INDEXING_QUOTA_EXCEEDED', false);
+defined('GOOGLE_INDEXING_MAX_URLS_PER_RUN') || define('GOOGLE_INDEXING_MAX_URLS_PER_RUN', 100);
 
 /* Analytics. Both providers are external and off by default; Folio itself
    records no visits, no IP addresses, and no geolocation. */
@@ -966,33 +971,6 @@ function pdf_gate_ensure_probe_file(): bool
     ) !== false;
 }
 
-/** Path of the video-gate preflight probe file inside uploads/. */
-function video_gate_probe_path(): string
-{
-    return rtrim(BASE_DIR, '/\\') . DIRECTORY_SEPARATOR . FOLIO_VIDEO_PROBE_NAME;
-}
-
-/**
- * Create the tiny probe file if it doesn't already exist. Unlike the PDF probe,
- * this one exists to be refused: while the guard is on, a direct request for it
- * must come back 403, which is how the preflight proves the webserver honours
- * the deny.
- */
-function video_gate_ensure_probe_file(): bool
-{
-    $path = video_gate_probe_path();
-    if (is_file($path)) {
-        return true;
-    }
-    if (!is_dir(BASE_DIR) && !@mkdir(BASE_DIR, 0750, true)) {
-        return false;
-    }
-    return @file_put_contents(
-        $path,
-        "Folio video-gate preflight probe file. Safe to delete; Folio recreates it as needed.\n"
-    ) !== false;
-}
-
 /** Normalise a stored pdf_access value, defaulting unknown/missing to public.
  *  Legacy "viewer" is migrated to "restricted" (the renamed tier). */
 function pdf_access_of(array $m): string
@@ -1058,8 +1036,6 @@ function pdf_full_access(string $rel, array $m): bool
     }
     return pdf_access_of($m) === 'public';
 }
-
-define('FOLIO_VIDEO_PROBE_NAME', '.folio-video-probe.mp4');
 
 /**
  * Video access control, mirroring pdf_access but fail-closed.
@@ -1174,56 +1150,6 @@ function video_access_of(array $m): string
 }
 
 /**
- * Whether "viewer"/"hidden" video can actually be enforced right now. All three
- * must hold, or non-public video is not shown to the public at all (fail-closed,
- * unlike PDFs which fall back to public):
- *   1. The guard is on.
- *   2. A signing key is configured, so signed URLs are not forgeable.
- *   3. The preflight confirmed the webserver refuses direct video access.
- */
-function video_access_enforced(): bool
-{
-    return video_guard_active() && FOLIO_URL_SIGNING_KEY !== '' && !empty(VIDEO_GATE_CONFIRMED);
-}
-
-/** The application URL for a video's bytes (Apache refuses the direct file while the guard is on). */
-function video_raw_url(string $rel): string
-{
-    return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel);
-}
-
-/**
- * A DIRECT uploads/ URL for a video, carrying a signed, time-limited token.
- * When the video guard is active, its .htaccess denies video requests that
- * lack a token but allows those that carry one — so Apache serves this URL
- * itself, at full speed with byte-range seeking, instead of streaming every
- * byte through PHP. The token is a real HMAC (so it cannot be forged without
- * the signing key); note, however, that Apache only checks a token is present
- * and well-formed, not that the HMAC verifies — this is the documented, weaker
- * "fast but token-gated" trade-off, chosen so protected video need not buffer.
- */
-function video_direct_signed_url(string $rel, int $ttl = 3600): string
-{
-    if (!video_access_enforced()) {
-        // Guard off: the direct uploads/ URL already works, served by the
-        // webserver at full speed with no token needed.
-        return url_raw($rel);
-    }
-    if (!VIDEO_FAST_DIRECT) {
-        // The preflight could not confirm the webserver serves a signed direct
-        // request (no mod_rewrite, or the token rule isn't honoured). Use the
-        // reliable PHP serve path instead — slower, but it always works and
-        // still range-streams. This is the auto-chosen safe fallback.
-        return video_raw_url($rel);
-    }
-    $expires = time() + $ttl;
-    $token   = pdf_sign($rel, $expires);
-    $base    = url_raw($rel); // direct uploads/ path for a video
-    $sep     = strpos($base, '?') === false ? '?' : '&';
-    return $base . $sep . 'expires=' . $expires . '&token=' . $token;
-}
-
-/**
  * The URL to use for a file's actual bytes, aware of both pdf_access and video
  * access. Returns '' when nothing should be linked or embedded for this file in
  * the current context — callers must treat '' as "render no link," never fall
@@ -1246,10 +1172,18 @@ function url_raw_effective(string $rel, array $m): string
         if ($admin || !pdf_access_enforced()) {
             return url_raw($rel);
         }
-        // Restricted and hidden both withhold the file from the public: the
-        // page shows a "restricted" notice instead of the document. Only public
-        // PDFs are served.
-        return pdf_access_of($m) === 'public' ? url_raw($rel) : '';
+        // Public PDFs are served directly. Restricted PDFs get a short-lived
+        // signed URL through ?action=raw — enough to drive the in-page
+        // preview, but not a permanent public link. Hidden PDFs get no URL at
+        // all; the page shows a "restricted" notice instead of the document.
+        $access = pdf_access_of($m);
+        if ($access === 'public') {
+            return url_raw($rel);
+        }
+        if ($access === 'restricted') {
+            return pdf_signed_url($rel);
+        }
+        return '';
     }
 
     if (file_kind($ext) === 'video') {
@@ -5749,6 +5683,246 @@ function indexnow_url_list(array $mime_map): array
     return array_values(array_unique($urls));
 }
 
+
+/** Whether Google Indexing API credentials are present. */
+function google_indexing_configured(): bool
+{
+    return trim((string) GOOGLE_INDEXING_CLIENT_EMAIL) !== ''
+        && trim((string) GOOGLE_INDEXING_PRIVATE_KEY) !== '';
+}
+
+/**
+ * Build the Google API client using the same Google API client mechanism
+ * used by Rank Math Instant Indexing 1.1.22.
+ *
+ * The service-account credentials are supplied from Folio's private settings
+ * and are never rendered into the page.
+ */
+function google_indexing_client()
+{
+    static $client = null;
+
+    if ($client !== null) {
+        return $client;
+    }
+
+    if (!google_indexing_configured()) {
+        return null;
+    }
+
+    $autoload = __DIR__ . '/lib/vendor/autoload.php';
+    if (!is_file($autoload)) {
+        return null;
+    }
+
+    require_once $autoload;
+
+    if (!class_exists('Google_Client')) {
+        return null;
+    }
+
+    $client = new Google_Client();
+
+    $client->setAuthConfig([
+        'type'                         => 'service_account',
+        'project_id'                   => (string) GOOGLE_INDEXING_PROJECT_ID,
+        'private_key'                  => (string) GOOGLE_INDEXING_PRIVATE_KEY,
+        'client_email'                 => (string) GOOGLE_INDEXING_CLIENT_EMAIL,
+        // Folio never collects a client_id from the uploaded service-account
+        // JSON (only project_id/client_email/private_key are stored), but the
+        // vendor client unconditionally reads $config['client_id'] once
+        // type=service_account, so an empty string avoids a PHP warning here.
+        'client_id'                    => '',
+        'token_uri'                    => 'https://oauth2.googleapis.com/token',
+    ]);
+    $client->setConfig('base_path', 'https://indexing.googleapis.com');
+    $client->addScope('https://www.googleapis.com/auth/indexing');
+
+    return $client;
+}
+
+/**
+ * Submit one or more URLs using Google's official PHP client library.
+ *
+ * This follows the mechanism used by Rank Math Instant Indexing 1.1.22:
+ * Google_Client + Google_Service_Indexing + Google_Http_Batch.
+ *
+ * @param array  $urls  Canonical URLs.
+ * @param string $type  URL_UPDATED or URL_DELETED.
+ * @return array
+ */
+
+/* ── Per-URL Google Indexing submission tracking ──────────────────────────── *
+ * Stored in data/gi_submitted.json as { "https://...": "2026-08-20T..." }.
+ * Keyed by canonical URL so it survives file renames and folder moves.
+ * Only successful submissions are written; failed URLs stay pending.        */
+function gi_tracking_path(): string
+{
+    return __DIR__ . '/data/gi_submitted.json';
+}
+
+function gi_tracking_load(): array
+{
+    $p = gi_tracking_path();
+    if (!is_file($p)) {
+        return [];
+    }
+    $data = @json_decode((string) @file_get_contents($p), true);
+    return is_array($data) ? $data : [];
+}
+
+function gi_tracking_save(array $map): bool
+{
+    $p = gi_tracking_path();
+    $dir = dirname($p);
+    if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+        return false;
+    }
+    $json = json_encode($map, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return atomic_replace_file($p, (string) $json);
+}
+
+function gi_tracking_mark(array $urls, string $timestamp = ''): bool
+{
+    if (!$urls) {
+        return true;
+    }
+    $map = gi_tracking_load();
+    $ts  = $timestamp !== '' ? $timestamp : gmdate('c');
+    foreach ($urls as $url) {
+        $map[(string) $url] = $ts;
+    }
+    return gi_tracking_save($map);
+}
+
+function gi_tracking_clear(): bool
+{
+    $p = gi_tracking_path();
+    return !is_file($p) || @unlink($p);
+}
+
+function google_indexing_submit_urls(array $urls, string $type = 'URL_UPDATED'): array
+{
+    $urls = array_values(array_unique(array_filter(array_map('strval', $urls))));
+    if (!$urls) {
+        return ['ok' => true, 'sent' => 0, 'failed' => 0, 'results' => []];
+    }
+
+    if (!in_array($type, ['URL_UPDATED', 'URL_DELETED'], true)) {
+        $type = 'URL_UPDATED';
+    }
+
+    // Google's Indexing API allows 100 URLs per batch HTTP request but has no
+    // per-call total limit beyond daily quota. Submit in chunks of 100 — each
+    // chunk is one batched HTTP request — and aggregate results across all chunks
+    // so every URL in the library is submitted in a single admin action.
+    $CHUNK = 100;
+    $chunks = array_chunk($urls, $CHUNK);
+
+    $client = google_indexing_client();
+    if ($client === null) {
+        return [
+            'ok'     => false,
+            'sent'   => 0,
+            'failed' => count($urls),
+            'error'  => 'Google API client could not be initialized.',
+            'results' => [],
+        ];
+    }
+
+    $total_sent      = 0;
+    $total_failed    = 0;
+    $quota_exceeded  = false;
+    $all_details     = [];
+    $last_error      = '';
+
+    // Reason strings Google returns when daily quota is exhausted.
+    $quota_reasons = ['dailyLimitExceeded', 'rateLimitExceeded', 'userRateLimitExceeded'];
+
+    try {
+        $service = new Google_Service_Indexing($client);
+
+        foreach ($chunks as $chunk_index => $chunk_urls) {
+            // Stop submitting if quota was already exceeded — remaining chunks
+            // would fail for the same reason and waste the error budget.
+            if ($quota_exceeded) {
+                $total_failed += count($chunk_urls);
+                continue;
+            }
+
+            $client->setUseBatch(true);
+            $batch  = new Google_Http_Batch($client, false, 'https://indexing.googleapis.com');
+            $offset = $chunk_index * $CHUNK;
+
+            foreach ($chunk_urls as $i => $url) {
+                if (!filter_var($url, FILTER_VALIDATE_URL)) {
+                    $total_failed++;
+                    continue;
+                }
+                $notification = new Google_Service_Indexing_UrlNotification();
+                $notification->setType($type);
+                $notification->setUrl($url);
+                $request = $service->urlNotifications->publish($notification);
+                $batch->add($request, 'url-' . ($offset + $i));
+            }
+
+            foreach ($batch->execute() as $id => $response) {
+                $local_id = preg_replace('/^response-/', '', (string) $id);
+                if (is_a($response, 'Google_Service_Exception')) {
+                    $total_failed++;
+                    $last_error = $response->getMessage();
+
+                    // Check if this is a quota error so we can surface it
+                    // specifically and stop sending further batches.
+                    $errors = method_exists($response, 'getErrors') ? (array) $response->getErrors() : [];
+                    foreach ($errors as $err) {
+                        if (in_array((string) ($err['reason'] ?? ''), $quota_reasons, true)) {
+                            $quota_exceeded = true;
+                            $last_error     = 'Daily quota exceeded. Google limits Indexing API notifications per day. Check your quota in Google Cloud Console under APIs & Services → Indexing API → Quotas, or wait until midnight Pacific time for the quota to reset.';
+                            break;
+                        }
+                    }
+                    // HTTP 429 without structured errors is also a quota signal
+                    if (!$quota_exceeded && $response->getCode() === 429) {
+                        $quota_exceeded = true;
+                        $last_error     = 'Rate limit hit (HTTP 429). Your daily Google Indexing API quota may be exhausted. Check Google Cloud Console → APIs & Services → Indexing API → Quotas.';
+                    }
+
+                    $all_details[$local_id] = [
+                        'ok'            => false,
+                        'error'         => $response->getMessage(),
+                        'code'          => $response->getCode(),
+                        'quota_exceeded' => $quota_exceeded,
+                    ];
+                } else {
+                    $total_sent++;
+                    $all_details[$local_id] = ['ok' => true];
+                }
+            }
+        }
+
+        return [
+            'ok'            => $total_failed === 0,
+            'sent'          => $total_sent,
+            'failed'        => $total_failed,
+            'error'         => $last_error,
+            'quota_exceeded' => $quota_exceeded,
+            'results'       => $all_details,
+        ];
+    } catch (Throwable $e) {
+        return [
+            'ok'      => false,
+            'sent'    => $total_sent,
+            'failed'  => $total_failed + (count($urls) - $total_sent - $total_failed),
+            'error'   => $e->getMessage(),
+            'results' => $all_details,
+        ];
+    }
+}
+
+/**
+ * Keep the same canonical URL inventory as IndexNow.
+ */
 /* ------------------------------------------------------------------ */
 /* Crawlers (admin only): sitemap, llms.txt, indexability, robots      */
 /* ------------------------------------------------------------------ */
@@ -5776,7 +5950,110 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         } else {
             $op = (string) ($_POST['op'] ?? 'save');
 
-            if ($op === 'indexnow_generate') {
+            if ($op === 'google_indexing_save') {
+                // Accept either an uploaded .json file or pasted text. The file
+                // takes priority; the textarea is the fallback. Either way the
+                // raw JSON is read into memory, validated, and the three fields
+                // extracted — the file itself is never written to disk.
+                $raw = '';
+                if (!empty($_FILES['google_json_file']['tmp_name'])
+                    && $_FILES['google_json_file']['error'] === UPLOAD_ERR_OK
+                ) {
+                    $raw = trim((string) @file_get_contents($_FILES['google_json_file']['tmp_name']));
+                    @unlink($_FILES['google_json_file']['tmp_name']); // discard immediately
+                }
+                if ($raw === '') {
+                    $raw = trim((string) ($_POST['google_json_key'] ?? ''));
+                }
+                if ($raw === '') {
+                    $error = 'Upload the service-account JSON file or paste its contents.';
+                } else {
+                    $decoded = @json_decode($raw, true);
+                    if (!is_array($decoded)
+                        || empty($decoded['client_email'])
+                        || empty($decoded['private_key'])
+                        || ($decoded['type'] ?? '') !== 'service_account'
+                    ) {
+                        $error = 'That does not look like a valid service-account JSON key. Make sure you uploaded or pasted the full .json file from Google Cloud Console.';
+                    } elseif (settings_store([
+                        'GOOGLE_INDEXING_PROJECT_ID'   => (string) ($decoded['project_id']   ?? ''),
+                        'GOOGLE_INDEXING_CLIENT_EMAIL'  => (string) ($decoded['client_email']  ?? ''),
+                        'GOOGLE_INDEXING_PRIVATE_KEY'   => (string) ($decoded['private_key']   ?? ''),
+                    ])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&google=configured');
+                        exit;
+                    } else {
+                        $error = 'Could not save. Check that data/ is writable.';
+                    }
+                }
+            } elseif ($op === 'google_indexing_submit') {
+                if (!google_indexing_configured()) {
+                    $error = 'Google Indexing API credentials are not configured.';
+                } elseif (!SITE_INDEXABLE) {
+                    $error = 'The site is marked non-indexable, so URLs are not being submitted.';
+                } else {
+                    $all_urls  = indexnow_url_list($mime_map);
+                    $submitted = gi_tracking_load();
+                    $pending   = array_values(array_filter($all_urls, static fn($u) => !isset($submitted[$u])));
+                    $cap       = max(1, min(count($pending), (int) ($_POST['gi_cap'] ?? 100)));
+                    $batch     = array_slice($pending, 0, $cap);
+                    if (!$batch) {
+                        $notice = 'All ' . count($all_urls) . ' URLs have already been submitted. Use "Reset tracking" to resubmit.';
+                    } else {
+                        $run_ts = gmdate('c');
+                        $result = google_indexing_submit_urls($batch, 'URL_UPDATED');
+                        $sent   = (int) ($result['sent'] ?? 0);
+                        $failed = (int) ($result['failed'] ?? 0);
+                        $last_error     = (string) ($result['error'] ?? '');
+                        $quota_exceeded = !empty($result['quota_exceeded']);
+                        if ($sent > 0) {
+                            gi_tracking_mark(array_slice($batch, 0, $sent), $run_ts);
+                        }
+                        settings_store([
+                            'GOOGLE_INDEXING_LAST_SUBMITTED' => $run_ts,
+                            'GOOGLE_INDEXING_LAST_COUNT'     => $sent,
+                            'GOOGLE_INDEXING_LAST_FAILED'    => $failed,
+                            'GOOGLE_INDEXING_LAST_ERROR'     => $last_error,
+                            'GOOGLE_INDEXING_QUOTA_EXCEEDED' => $quota_exceeded,
+                        ]);
+                        $remaining = count($pending) - $sent;
+                        if ($quota_exceeded) {
+                            $error = 'Submitted ' . $sent . ' of ' . $cap . ' pending URLs before hitting the daily quota. '
+                                   . $remaining . ' URL' . ($remaining === 1 ? '' : 's') . ' still pending. ' . $last_error;
+                        } elseif ($failed === 0) {
+                            $notice = 'Submitted ' . $sent . ' URL' . ($sent === 1 ? '' : 's') . '. '
+                                    . ($remaining > 0
+                                        ? $remaining . ' pending URL' . ($remaining === 1 ? '' : 's') . ' remaining — run again tomorrow.'
+                                        : 'All URLs have now been submitted.');
+                        } else {
+                            $error = 'Submitted ' . $sent . '; ' . $failed . ' failed. ' . $last_error;
+                        }
+                    }
+                }
+
+            } elseif ($op === 'google_indexing_clear') {
+                if (settings_store([
+                    'GOOGLE_INDEXING_PROJECT_ID' => '',
+                    'GOOGLE_INDEXING_CLIENT_EMAIL' => '',
+                    'GOOGLE_INDEXING_PRIVATE_KEY' => '',
+                    'GOOGLE_INDEXING_LAST_SUBMITTED' => '',
+                    'GOOGLE_INDEXING_LAST_COUNT' => 0,
+                    'GOOGLE_INDEXING_LAST_FAILED' => 0,
+                    'GOOGLE_INDEXING_LAST_ERROR' => '',
+                ])) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1&google=cleared');
+                    exit;
+                }
+                $error = 'Could not clear Google Indexing API credentials.';
+
+            } elseif ($op === 'google_indexing_reset_tracking') {
+                if (gi_tracking_clear()) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1&google=tracking_reset');
+                    exit;
+                }
+                $error = 'Could not reset submission tracking. Check that data/ is writable.';
+
+            } elseif ($op === 'indexnow_generate') {
                 $key = bin2hex(random_bytes(16));
                 if (settings_store(['INDEXNOW_KEY' => $key])) {
                     header('Location: ' . BASE_URL . '?action=crawlers&saved=1&indexnow=generated');
@@ -5919,87 +6196,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 }
                 $error = 'Could not save. Check that data/ is writable.';
 
-            } elseif ($op === 'confirm_video_gate') {
-                if (FOLIO_URL_SIGNING_KEY === '') {
-                    $error = 'Set FOLIO_URL_SIGNING_KEY in config.php before enabling video access control.';
-                } elseif (!video_guard_write(true)) {
-                    $error = 'Could not switch it on. Check that ' . e(UPLOADS_DIRNAME)
-                        . '/.htaccess exists with its Folio markers and is writable, and that data/ is writable.';
-                } elseif (!video_gate_ensure_probe_file()) {
-                    $error = 'Could not create the probe file. Check that ' . e(UPLOADS_DIRNAME) . '/ is writable.';
-                } else {
-                    // The guard is now on. Prove the webserver actually refuses a
-                    // direct request for video by asking for the probe file and
-                    // expecting 403. This is an anonymous request on purpose: the
-                    // public is who must be refused.
-                    $probe_url = rtrim(BASE_URL, '/') . '/' . rawurlencode(UPLOADS_DIRNAME) . '/' . FOLIO_VIDEO_PROBE_NAME;
-                    $ctx = stream_context_create(['http' => [
-                        'method' => 'GET',
-                        'timeout' => 8,
-                        'ignore_errors' => true,
-                    ]]);
-                    $result = @file_get_contents($probe_url, false, $ctx);
-                    $status = 0;
-                    if (isset($http_response_header) && isset($http_response_header[0])
-                        && preg_match('#\s(\d{3})\s#', $http_response_header[0], $mm)) {
-                        $status = (int) $mm[1];
-                    }
-                    $server_forbidden = $status === 403;
-                    $client_forbidden = (string) ($_POST['probe_result'] ?? '') === 'forbidden';
-
-                    // Second probe: does a SIGNED direct request succeed? If the
-                    // host has mod_rewrite and honours the allow-with-token rule,
-                    // this returns 200/206 and public video can be served fast,
-                    // straight from the webserver. If not (no mod_rewrite, or the
-                    // fallback deny-all applies), it is refused and we keep video
-                    // on the reliable PHP path. Detected here, acted on by
-                    // video_fast_direct().
-                    $fast_direct = false;
-                    if ($server_forbidden) {
-                        $signed_expires = time() + 300;
-                        // A well-formed token so the .htaccess allow-rule matches;
-                        // the probe path is what it signs.
-                        $signed_token   = pdf_sign(FOLIO_VIDEO_PROBE_NAME, $signed_expires);
-                        $signed_url = $probe_url . '?expires=' . $signed_expires . '&token=' . $signed_token;
-                        $sctx = stream_context_create(['http' => [
-                            'method' => 'GET', 'timeout' => 8, 'ignore_errors' => true,
-                        ]]);
-                        $sres = @file_get_contents($signed_url, false, $sctx);
-                        $sstatus = 0;
-                        if (isset($http_response_header) && isset($http_response_header[0])
-                            && preg_match('#\s(\d{3})\s#', $http_response_header[0], $sm)) {
-                            $sstatus = (int) $sm[1];
-                        }
-                        $fast_direct = ($sstatus === 200 || $sstatus === 206);
-                    }
-
-                    if ($server_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true, 'VIDEO_FAST_DIRECT' => $fast_direct])) {
-                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed' . ($fast_direct ? '_fast' : ''));
-                        exit;
-                    } elseif ($result === false && $client_forbidden && settings_store(['VIDEO_GATE_CONFIRMED' => true, 'VIDEO_FAST_DIRECT' => false])) {
-                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed_unverified');
-                        exit;
-                    } else {
-                        // Switched on but not verified. Fail closed: the guard
-                        // stays on, so non-public video is hidden from the public
-                        // rather than served, and this stays unconfirmed.
-                        settings_store(['VIDEO_GATE_CONFIRMED' => false]);
-                        $error = 'Video access control is switched on, but this server did not refuse a '
-                            . 'direct request for a video (it answered '
-                            . ($status ? (string) $status : 'no response')
-                            . ', not 403). Until it does, non-public video is hidden from the public rather '
-                            . 'than served. Check that AllowOverride lets the ' . e(UPLOADS_DIRNAME)
-                            . '/.htaccess rules run on your server, then test again.';
-                    }
-                }
-
-            } elseif ($op === 'disable_video_gate') {
-                if (video_guard_write(false) && settings_store(['VIDEO_GATE_CONFIRMED' => false])) {
-                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
-                    exit;
-                }
-                $error = 'Could not switch it off. Check that ' . e(UPLOADS_DIRNAME) . '/.htaccess and data/ are writable.';
-
             } else {
                 $intro = trim((string) ($_POST['llms_intro'] ?? ''));
                 if (strlen($intro) > 1000) {
@@ -6026,14 +6222,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             $notice = 'IndexNow key generated. Verify by opening the key file link below in a browser.';
         } elseif (($_GET['indexnow'] ?? '') === 'cleared') {
             $notice = 'IndexNow key removed.';
+        } elseif (($_GET['google'] ?? '') === 'configured') {
+            $notice = 'Google Indexing API credentials saved.';
+        } elseif (($_GET['google'] ?? '') === 'cleared') {
+            $notice = 'Google Indexing API credentials removed.';
+        } elseif (($_GET['google'] ?? '') === 'tracking_reset') {
+            $notice = 'Submission tracking reset — all URLs are now pending.';
         } elseif (($_GET['pdfgate'] ?? '') === 'confirmed') {
-            $notice = 'Confirmed: PDF requests reach the raw action on this server. "Viewer" and "hidden" pdf_access are now enforced.';
+            $notice = 'Confirmed: PDF requests reach the raw action on this server. "Restricted" and "hidden" pdf_access are now enforced.';
         } elseif (($_GET['pdfgate'] ?? '') === 'confirmed_unverified') {
-            $notice = 'Enabled based on your browser\'s successful test — this server could not reach its own public URL to verify independently (outbound HTTP may be blocked here). "Viewer" and "hidden" pdf_access are now enforced.';
-        } elseif (($_GET['videogate'] ?? '') === 'confirmed') {
-            $notice = 'Confirmed: this server refuses direct access to video. "Viewer" and "hidden" video access are now enforced.';
-        } elseif (($_GET['videogate'] ?? '') === 'confirmed_unverified') {
-            $notice = 'Enabled based on your browser\'s test showing a refused direct video request — this server could not reach its own public URL to verify independently. "Viewer" and "hidden" video access are now enforced.';
+            $notice = 'Enabled based on your browser\'s successful test — this server could not reach its own public URL to verify independently (outbound HTTP may be blocked here). "Restricted" and "hidden" pdf_access are now enforced.';
         }
     }
 
@@ -6077,6 +6275,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         ? (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/' . INDEXNOW_KEY . '.txt'
                        : BASE_URL . '?indexnow_key=' . INDEXNOW_KEY)
         : '';
+
+
+    $google_indexing_count = count(indexnow_url_list($mime_map));
+    $google_indexing_submitted_map = gi_tracking_load();
+    $google_indexing_all_urls = indexnow_url_list($mime_map);
+    $google_indexing_count = count($google_indexing_all_urls);
+    $google_indexing_submitted_count = count(array_filter($google_indexing_all_urls, static fn($u) => isset($google_indexing_submitted_map[$u])));
+    $google_indexing_pending_count = $google_indexing_count - $google_indexing_submitted_count;
+
+    // Quota calculation from local submission timestamps — same method as
+    // the RankMath Fast Indexing plugin (no Google quota API needed).
+    $gi_limit_daily    = 200; // Google default; increase via Cloud Console
+    $gi_limit_permin   = 380;
+    $gi_1day_ago       = time() - 86400;
+    $gi_1min_ago       = time() - 60;
+    $gi_sent_today     = 0;
+    $gi_sent_lastmin   = 0;
+    foreach ($google_indexing_submitted_map as $ts) {
+        $t = strtotime((string) $ts);
+        if ($t !== false) {
+            if ($t > $gi_1day_ago) { $gi_sent_today++; }
+            if ($t > $gi_1min_ago) { $gi_sent_lastmin++; }
+        }
+    }
+    $gi_remaining_daily  = max(0, $gi_limit_daily  - $gi_sent_today);
+    $gi_remaining_permin = max(0, $gi_limit_permin - $gi_sent_lastmin);
+    $google_indexing_last = (string) GOOGLE_INDEXING_LAST_SUBMITTED;
+    $google_indexing_last_count = (int) GOOGLE_INDEXING_LAST_COUNT;
+    $google_indexing_last_failed = (int) GOOGLE_INDEXING_LAST_FAILED;
+    $google_indexing_quota_exceeded = (bool) GOOGLE_INDEXING_QUOTA_EXCEEDED;
 
     /* Rewrite preflight target: /__probe__/?action=rewrite_probe.
        If mod_rewrite routes /__probe__/ through index.php, SFM_ROUTE arrives
@@ -6319,6 +6547,85 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         Webmaster Tools</a> and Google Search Console for one-off manual submission; and IndexNow below
         for immediate push notification.
     </p>
+
+        crawler reads; search-console tools for one-off manual submission; and the push APIs below.
+    </p>
+
+    <h2 class="detail-title">Google Indexing API</h2>
+    <p class="detail-desc">
+        Sends URL notifications directly to Google using a service-account credential — the same
+        mechanism as the RankMath Fast Indexing plugin. A successful API response does not guarantee
+        indexing; it requests that Google crawl the URL.
+    </p>
+    <?php if (google_indexing_configured()): ?>
+        <p class="field-note">Configured with a Google service account (<?= e(GOOGLE_INDEXING_CLIENT_EMAIL) ?>).</p>
+
+        <table class="diag-table" style="margin:0.8rem 0 1rem">
+            <tr><td>Total URLs</td><td><strong><?= (int) $google_indexing_count ?></strong></td></tr>
+            <tr><td>Already submitted</td><td><strong><?= (int) $google_indexing_submitted_count ?></strong></td></tr>
+            <tr><td>Pending (never submitted)</td><td><strong><?= (int) $google_indexing_pending_count ?></strong></td></tr>
+        </table>
+
+        <?php if ($google_indexing_last !== ''): ?>
+            <p class="detail-facts">Last run: <?= e($google_indexing_last) ?> &mdash; submitted <?= (int) $google_indexing_last_count ?>, failed <?= (int) $google_indexing_last_failed ?>.
+            <?php if ($google_indexing_quota_exceeded): ?>
+                <strong>Daily quota was hit on the last run.</strong> Google's Indexing API has a default limit of 200 URL notifications per day &mdash; check your quota in <a href="https://console.cloud.google.com/apis/api/indexing.googleapis.com/quotas" target="_blank" rel="noopener">Google Cloud Console</a> and request an increase if needed. Quota resets at midnight Pacific time.
+            <?php elseif ($google_indexing_last_failed > 0): ?>
+                <?= e((string) GOOGLE_INDEXING_LAST_ERROR) ?>
+            <?php endif; ?>
+            </p>
+        <?php endif; ?>
+
+        <div class="detail-desc" style="background:var(--leaf);border:1px solid var(--rule);border-radius:var(--radius);padding:0.7rem 1rem;font-family:var(--sans);font-size:0.82rem;margin:0.5rem 0 1rem">
+            <strong style="display:block;margin-bottom:0.4rem">Google Indexing API &mdash; Remaining Quota</strong>
+            <code>PublishRequestsPerDayPerProject = <strong><?= (int) $gi_remaining_daily ?></strong> / <?= (int) $gi_limit_daily ?></code><br>
+            <code>RequestsPerMinutePerProject = <strong><?= (int) $gi_remaining_permin ?></strong> / <?= (int) $gi_limit_permin ?></code>
+            <p style="margin:0.4rem 0 0;color:var(--quiet)">Calculated from local submission timestamps. Quota resets daily at midnight Pacific. To increase limits, visit <a href="https://console.cloud.google.com/apis/api/indexing.googleapis.com/quotas" target="_blank" rel="noopener">Google Cloud Console</a>.</p>
+        </div>
+
+        <?php if ($google_indexing_pending_count > 0): ?>
+            <?php $gi_safe_cap = min($google_indexing_pending_count, $gi_remaining_daily, 100); ?>
+            <form method="post" class="stack-form" style="max-width:420px;margin:0.5rem 0 1rem">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="google_indexing_submit">
+                <label for="gi-cap">URLs to submit this run (<?= (int) $gi_remaining_daily ?> daily quota remaining, <?= (int) $google_indexing_pending_count ?> pending)</label>
+                <input type="number" id="gi-cap" name="gi_cap" min="1" max="<?= (int) min($google_indexing_pending_count, $gi_remaining_daily) ?>" value="<?= (int) $gi_safe_cap ?>" style="width:6rem">
+                <p class="field-note">Only pending URLs are sent. Submitted URLs are tracked and skipped on future runs.</p>
+                <div><button type="submit" class="btn"<?= (SITE_INDEXABLE && $gi_remaining_daily > 0) ? '' : ' disabled' ?>><?= $gi_remaining_daily > 0 ? 'Submit next ' . (int) $gi_safe_cap . ' pending URLs' : 'Daily quota exhausted — try again tomorrow' ?></button></div>
+            </form>
+        <?php else: ?>
+            <p class="field-note">All URLs have been submitted. Reset tracking to resubmit.</p>
+        <?php endif; ?>
+
+        <div class="ping-row">
+            <form method="post" class="inline-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="google_indexing_reset_tracking">
+                <button type="submit" class="btn btn-ghost">Reset tracking</button>
+            </form>
+            <form method="post" class="inline-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="google_indexing_clear">
+                <button type="submit" class="btn btn-ghost">Remove credentials</button>
+            </form>
+        </div>
+        <?php if (!SITE_INDEXABLE): ?>
+            <p class="field-note">The site is currently marked non-indexable, so URLs cannot be submitted.</p>
+        <?php endif; ?>
+    <?php else: ?>
+        <p class="field-note">Not configured. Upload the .json file from Google Cloud Console, or paste its contents below.</p>
+        <form method="post" enctype="multipart/form-data" class="stack-form">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="google_indexing_save">
+            <label for="gi-file">Upload JSON key file</label>
+            <input type="file" id="gi-file" name="google_json_file" accept=".json,application/json">
+            <p class="field-note">Or paste the file contents directly:</p>
+            <label for="gi-json">Service-account JSON (paste)</label>
+            <textarea id="gi-json" name="google_json_key" rows="4" placeholder="{&quot;type&quot;: &quot;service_account&quot;, &quot;project_id&quot;: &quot;…&quot;, …}"></textarea>
+            <p class="field-note">The uploaded file is read in memory only — it is never written to disk. The three credential fields are stored in <code>data/settings.php</code>.</p>
+            <div><button type="submit" class="btn">Save credentials</button></div>
+        </form>
+    <?php endif; ?>
 
     <h2 class="detail-title">IndexNow</h2>
     <p class="field-note">
@@ -8562,7 +8869,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
             http_response_code(404);
             exit('Not found');
         }
-        if ($access === 'viewer') {
+        if ($access === 'restricted') {
             $expires = (int) ($_GET['expires'] ?? 0);
             $token   = (string) ($_GET['token'] ?? '');
             if ($token === '' || !pdf_signed_url_valid($rel, $expires, $token)) {
@@ -8598,27 +8905,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
                 . str_replace(['"', "\r", "\n"], '', basename($rel)) . '"');
             readfile($derived);
             exit;
-        }
-    }
-
-    // Video access gate. The single enforcement point for video bytes, mirroring
-    // the PDF gate. Active whenever the guard is on. "hidden" is admin-only;
-    // "viewer" requires a valid signed, expiring URL (or an admin session);
-    // "public" is served. An admin is never blocked from their own library.
-    if (file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) === 'video' && video_guard_active()) {
-        $vaccess = video_access_of(meta_load()[$rel] ?? []);
-        if ($vaccess !== 'public' && !is_admin()) {
-            if ($vaccess === 'hidden') {
-                http_response_code(404);
-                exit('Not found');
-            }
-            // viewer
-            $expires = (int) ($_GET['expires'] ?? 0);
-            $token   = (string) ($_GET['token'] ?? '');
-            if (!video_access_enforced() || $token === '' || !pdf_signed_url_valid($rel, $expires, $token)) {
-                http_response_code(404);
-                exit('Not found');
-            }
         }
     }
 
@@ -9821,22 +10107,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         $video_season  = str_clip(trim((string) ($_POST['video_season'] ?? '')), 20);
         $video_episode = str_clip(trim((string) ($_POST['video_episode'] ?? '')), 20);
     }
-    /* Search-result title and description, kept apart from the ones shown on
-       the page. A title that reads well above a document is often not the one
-       that reads well in a result list, and a description written for a
-       reader is often longer than a result will show. The limits are the
-       lengths Google displays before truncating. */
-    $seo_title = str_clip(trim((string) ($_POST['seo_title'] ?? '')), 60);
-    $seo_desc  = str_clip(trim((string) ($_POST['seo_desc'] ?? '')), 150);
+    /* Title is the SEO title (60 chars). Short description is the SEO meta
+       description (120 chars). Long description is for page display only
+       (500 chars). seo_title and seo_desc are no longer separate fields. */
+    $seo_title = str_clip(trim((string) ($_POST['seo_title'] ?? '')), 60); // legacy compat read-only
+    $seo_desc  = str_clip(trim((string) ($_POST['seo_desc'] ?? '')), 150); // legacy compat read-only
+    $long_desc = trim((string) ($_POST['long_desc'] ?? ''));
     if (function_exists('mb_substr')) {
-        $title      = mb_substr($title, 0, 200);
-        $desc       = mb_substr($desc, 0, 500);
+        $title      = mb_substr($title, 0, 60);
+        $desc       = mb_substr($desc, 0, 120);
+        $long_desc  = mb_substr($long_desc, 0, 500);
         $cat        = mb_substr($cat, 0, 50);
         $transcript = mb_substr($transcript, 0, 100000);
         $language   = mb_substr($language, 0, 35);
     } else {
-        $title      = substr($title, 0, 200);
-        $desc       = substr($desc, 0, 500);
+        $title      = substr($title, 0, 60);
+        $desc       = substr($desc, 0, 120);
+        $long_desc  = substr($long_desc, 0, 500);
         $cat        = substr($cat, 0, 50);
         $transcript = substr($transcript, 0, 100000);
         $language   = substr($language, 0, 35);
@@ -9896,14 +10183,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
+        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
         $seo_title, $seo_desc, $video_type, $video_series, $video_creator, $video_season, $video_episode, $redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
         // administrator has genuinely emptied all of them. Omitting one would
         // both discard it on save and stop an otherwise-empty record being
         // cleared.
-        if ($title === '' && $desc === '' && $cat === '' && !$tags
+        if ($title === '' && $desc === '' && $long_desc === '' && $cat === '' && !$tags
             && $document_type === '' && $doc_date === '' && $transcript === ''
             && $pdf_access === 'public' && $video_access === 'public' && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
@@ -9918,6 +10205,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
             $meta = meta_put_record($meta, $rel, [
                 'title' => $title,
                 'desc' => $desc,
+                'long_desc' => $long_desc,
                 'category' => $cat,
                 'tags' => $tags,
                 'document_type' => $document_type,
@@ -10225,7 +10513,9 @@ if (isset($_GET['view'])) {
     $meta = meta_load();
     $m     = $meta[$rel] ?? [];
     $title = ($m['title'] ?? '') !== '' ? $m['title'] : pathinfo($rel, PATHINFO_FILENAME);
-    $desc  = $m['desc'] ?? '';
+    $desc  = $m['desc'] ?? '';      // Short description — always the SEO meta description
+    $long_desc = trim((string) ($m['long_desc'] ?? '')); // Optional long desc — page display only
+    $page_desc = $long_desc !== '' ? $long_desc : $desc; // What the detail page shows
     $cat   = $m['category'] ?? '';
     $tags  = $m['tags'] ?? [];
     $document_type = (string) ($m['document_type'] ?? '');
@@ -10257,19 +10547,14 @@ if (isset($_GET['view'])) {
         }
     }
     $view  = url_view($rel);
-    /* Search-result title and description. When set they are used verbatim
-       and the site name is not appended, because the field exists precisely
-       so the whole tag can be controlled. Empty falls back to what the page
-       itself shows, which is what every earlier release did. */
-    $seo_title = trim((string) ($m['seo_title'] ?? ''));
-    $seo_desc  = trim((string) ($m['seo_desc'] ?? ''));
-
-    $head_title = $seo_title !== '' ? $seo_title : $title . ' – ' . SITE_NAME;
-    $meta_desc  = $seo_desc !== ''
-        ? $seo_desc
-        : ($desc !== ''
-            ? $desc
-            : trim($title . ($cat !== '' ? ' — ' . $cat : '') . ' (' . strtoupper($ext) . ', ' . $size . ')'));
+    /* Title is always the SEO title and page title. Short description (desc)
+       is always the SEO meta description. Long description is never used as
+       meta. seo_title/seo_desc legacy fields are ignored — title and desc
+       now serve both roles directly. */
+    $head_title = $title . ' – ' . SITE_NAME;
+    $meta_desc  = $desc !== ''
+        ? $desc
+        : trim($title . ($cat !== '' ? ' — ' . $cat : '') . ' (' . strtoupper($ext) . ', ' . $size . ')');
 
     $file_node = schema_file($rel, $abs, $meta, $mime_map, true);
     $page_node = [
@@ -10309,7 +10594,7 @@ if (isset($_GET['view'])) {
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
 <meta property="og:type" content="<?= $kind === 'image' ? 'website' : 'article' ?>">
 <meta property="og:site_name" content="<?= e(SITE_NAME) ?>">
-<meta property="og:title" content="<?= e($seo_title !== '' ? $seo_title : $title) ?>">
+<meta property="og:title" content="<?= e($title) ?>">
 <meta property="og:description" content="<?= e($meta_desc) ?>">
 <meta property="og:url" content="<?= e($view) ?>">
 <?php if ($kind === 'image'): ?>
@@ -10343,7 +10628,7 @@ if (isset($_GET['view'])) {
 <main class="detail" id="folio-main" tabindex="-1">
     <article>
         <h2 class="detail-title"><?= e($title) ?></h2>
-        <?php if ($desc !== ''): ?><p class="detail-desc"><?= e($desc) ?></p><?php endif; ?>
+        <?php if ($page_desc !== ''): ?><p class="detail-desc"><?= e($page_desc) ?></p><?php endif; ?>
         <?php if ($cat !== '' || $tags): ?>
         <p class="detail-chips">
             <?php if ($cat !== ''): ?><a class="chip chip-cat" href="<?= e(url_category($cat)) ?>"><?= e($cat) ?></a><?php endif; ?>
@@ -10515,6 +10800,7 @@ foreach (scandir($abs_dir) as $entry) {
             'doc_date' => $m['doc_date'] ?? '',
             'seo_title' => $m['seo_title'] ?? '',
             'seo_desc' => $m['seo_desc'] ?? '',
+            'long_desc' => $m['long_desc'] ?? '',
             'transcript' => $m['transcript'] ?? '',
             'pdf_access' => $pdf_access,
             'redact' => (isset($m['redact']) && is_array($m['redact'])) ? $m['redact'] : [],
@@ -10908,8 +11194,21 @@ $listing_ld = [
                             <input type="hidden" name="action" value="meta">
                             <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
                             <input type="hidden" name="file" value="<?= e($f['rel']) ?>">
-                            <input type="text" name="title" maxlength="200" placeholder="Title" value="<?= e($f['title']) ?>">
-                            <input type="text" name="desc" maxlength="500" placeholder="Short description" value="<?= e($f['desc']) ?>">
+                            <label class="meta-form-label">
+                                Title
+                                <input type="text" name="title" maxlength="60" placeholder="Title" value="<?= e($f['title']) ?>">
+                                <span class="field-note">Up to 60 characters. Used as the page title and SEO title.</span>
+                            </label>
+                            <label class="meta-form-label">
+                                Short description
+                                <input type="text" name="desc" maxlength="120" placeholder="Short description (max 120 chars)" value="<?= e($f['desc']) ?>">
+                                <span class="field-note">Up to 120 characters. Used as the SEO meta description and as the page description when no Long Description is set.</span>
+                            </label>
+                            <label class="meta-form-label">
+                                Long description <span class="field-note" style="display:inline">(optional)</span>
+                                <textarea name="long_desc" maxlength="500" rows="3" placeholder="Optional longer description shown on the file details page only — not used for SEO"><?= e($f['long_desc'] ?? '') ?></textarea>
+                                <span class="field-note">Up to 500 characters. Shown on the detail page instead of the Short Description. Never used as the SEO meta description.</span>
+                            </label>
                             <input type="text" name="category" maxlength="50" placeholder="Category" value="<?= e($f['category']) ?>" list="category-list">
                             <input type="text" name="tags" placeholder="Tags, comma-separated" value="<?= e(implode(', ', $f['tags'])) ?>">
                             <?php if (in_array($f['kind'], ['audio', 'video'], true)): ?>
@@ -10955,26 +11254,6 @@ $listing_ld = [
                                 </span>
                             </label>
                             <label class="meta-form-label">
-                                Search title
-                                <input type="text" name="seo_title" maxlength="60"
-                                       placeholder="Defaults to the title above"
-                                       value="<?= e($f['seo_title']) ?>">
-                                <span class="field-note">
-                                    Up to 60 characters, which is roughly what a search result shows
-                                    before truncating. Set it and it becomes the whole page title, with
-                                    no site name appended; leave it empty to keep the current behaviour.
-                                </span>
-                            </label>
-                            <label class="meta-form-label">
-                                Search description
-                                <textarea name="seo_desc" maxlength="150" rows="2"
-                                          placeholder="Defaults to the description above"><?= e($f['seo_desc']) ?></textarea>
-                                <span class="field-note">
-                                    Up to 150 characters. This is the snippet under the link in a
-                                    search result, and it is what social cards show too.
-                                </span>
-                            </label>
-                            <label class="meta-form-label">
                                 URL slug
                                 <input type="text" name="slug" maxlength="160" placeholder="url-slug" value="<?= e($f['slug']) ?>">
                                 <span class="field-note">
@@ -11005,7 +11284,9 @@ $listing_ld = [
                             ?>
                             <fieldset class="meta-redact-fields"
                                 data-redact-file="<?= e($f['rel']) ?>"
-                                data-redact-preview="<?= e(root_relative(BASE_URL . '?action=redact_page&file=' . rawurlencode($f['rel']))) ?>">
+                                data-redact-preview="<?= e(root_relative(BASE_URL . '?action=redact_page&file=' . rawurlencode($f['rel']))) ?>"
+                                data-redact-pdf="<?= e(root_relative(url_raw($f['rel']))) ?>"
+                                data-redact-pdfjs="<?= e(rtrim(BASE_URL, '/') . '/lib/pdfjs/') ?>">
                                 <legend>Redaction</legend>
                                 <p class="field-note">Draw opaque boxes over parts of the document. The public is served a flattened, image-only copy with those areas blacked out — the hidden text is genuinely removed, not merely covered. You always see the original.</p>
                                 <input type="hidden" name="redact_regions" class="redact-regions-input" value="<?= e($redact_regions_json) ?>">

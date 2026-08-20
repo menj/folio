@@ -491,10 +491,10 @@ PDF access control; skip them if you are already on 1.3.0 or later.
 ### Step 1 — Add the new config constant
 
 This release adds one new setting: `FOLIO_URL_SIGNING_KEY`, which signs
-short-lived URLs for PDFs set to "viewer" access. It is optional — leaving
+short-lived URLs for PDFs set to "restricted" access. It is optional — leaving
 it unset simply means the PDF access control feature stays inert, every PDF
 continuing to behave exactly as it did in 1.2.0 — but add it to
-`config.php` if you plan to use "viewer" or "hidden" `pdf_access`:
+`config.php` if you plan to use "restricted" or "hidden" `pdf_access`:
 
 ```php
 define('FOLIO_URL_SIGNING_KEY', '');
@@ -513,7 +513,7 @@ LiteSpeed only** — Nginx is not a supported deployment target.
 
 ### Step 3 — Confirm the PDF access preflight (only if you plan to use it)
 
-If you intend to set any PDF to "viewer" or "hidden," visit the Crawlers
+If you intend to set any PDF to "restricted" or "hidden," visit the Crawlers
 screen and run the PDF routing preflight before relying on it. Until
 confirmed, every PDF continues to behave as Public regardless of what's set
 on it — Diagnostics and each file's editor say so.
@@ -871,7 +871,7 @@ access beyond PDFs" item below.
 
 The phases build the safe core before the convenience.
 
-- **Phase R1, gate images.** Extend the `pdf_access` states (public, viewer,
+- **Phase R1, gate images.** Extend the `pdf_access` states (public, restricted,
   hidden) to image files, so an original can be marked non-public and served
   only through the signed, access-controlled path. No redaction yet; this is
   the gate the rest stands on, and it fails closed when signing is not

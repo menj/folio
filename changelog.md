@@ -3,6 +3,83 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.40.2 — 20 August 2026
+
+### Added
+
+- **Per-URL Google Indexing API submission tracking.** Each URL's submission
+  timestamp is stored in `data/gi_submitted.json` keyed by canonical URL. The
+  Crawlers screen now shows three counts: total URLs, already submitted, and
+  pending (never submitted). Each run submits only pending URLs, so already-
+  submitted URLs are never sent again unless you explicitly reset tracking.
+  A configurable per-run cap (default 100, editable in the admin) lets you
+  spread submissions across days to stay within Google's 200/day default quota.
+  A "Reset tracking" button clears `data/gi_submitted.json` and marks all URLs
+  as pending again. Only successfully submitted URLs are recorded — failed ones
+  stay pending and are retried automatically on the next run.
+
+## 1.40.1 — 19 August 2026
+
+### Changed
+
+- **`vendor/` moved into `lib/vendor/`.** All third-party libraries now live
+  under a single `lib/` directory (`lib/pdfjs/`, `lib/parsedown/`,
+  `lib/js-yaml/`, `lib/vendor/`). The top-level `vendor/` directory is gone.
+  The internal Composer structure under `lib/vendor/` is unchanged.
+
+## 1.40.0 — 19 August 2026
+
+### Changed
+
+- **Unified title/description fields.** The Title field (now 60 chars max) is
+  always the page title and SEO title. The Short Description field (now 120
+  chars max) is always the SEO meta description. The previous separate
+  "Search title" and "Search description" override fields are removed from the
+  editor — they were providing a parallel track where a single, enforced value
+  is cleaner. Legacy `seo_title`/`seo_desc` values already stored are preserved
+  in the data but no longer used.
+
+### Added
+
+- **Long Description field** (500 chars, optional). Shown on the file details
+  page instead of the Short Description when provided. Never used as the SEO
+  meta description — the Short Description always serves that role, regardless
+  of whether a Long Description is present.
+
+## 1.39.0 — 17 August 2026
+
+### Added
+
+- **PDF redaction editor uses pdf.js in the browser.** The editor now renders
+  PDF pages client-side using the bundled pdf.js (already present for the
+  flip-view reader) rather than calling a server-side `pdftocairo`/`pdftoppm`
+  command. This means the redaction editing surface works on any host,
+  regardless of whether Poppler is installed or discoverable by PHP. The
+  server-side renderer is still used for the final burn-in step (applying
+  redaction boxes to produce the flattened derivative); it is only the editing
+  preview that moved to the browser.
+- **Google Indexing API.** A new section on the Crawlers screen lets you submit
+  all public URLs to Google directly via the Indexing API, using a service-
+  account credential. Configure the credential by adding `GOOGLE_INDEXING_CLIENT_EMAIL`
+  and `GOOGLE_INDEXING_PRIVATE_KEY` to `data/settings.php`. A manual run submits
+  up to `GOOGLE_INDEXING_MAX_URLS_PER_RUN` URLs (default 100) and shows the last
+  run result. Requires the bundled `lib/vendor/` Google API client (MIT/Apache 2.0
+  licences; 5.6 MB, included in the distribution).
+
+## 1.38.1 — 17 August 2026
+
+### Changed
+
+- **Removed the dead video-guard/preflight code left behind by 1.38.0.** Deleted
+  the now-unused video signing and preflight machinery — `video_direct_signed_url`,
+  `video_raw_url`, `video_access_enforced`, the probe helpers, the
+  `confirm_video_gate`/`disable_video_gate` handlers, and the `VIDEO_FAST_DIRECT`
+  and probe-name constants — along with the unreachable video gate in the raw
+  serve path and two stale admin notices. No behaviour change: video access is
+  governed entirely by the tier model added in 1.38.0. The `video_guard_*`
+  helpers are retained solely to clear any leftover `.htaccess` block from an
+  earlier version when an admin opens the Crawlers screen.
+
 ## 1.38.0 — 17 August 2026
 
 ### Changed

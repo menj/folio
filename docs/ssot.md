@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.38.0. Update this file in the same commit as any change it describes.
+Version 1.40.2. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.38.0');` |
-| `changelog.md` | `## 1.38.0 — 17 August 2026` |
-| `readme.txt` | `Stable tag: 1.38.0` |
-| `readme.md` | `1.38.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.38.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.40.2');` |
+| `changelog.md` | `## 1.40.0 — 17 August 2026` |
+| `readme.txt` | `Stable tag: 1.40.2` |
+| `readme.md` | `1.40.2.` under `## Version` |
+| `security.md` | `The current supported release is **1.40.2**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -211,7 +211,7 @@ Content-Security-Policy is identical to a build without the feature.
 | `ADMIN_PASSWORD_HASH` | `CHANGE_ME` | Accounts |
 | `FOLIO_AUTH_PEPPER` | empty | no |
 | `FOLIO_COOKIE_NAME` | `FOLIOSESSID` | no |
-| `FOLIO_URL_SIGNING_KEY` | empty | no — signs "viewer" pdf_access URLs, deliberately separate from `FOLIO_AUTH_PEPPER` |
+| `FOLIO_URL_SIGNING_KEY` | empty | no — signs "restricted" pdf_access URLs, deliberately separate from `FOLIO_AUTH_PEPPER` |
 | `PDF_GATE_CONFIRMED` | `false` | Crawlers, via the PDF-routing preflight — never set by hand |
 
 `ADMIN_PASSWORD_HASH` left at `CHANGE_ME` disables login rather than accepting
@@ -574,9 +574,10 @@ there. `readme.txt` stays at the root as the plain-text entry point.
 
 ## PDF access control
 
-Per-file `pdf_access` (`public` / `viewer` / `hidden`) restricts a PDF's raw
+Per-file `pdf_access` (`public` / `restricted` / `hidden`) restricts a PDF's raw
 bytes without ever affecting the record page's own indexability — see
 "Indexability is unaffected" below, which is a hard invariant, not a goal.
+Legacy stored value `viewer` is normalised to `restricted` on load and save.
 
 ### Metadata fields
 
@@ -584,7 +585,8 @@ On top of the existing `title`, `desc`, `category`, `tags`:
 
 | Field | Values | Notes |
 | --- | --- | --- |
-| `pdf_access` | `public` (default) \| `viewer` \| `hidden` | validated server-side, unknown values fall back to `public` |
+| `pdf_access` | `public` (default) \| `restricted` \| `hidden` | validated server-side, `viewer` normalised to `restricted`, other unknown values fall back to `public` |
+| `video_access` | `public` (default) \| `restricted` \| `hidden` | same three-tier model as `pdf_access`; `viewer` normalised to `restricted`; protection is page-level (notice shown, URL withheld) not byte-gated |
 | `document_type` | controlled list (certificate, letter, card, article, magazine, tract, report, transcript, form, identity, academic, award, booklet, other) | distinct from the existing free-form `category`; also feeds a conservative Schema.org type override |
 | `transcript` | plain text, ~100,000 char cap | rendered server-side in the detail page HTML, never JS-injected — this is what keeps the content crawlable and AI-readable when the PDF itself is restricted |
 | `language` | e.g. `en`, `ms`, `ar` | optional, maps to `dcterms:language` / `inLanguage` |
@@ -594,7 +596,7 @@ On top of the existing `title`, `desc`, `category`, `tags`:
 
 `?action=raw` (see Endpoints above) gains two optional query params,
 `expires` and `token`, checked only when the requested file's `pdf_access`
-is `viewer`. Signature is
+is `restricted`. Signature is
 `hash_hmac('sha256', $rel . '|' . $expires, FOLIO_URL_SIGNING_KEY)`,
 compared with `hash_equals`. Missing, expired, or invalid → 404. Files with
 `pdf_access` of `hidden` are refused unconditionally, regardless of any
@@ -645,7 +647,7 @@ Regardless of `pdf_access`, for every mode:
 - The sitemap's `<loc>` for a file is always the record page URL, never the
   raw file — true before this feature, and nothing about it changes that.
 - `X-Robots-Tag: noindex` is added only to the raw PDF response itself (for
-  `viewer`), never to the record page response.
+  `restricted`), never to the record page response.
 - The transcript, when present, is server-rendered into the record page's
   initial HTML for every `pdf_access` value, including `hidden`.
 - `llms.txt` notes that a full transcription is available for restricted

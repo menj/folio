@@ -335,14 +335,15 @@
 })();
 
     /* ---------------------------------------------------------------- */
-    /* PDF redaction editor.                                             */
-    /* Draws opaque boxes over a rendered page; stores each as fractional*/
-    /* {page,x,y,w,h} in a hidden input the meta form submits. Enforcement*/
-    /* is entirely server-side — this is only an authoring surface.      */
-    /* ---------------------------------------------------------------- */
+    /* PDF redaction editor.
+     * Uses the bundled pdf.js in the browser to render the original PDF.
+     * This deliberately does not depend on Poppler/Imagick for the editing
+     * surface: the browser can render the page itself, then stores only
+     * fractional {page,x,y,w,h} regions for the server-side redaction step.
+     * ---------------------------------------------------------------- */
     (function () {
         var overlay = null;
-        var state = null;   // { fieldset, input, file, previewBase, pages, page, regions, imgW, imgH }
+        var state = null;   // { fieldset,input,file,pdfUrl,pdfjsBase,pdfDoc,pages,page,regions }
 
         function parseRegions(input) {
             try {
@@ -356,25 +357,6 @@
             if (span) {
                 span.textContent = regions.length + " region" + (regions.length === 1 ? "" : "s");
             }
-        }
-
-        function pageMeta(base, cb) {
-            var url = base + "&meta=1";
-            var x = new XMLHttpRequest();
-            x.open("GET", url, true);
-            x.onreadystatechange = function () {
-                if (x.readyState !== 4) { return; }
-                var meta = { pages: 1, render: true };
-                try {
-                    var r = JSON.parse(x.responseText);
-                    if (r && r.pages) { meta.pages = r.pages; }
-                    // Only treat rendering as unavailable when the server
-                    // explicitly says so, so older responses default to trying.
-                    if (r && r.render === false) { meta.render = false; }
-                } catch (e) {}
-                cb(meta);
-            };
-            x.send();
         }
 
         function closeEditor() {
@@ -396,9 +378,9 @@
         }
 
         function drawRegions(canvasWrap) {
-            /* remove existing boxes, redraw current page's */
             var old = canvasWrap.querySelectorAll(".redact-box");
             Array.prototype.forEach.call(old, function (b) { b.parentNode.removeChild(b); });
+
             state.regions.forEach(function (r, i) {
                 if (r.page !== state.page) { return; }
                 var box = document.createElement("div");
@@ -423,35 +405,61 @@
             });
         }
 
-        function loadPage(canvasWrap, img, label) {
-            // Clear any prior error notice.
-            var priorMsg = canvasWrap.querySelector(".redact-error");
-            if (priorMsg) { priorMsg.parentNode.removeChild(priorMsg); }
-            img.style.display = "block";
-            img.onload = function () {
-                img.style.display = "block";
-            };
-            img.onerror = function () {
-                // The page render failed — almost always because the server has
-                // no PDF-to-image tool (poppler-utils' pdftocairo/pdftoppm, or
-                // Ghostscript). Replace the broken-image icon with a real
-                // explanation instead of leaving the admin guessing.
-                img.style.display = "none";
-                if (canvasWrap.querySelector(".redact-error")) { return; }
-                var msg = document.createElement("div");
-                msg.className = "redact-error";
-                msg.style.padding = "1.5rem";
-                msg.style.lineHeight = "1.5";
-                msg.style.color = "#7a1f1f";
-                msg.style.font = "14px/1.5 system-ui, sans-serif";
-                msg.textContent = "This server can’t render PDF pages, so redaction can’t show the page to mark. "
-                    + "Install poppler-utils (pdftocairo/pdftoppm) on the server, or enable the Ghostscript "
-                    + "fallback (PDF_ALLOW_GHOSTSCRIPT with Imagick). Once a renderer is available, reopen this editor.";
-                canvasWrap.appendChild(msg);
-            };
-            img.src = state.previewBase + "&page=" + state.page + "&_=" + Date.now();
-            label.textContent = "Page " + state.page + " of " + state.pages;
-            drawRegions(canvasWrap);
+        function showError(canvasWrap, message) {
+            canvasWrap.innerHTML = "";
+            var p = document.createElement("p");
+            p.style.padding = "1rem";
+            p.style.lineHeight = "1.4";
+            p.textContent = message;
+            canvasWrap.appendChild(p);
+        }
+
+        function loadPdf(pdfjsBase, pdfUrl) {
+            if (state.pdfDoc) { return Promise.resolve(state.pdfDoc); }
+            if (!pdfjsBase || !pdfUrl) {
+                return Promise.reject(new Error("PDF preview configuration is missing."));
+            }
+
+            return import(pdfjsBase + "pdf.min.mjs").then(function (pdfjsLib) {
+                pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsBase + "pdf.worker.min.mjs";
+                return pdfjsLib.getDocument({
+                    url: pdfUrl,
+                    isEvalSupported: false
+                }).promise;
+            }).then(function (doc) {
+                state.pdfDoc = doc;
+                state.pages = Math.min(doc.numPages || 1, 60);
+                return doc;
+            });
+        }
+
+        function renderPage(canvasWrap, canvas, label) {
+            if (!state || !state.pdfDoc) { return Promise.resolve(); }
+
+            label.textContent = "Loading page " + state.page + " of " + state.pages + "…";
+            canvasWrap.classList.add("is-loading");
+
+            return state.pdfDoc.getPage(state.page).then(function (page) {
+                var baseViewport = page.getViewport({ scale: 1 });
+                var maxWidth = Math.min(1200, Math.max(600, canvasWrap.clientWidth || 900));
+                var scale = Math.min(1.5, maxWidth / baseViewport.width);
+                var viewport = page.getViewport({ scale: scale });
+
+                canvas.width = Math.ceil(viewport.width);
+                canvas.height = Math.ceil(viewport.height);
+                canvas.style.width = "100%";
+                canvas.style.height = "auto";
+
+                var context = canvas.getContext("2d", { alpha: false });
+                return page.render({
+                    canvasContext: context,
+                    viewport: viewport
+                }).promise;
+            }).then(function () {
+                canvasWrap.classList.remove("is-loading");
+                label.textContent = "Page " + state.page + " of " + state.pages;
+                drawRegions(canvasWrap);
+            });
         }
 
         function buildEditor() {
@@ -508,14 +516,14 @@
             canvasWrap.style.userSelect = "none";
             canvasWrap.style.lineHeight = "0";
             canvasWrap.style.border = "1px solid #ccc";
+            canvasWrap.style.overflow = "hidden";
+            canvasWrap.style.minHeight = "100px";
 
-            var img = document.createElement("img");
-            img.alt = "Document page";
-            img.style.display = "block";
-            img.style.width = "100%";
-            img.style.height = "auto";
-            img.draggable = false;
-            canvasWrap.appendChild(img);
+            var canvas = document.createElement("canvas");
+            canvas.setAttribute("aria-label", "Document page");
+            canvas.style.display = "block";
+            canvas.style.width = "100%";
+            canvasWrap.appendChild(canvas);
 
             panel.appendChild(bar);
             panel.appendChild(hint);
@@ -524,10 +532,20 @@
             document.body.appendChild(overlay);
 
             prev.addEventListener("click", function () {
-                if (state.page > 1) { state.page--; loadPage(canvasWrap, img, label); }
+                if (state.page > 1) {
+                    state.page--;
+                    renderPage(canvasWrap, canvas, label).catch(function (e) {
+                        showError(canvasWrap, "Could not render this page: " + e.message);
+                    });
+                }
             });
             next.addEventListener("click", function () {
-                if (state.page < state.pages) { state.page++; loadPage(canvasWrap, img, label); }
+                if (state.page < state.pages) {
+                    state.page++;
+                    renderPage(canvasWrap, canvas, label).catch(function (e) {
+                        showError(canvasWrap, "Could not render this page: " + e.message);
+                    });
+                }
             });
             saveBtn.addEventListener("click", save);
             cancelBtn.addEventListener("click", closeEditor);
@@ -536,14 +554,15 @@
             });
             document.addEventListener("keydown", onKey);
 
-            /* Drag-to-draw. */
+            /* Drag-to-draw. Coordinates are relative to the displayed page,
+             * so the stored values remain resolution-independent. */
             var dragging = false, sx = 0, sy = 0, ghost = null;
             canvasWrap.addEventListener("pointerdown", function (ev) {
-                if (ev.target.classList.contains("redact-box")) { return; }
+                if (ev.target.classList.contains("redact-box") || !state.pdfDoc) { return; }
                 dragging = true;
                 var rect = canvasWrap.getBoundingClientRect();
-                sx = (ev.clientX - rect.left) / rect.width;
-                sy = (ev.clientY - rect.top) / rect.height;
+                sx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                sy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
                 ghost = document.createElement("div");
                 ghost.style.position = "absolute";
                 ghost.style.background = "rgba(0,0,0,0.4)";
@@ -556,12 +575,12 @@
             canvasWrap.addEventListener("pointermove", function (ev) {
                 if (!dragging || !ghost) { return; }
                 var rect = canvasWrap.getBoundingClientRect();
-                var cx = (ev.clientX - rect.left) / rect.width;
-                var cy = (ev.clientY - rect.top) / rect.height;
-                var x = Math.max(0, Math.min(sx, cx));
-                var y = Math.max(0, Math.min(sy, cy));
-                var w = Math.min(1, Math.abs(cx - sx));
-                var h = Math.min(1, Math.abs(cy - sy));
+                var cx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                var cy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+                var x = Math.min(sx, cx);
+                var y = Math.min(sy, cy);
+                var w = Math.abs(cx - sx);
+                var h = Math.abs(cy - sy);
                 ghost.style.left = (x * 100) + "%";
                 ghost.style.top = (y * 100) + "%";
                 ghost.style.width = (w * 100) + "%";
@@ -571,12 +590,12 @@
                 if (!dragging) { return; }
                 dragging = false;
                 var rect = canvasWrap.getBoundingClientRect();
-                var cx = (ev.clientX - rect.left) / rect.width;
-                var cy = (ev.clientY - rect.top) / rect.height;
-                var x = Math.max(0, Math.min(sx, cx));
-                var y = Math.max(0, Math.min(sy, cy));
-                var w = Math.min(1 - x, Math.abs(cx - sx));
-                var h = Math.min(1 - y, Math.abs(cy - sy));
+                var cx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                var cy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+                var x = Math.min(sx, cx);
+                var y = Math.min(sy, cy);
+                var w = Math.abs(cx - sx);
+                var h = Math.abs(cy - sy);
                 if (ghost && ghost.parentNode) { ghost.parentNode.removeChild(ghost); }
                 ghost = null;
                 if (w > 0.005 && h > 0.005) {
@@ -595,7 +614,15 @@
                 ghost = null;
             });
 
-            loadPage(canvasWrap, img, label);
+            label.textContent = "Loading document…";
+            loadPdf(state.pdfjsBase, state.pdfUrl).then(function () {
+                if (!state) { return; }
+                return renderPage(canvasWrap, canvas, label);
+            }).catch(function (e) {
+                console.error("Folio redaction preview:", e);
+                showError(canvasWrap, "The PDF could not be loaded in the browser. " +
+                    (e && e.message ? e.message : "Unknown PDF error."));
+            });
         }
 
         function mkBtn(text) {
@@ -620,27 +647,24 @@
                 updateCount(fieldset, []);
                 return;
             }
+
             state = {
                 fieldset: fieldset,
                 input: input,
                 file: fieldset.getAttribute("data-redact-file"),
-                previewBase: fieldset.getAttribute("data-redact-preview"),
+                pdfUrl: fieldset.getAttribute("data-redact-pdf"),
+                pdfjsBase: fieldset.getAttribute("data-redact-pdfjs"),
+                pdfDoc: null,
                 pages: 1,
                 page: 1,
                 regions: parseRegions(input)
             };
-            pageMeta(state.previewBase, function (meta) {
-                state.pages = (meta && meta.pages) || 1;
-                if (meta && meta.render === false) {
-                    // Tell the admin plainly rather than opening an editor that
-                    // can only show a broken image.
-                    window.alert("Redaction needs a PDF renderer this server doesn’t have. "
-                        + "Install poppler-utils (pdftocairo/pdftoppm), or enable the Ghostscript "
-                        + "fallback (PDF_ALLOW_GHOSTSCRIPT with Imagick), then try again.");
-                    state = null;
-                    return;
-                }
-                buildEditor();
-            });
+
+            if (!state.pdfUrl || !state.pdfjsBase) {
+                alert("The PDF redaction viewer is not configured correctly.");
+                state = null;
+                return;
+            }
+            buildEditor();
         });
     })();

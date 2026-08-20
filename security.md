@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.38.0**.
+The current supported release is **1.40.2**.
 
 ## Security controls
 
@@ -127,7 +127,7 @@ parameters are advisory, several browsers ignore them, and the file's URL is
 reachable whatever the viewer displays.
 
 Nothing about hiding a button restricts access. A document that must not be
-downloaded needs `pdf_access` set to viewer or hidden, which is enforced when
+downloaded needs `pdf_access` set to restricted or hidden, which is enforced when
 the request reaches the server.
 
 ### Derivative images
@@ -224,7 +224,7 @@ overwrites that header.
 A PDF's `pdf_access` (public/viewer/hidden) is enforced at exactly one place,
 `?action=raw`, which every other path to a PDF's bytes (detail-page preview,
 flip-view reader, print, direct link, hover preview) is built to route
-through rather than duplicate the check. "Viewer" URLs are signed with
+through rather than duplicate the check. "Restricted" PDF URLs are signed with
 `hash_hmac('sha256', ...)` under `FOLIO_URL_SIGNING_KEY`, verified with
 `hash_equals`, and carry a short expiry; "hidden" is refused unconditionally,
 with no valid URL of any kind.
@@ -286,7 +286,7 @@ Folio cannot enforce these from inside the application:
   later invalidates every stored password.
 - Treat the IndexNow key in `data/settings.php` as a secret; it is excluded
   by the shipped `.gitignore`.
-- If you rely on PDF access control ("viewer"/"hidden"), confirm the
+- If you rely on PDF access control ("restricted"/"hidden"), confirm the
   preflight on the Crawlers screen after every deploy that touches
   `.htaccess`, and re-confirm after moving hosts. It fails safe to public
   rather than silently, but a restriction you believe is active and isn't is
@@ -300,18 +300,23 @@ the library's contents, which is the intended workflow rather than a flaw.
 Documents are public by default and remain so unless explicitly restricted.
 
 The one exception is PDF access control (above): a PDF explicitly set to
-"viewer" or "hidden," on a server where that's confirmed enforced, is not
-reachable at its plain URL. Every other file format, and every PDF on a
-server where enforcement isn't confirmed, has no per-file access control —
-`EXCLUDE_PATTERNS` can hide a file from listings and public URLs entirely,
-but there is no partial-access tier for anything other than PDFs.
+"restricted" or "hidden," on a server where that's confirmed enforced, is not
+reachable at its plain URL. Video uses a simpler model: restricted and hidden
+video withholds the file URL from the public entirely (they get a notice in
+place of the player), with no webserver block or signed URL — protection is
+at the page level, not the byte level, which is an accepted trade-off for
+playback speed (see changelog 1.38.0). Every other file format has no
+per-file access control — `EXCLUDE_PATTERNS` can hide a file from listings
+and public URLs entirely, but there is no partial-access tier beyond PDFs and
+video.
 
-Note that a "viewer" document's *detail page* is intentionally public and
+Note that a "restricted" document's *detail page* is intentionally public and
 indexable — that is the point of the tier: the page (title, description,
-transcript, structured data) is meant to be found in search, while the file's
-bytes stay gated behind the signed viewer. A crawlable page for a gated
-document is by design, not an exposure; only a way to reach the *bytes* without
-a valid signature is. A "hidden" document's page is not public.
+transcript, structured data) is meant to be found in search, while the file
+itself is withheld. A crawlable page for a restricted document is by design,
+not an exposure. A "hidden" document's page is also indexable (so it can be
+found via search) but is removed from the folder listing, so the public
+reaches it only through a search engine or direct link.
 
 ## Reporting a vulnerability
 
@@ -335,7 +340,7 @@ Yes, please report:
 - Any way to bypass the login, read `data/users.php`, or read `data/settings.php`
   as a public visitor.
 - Any way to read a file that `EXCLUDE_PATTERNS` should hide.
-- Any way to reach a "hidden" PDF's bytes, or a "viewer" PDF's bytes without a
+- Any way to reach a "hidden" PDF's bytes, or a "restricted" PDF's bytes without a
   valid, unexpired signature, on a server where PDF access control is
   confirmed enforced (`PDF_GATE_CONFIRMED` true and `FOLIO_URL_SIGNING_KEY`
   set). A server where enforcement is not confirmed is expected to serve

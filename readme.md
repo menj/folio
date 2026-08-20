@@ -135,6 +135,7 @@ lib/parsedown/         Parsedown 1.8.0 (MIT), renders Markdown files
 lib/pdfjs/             PDF.js (Apache 2.0), powers both PDF readers
 lib/js-yaml/           js-yaml 5.3.0 (MIT), renders library.html in the browser
 lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), with its licences
+lib/vendor/            Google API client and dependencies (MIT/Apache 2.0), used by Google Indexing API
 changelog.md           Version history
 .htaccess              Apache rules, active as shipped
 tests/                 Isolated integration smoke test
@@ -167,10 +168,10 @@ All uploads, renames, and deletions happen over FTP. The application never write
 
 ### PDF access control
 
-Each PDF can be set to **Public** (default, unchanged from previous versions), **Viewer**, or **Hidden** in its inline editor:
+Each PDF can be set to **Public** (default), **Restricted**, or **Hidden** in its inline editor:
 
-* **Viewer** embeds the PDF through a short-lived signed link and removes the direct-link and flip-view download buttons. The file isn't reachable at its plain `uploads/` URL.
-* **Hidden** serves no PDF bytes by any path — preview, flip view, print, or direct link. The detail page shows a notice and, where available, a redacted preview instead of the file.
+* **Restricted** keeps the detail page listed and indexable, but the public sees a "restricted" notice in place of the embedded document; the file is withheld.
+* **Hidden** additionally removes the page from the folder listing, while keeping it findable through search; the public reaches it only that way and meets the same notice.
 
 Neither is enforced until you:
 
@@ -179,7 +180,7 @@ Neither is enforced until you:
 
 Until both are done, every PDF behaves as Public regardless of what's set on it — Diagnostics and each file's editor say so plainly. This is deliberate: a restriction that silently doesn't work would be worse than no restriction at all. **This feature requires Apache or LiteSpeed** (see Requirements above); the routing preflight fails safe on any server that can't confirm the rewrite, so an unsupported server never falsely presents a restriction.
 
-Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Viewer** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the PDF in the page through the signed viewer, with no download. The file's own bytes are never advertised: a Viewer (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is kept off every public surface — listing, page sitemap, and feed — as well as serving no bytes. In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video behaves the same way through its own Viewer and Hidden states.
+Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Restricted** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the detail page with a "restricted" notice where the document would be; the file is withheld. The file's own bytes are never advertised: a Restricted (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is removed from the folder listing (while the page stays indexable, so it can still be found through search). In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video behaves the same way through its own Restricted and Hidden states.
 
 For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server can render PDF pages (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
 
@@ -458,8 +459,8 @@ RewriteRule ^uploads/(.+\.pdf)$ index.php?action=raw&serve=1&file=$1 [L,QSA,NC]
 If you renamed the uploads folder, change `uploads` in that rule to match, or
 restrictions silently will not apply. The preflight reports this.
 
-**3. Set access per document** in its Edit panel: Public, Viewer (links are
-signed and expire), or Hidden.
+**3. Set access per document** in its Edit panel: Public, Restricted (notice
+shown, file withheld), or Hidden.
 
 Diagnostics tells you where you are at every stage, and while a key is set but
 the preflight is unconfirmed it names the specific files that are marked
@@ -1098,4 +1099,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.38.0. Single-file application with separated CSS and JS assets.
+1.40.2. Single-file application with separated CSS and JS assets.
