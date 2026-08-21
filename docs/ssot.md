@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.40.2. Update this file in the same commit as any change it describes.
+Version 1.41.0. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.40.2');` |
-| `changelog.md` | `## 1.40.0 — 17 August 2026` |
-| `readme.txt` | `Stable tag: 1.40.2` |
-| `readme.md` | `1.40.2.` under `## Version` |
-| `security.md` | `The current supported release is **1.40.2**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.41.0');` |
+| `changelog.md` | `## 1.41.0 — 22 August 2026` |
+| `readme.txt` | `Stable tag: 1.41.0` |
+| `readme.md` | `1.41.0.` under `## Version` |
+| `security.md` | `The current supported release is **1.41.0**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -236,8 +236,9 @@ Public:
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
 | `?action=identity` | Schema.org identity document — Person + WebSite (`/identity.json`) |
+| `?action=vcard` | Downloadable vCard 4.0 for identity.json's subject (`/vcard.vcf`); requires identity.json enabled, plus its own toggle |
 | `?action=yaml` | YAML index of every public document (`/library.yaml`) |
-| `?action=yaml_view` | Human-readable HTML view of library.yaml (`/library.html`) |
+| `?action=sitemap_html` | Human-readable HTML sitemap of library.yaml (`/sitemap.html`; old `/library.html` and `?action=yaml_view` still resolve, redirected) |
 | `?action=llms` | llms.txt for AI crawlers |
 | `?indexnow_key=` | IndexNow ownership file |
 | `?action=rewrite_probe` | JSON, reports whether rewriting reached PHP |
@@ -265,7 +266,7 @@ Admin, all requiring a session:
 | `?action=logout` | POST, admin: end the session |
 
 Under clean URLs these become `/slug/`, `/category/slug/`, `/sitemap.xml`,
-`/sitemap-pdf.xml`, `/sitemap-categories.xml`, `/identity.json`, `/llms.txt`,
+`/sitemap-pdf.xml`, `/sitemap-categories.xml`, `/sitemap.html`, `/identity.json`, `/vcard.vcf`, `/llms.txt`,
 `/library.yaml`, and
 `/{key}.txt`. Admin paths keep their query-string form.
 
@@ -586,7 +587,7 @@ On top of the existing `title`, `desc`, `category`, `tags`:
 | Field | Values | Notes |
 | --- | --- | --- |
 | `pdf_access` | `public` (default) \| `restricted` \| `hidden` | validated server-side, `viewer` normalised to `restricted`, other unknown values fall back to `public` |
-| `video_access` | `public` (default) \| `restricted` \| `hidden` | same three-tier model as `pdf_access`; `viewer` normalised to `restricted`; protection is page-level (notice shown, URL withheld) not byte-gated |
+| `video_access` | `public` (default) \| `restricted` \| `hidden` | same three tiers as `pdf_access`; `viewer` normalised to `restricted`; delisting only: the player and URL are not shown to the public (notice shown), but the file stays reachable at its direct URL, not byte-gated. Intentional (changelog 1.38.0); not private |
 | `document_type` | controlled list (certificate, letter, card, article, magazine, tract, report, transcript, form, identity, academic, award, booklet, other) | distinct from the existing free-form `category`; also feeds a conservative Schema.org type override |
 | `transcript` | plain text, ~100,000 char cap | rendered server-side in the detail page HTML, never JS-injected — this is what keeps the content crawlable and AI-readable when the PDF itself is restricted |
 | `language` | e.g. `en`, `ms`, `ar` | optional, maps to `dcterms:language` / `inLanguage` |

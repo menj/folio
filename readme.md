@@ -47,9 +47,10 @@
 * Direct hotlinks to every file, copied to the clipboard in one click
 * SEO layer: per-file detail pages with canonical URLs, Open Graph and Twitter
   Card tags, an XML sitemap with image extensions, a generated llms.txt map for
-  AI crawlers, an identity.json document, a YAML library index, and optional clean URLs
+  AI crawlers, an identity.json document, a downloadable vcard.vcf built from
+  it, a YAML library index, and optional clean URLs
 * Crawler controls in the admin: indexability switch, sitemap, llms.txt, JSON
-  identity.json and YAML index toggles, robots.txt generator, sitemap preview, Bing ping,
+  identity.json, vcard.vcf, and YAML index toggles, robots.txt generator, sitemap preview, Bing ping,
   IndexNow key
   generation and one-click URL submission, and a clean-URL preflight that
   verifies mod_rewrite before letting the setting be enabled
@@ -133,7 +134,7 @@ assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
 lib/parsedown/         Parsedown 1.8.0 (MIT), renders Markdown files
 lib/pdfjs/             PDF.js (Apache 2.0), powers both PDF readers
-lib/js-yaml/           js-yaml 5.3.0 (MIT), renders library.html in the browser
+lib/js-yaml/           js-yaml 5.3.0 (MIT), renders sitemap.html in the browser
 lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), with its licences
 lib/vendor/            Google API client and dependencies (MIT/Apache 2.0), used by Google Indexing API
 changelog.md           Version history
@@ -180,7 +181,7 @@ Neither is enforced until you:
 
 Until both are done, every PDF behaves as Public regardless of what's set on it — Diagnostics and each file's editor say so plainly. This is deliberate: a restriction that silently doesn't work would be worse than no restriction at all. **This feature requires Apache or LiteSpeed** (see Requirements above); the routing preflight fails safe on any server that can't confirm the rewrite, so an unsupported server never falsely presents a restriction.
 
-Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Restricted** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the detail page with a "restricted" notice where the document would be; the file is withheld. The file's own bytes are never advertised: a Restricted (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is removed from the folder listing (while the page stays indexable, so it can still be found through search). In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video behaves the same way through its own Restricted and Hidden states.
+Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Restricted** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the detail page with a "restricted" notice where the document would be; the file is withheld. The file's own bytes are never advertised: a Restricted (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is removed from the folder listing (while the page stays indexable, so it can still be found through search). In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video uses a lighter model of its own. Its **Restricted** and **Hidden** states delist a clip: the player and the file's URL are not shown to the public, who see a notice instead, yet the file itself is served directly by the webserver and stays reachable at its direct URL. The tier hides a clip from view rather than withholding its bytes, so a Restricted or Hidden video should be treated as reachable by anyone who has or can construct its URL. This is intentional, an accepted trade-off for direct-serve playback speed. A video that must be private should be kept out of the library, for example with `EXCLUDE_PATTERNS`, rather than relying on the tier.
 
 For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server can render PDF pages (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
 
@@ -346,6 +347,15 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   search engines, distinct from the sitemap and YAML index (what the library
   contains) and llms.txt (a reading map). It cross-references its siblings and
   is cross-referenced by them. Toggle it off to return 404.
+* **vcard.vcf.** A downloadable vCard (RFC 2426, version 3.0) at `/vcard.vcf`
+  (or `?action=vcard`) for identity.json's subject, so a visitor or a contacts
+  app can save the site's publisher as a contact. Built from the publisher
+  name, URL, description, icon (embedded), and same-as profiles (one
+  `X-SOCIALPROFILE` per network) already declared for identity.json, plus a
+  handful of optional fields available only to the vCard — nickname, email,
+  phone, country — each rendered only when set in config.php. Linked from the
+  footer alongside the other index formats. Requires identity.json to be
+  enabled, and has its own toggle on top of that; off, it returns 404.
 * **library.yaml AI usage policy.** The YAML library index carries a top-level
   `permissions:` block declaring what AI systems may do with the content — quote,
   summarise, train, commercial use — plus an optional note, all set on the
@@ -1068,7 +1078,7 @@ domain: nothing is fetched from a CDN and no document is ever sent to a
 third-party viewer. It loads only when someone opens the flip reader, so
 visitors who never use it never download it.
 
-The human-readable library view (`library.html`) uses js-yaml 5.3.0 by Vitaly
+The human-readable HTML sitemap (`sitemap.html`) uses js-yaml 5.3.0 by Vitaly
 Puzrin, distributed under the MIT licence, vendored in `lib/js-yaml/` with its
 licence text. Like pdf.js it is served from your own domain, needs no
 Content-Security-Policy exception, and loads only on that page.
@@ -1099,4 +1109,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.40.2. Single-file application with separated CSS and JS assets.
+1.41.0. Single-file application with separated CSS and JS assets.

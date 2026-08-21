@@ -70,6 +70,20 @@
             el.removeAttribute("controls");
             wrap.setAttribute("data-fm-ready", "1");
 
+            // For video, everything visual lives in a stage: the element, the
+            // control bar, and the overlays. The stage is the thing that goes
+            // fullscreen, so a playlist's queue (a sibling of the stage) stays
+            // out of the full-view frame. For audio the stage is the container
+            // itself, so the transport attaches where it always did.
+            var stage = wrap;
+            if (isVideo) {
+                stage = document.createElement("div");
+                stage.className = "fm-stage";
+                stage.tabIndex = 0;
+                el.parentNode.insertBefore(stage, el);
+                stage.appendChild(el);
+            }
+
             var bar = document.createElement("div");
             bar.className = "fm-bar";
 
@@ -117,15 +131,41 @@
                 bar.appendChild(fullBtn);
             }
 
-            wrap.appendChild(bar);
+            stage.appendChild(bar);
+
+            /* Video overlays: a centre play/replay target big enough to hit on
+             * a touch screen, and a buffering spinner. Both sit inside the
+             * stage, above the element, and are driven by class on the stage. */
+            var overlayBtn = null;
+            var spinner = null;
+            if (isVideo) {
+                overlayBtn = button("fm-overlay-play", "Play", ICONS.play);
+                stage.appendChild(overlayBtn);
+
+                spinner = document.createElement("div");
+                spinner.className = "fm-spinner";
+                spinner.setAttribute("aria-hidden", "true");
+                stage.appendChild(spinner);
+            }
 
             /* ---- wiring ---- */
+
+            function goFull() {
+                var d = document;
+                if (d.fullscreenElement || d.webkitFullscreenElement) {
+                    (d.exitFullscreen || d.webkitExitFullscreen).call(d);
+                } else {
+                    var r = stage.requestFullscreen || stage.webkitRequestFullscreen
+                        || el.webkitEnterFullscreen;
+                    if (r) { r.call(stage.requestFullscreen ? stage : el); }
+                }
+            }
 
             function setPlayIcon(playing) {
                 playBtn.innerHTML = "";
                 playBtn.appendChild(icon(playing ? ICONS.pause : ICONS.play));
                 playBtn.setAttribute("aria-label", playing ? "Pause" : "Play");
-                wrap.classList.toggle("fm-playing", playing);
+                stage.classList.toggle("fm-playing", playing);
             }
 
             function toggle() {
@@ -180,9 +220,19 @@
                     var vw = el.videoWidth;
                     var vh = el.videoHeight;
                     if (!vw || !vh) { return; }
-                    wrap.style.setProperty("--fm-ar", vw + " / " + vh);
-                    wrap.style.setProperty("--fm-maxw", vh > vw ? (vw / vh * 80) + "vh" : "100%");
+                    stage.style.setProperty("--fm-ar", vw + " / " + vh);
+                    stage.style.setProperty("--fm-maxw", vh > vw ? (vw / vh * 82) + "vh" : "100%");
                 });
+
+                overlayBtn.addEventListener("click", toggle);
+
+                // The spinner shows while the element is stalled for data and
+                // clears the moment it can play again. "ended" also clears it so
+                // a finished clip does not spin.
+                el.addEventListener("waiting", function () { stage.classList.add("fm-buffering"); });
+                el.addEventListener("playing", function () { stage.classList.remove("fm-buffering"); });
+                el.addEventListener("canplay", function () { stage.classList.remove("fm-buffering"); });
+                el.addEventListener("ended", function () { stage.classList.remove("fm-buffering"); });
             }
 
             function seekFromPointer(clientX) {
@@ -253,21 +303,50 @@
             });
 
             if (fullBtn) {
-                fullBtn.addEventListener("click", function () {
-                    var d = document;
-                    if (d.fullscreenElement || d.webkitFullscreenElement) {
-                        (d.exitFullscreen || d.webkitExitFullscreen).call(d);
-                    } else {
-                        var r = wrap.requestFullscreen || wrap.webkitRequestFullscreen
-                            || el.webkitEnterFullscreen;
-                        if (r) { r.call(wrap.requestFullscreen ? wrap : el); }
-                    }
-                });
+                fullBtn.addEventListener("click", goFull);
+                el.addEventListener("dblclick", goFull);
                 document.addEventListener("fullscreenchange", function () {
-                    var on = document.fullscreenElement === wrap;
-                    wrap.classList.toggle("fm-fs", on);
+                    var on = document.fullscreenElement === stage;
+                    stage.classList.toggle("fm-fs", on);
                     fullBtn.innerHTML = "";
                     fullBtn.appendChild(icon(on ? ICONS.exitfull : ICONS.full));
+                });
+
+                // A standalone playlist gets a clearly labelled full-view
+                // button in the corner of the stage, on top of the icon in the
+                // bar, so the option reads plainly rather than as a glyph.
+                if (wrap.classList.contains("fm-standalone")) {
+                    var topbar = document.createElement("div");
+                    topbar.className = "fm-stage-top";
+                    var fullView = document.createElement("button");
+                    fullView.type = "button";
+                    fullView.className = "fm-btn fm-fullview";
+                    fullView.appendChild(icon(ICONS.full));
+                    var fvLabel = document.createElement("span");
+                    fvLabel.textContent = "Full view";
+                    fullView.appendChild(fvLabel);
+                    fullView.setAttribute("aria-label", "Full view");
+                    fullView.addEventListener("click", goFull);
+                    topbar.appendChild(fullView);
+                    stage.appendChild(topbar);
+                }
+
+                // Keyboard transport, live whenever the stage or a control in it
+                // holds focus. The scrubber keeps its own arrow handling, so
+                // arrows here only act when the scrubber is not the target.
+                stage.addEventListener("keydown", function (ev) {
+                    var onScrub = ev.target === scrub;
+                    if (ev.key === " " || ev.key === "k") {
+                        toggle(); ev.preventDefault();
+                    } else if (ev.key === "f") {
+                        goFull(); ev.preventDefault();
+                    } else if (ev.key === "m") {
+                        volBtn.click(); ev.preventDefault();
+                    } else if (!onScrub && ev.key === "ArrowRight" && el.duration > 0) {
+                        el.currentTime = Math.min(el.duration, el.currentTime + 5); ev.preventDefault();
+                    } else if (!onScrub && ev.key === "ArrowLeft" && el.duration > 0) {
+                        el.currentTime = Math.max(0, el.currentTime - 5); ev.preventDefault();
+                    }
                 });
             }
 
@@ -275,18 +354,18 @@
             if (isVideo) {
                 var idle = null;
                 function wake() {
-                    wrap.classList.remove("fm-idle");
+                    stage.classList.remove("fm-idle");
                     if (idle) { clearTimeout(idle); }
                     idle = setTimeout(function () {
                         if (!el.paused) {
-                            wrap.classList.add("fm-idle");
+                            stage.classList.add("fm-idle");
                         }
                     }, 2500);
                 }
-                wrap.addEventListener("pointermove", wake);
+                stage.addEventListener("pointermove", wake);
                 el.addEventListener("play", wake);
                 el.addEventListener("pause", function () {
-                    wrap.classList.remove("fm-idle");
+                    stage.classList.remove("fm-idle");
                     if (idle) { clearTimeout(idle); }
                 });
             }
@@ -522,6 +601,13 @@
                 wrap.removeAttribute("data-fm-ready");
                 var stray = wrap.querySelector(".fm-bar");
                 if (stray) { stray.parentNode.removeChild(stray); }
+                // Undo the stage: move the element back up and drop the wrapper
+                // so what remains is the plain element the page shipped.
+                var strayStage = wrap.querySelector(".fm-stage");
+                if (strayStage && el.parentNode === strayStage) {
+                    wrap.insertBefore(el, strayStage);
+                    strayStage.parentNode.removeChild(strayStage);
+                }
             } catch (e2) { /* nothing more to do */ }
         }
     }

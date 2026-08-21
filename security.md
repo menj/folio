@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.40.2**.
+The current supported release is **1.41.0**.
 
 ## Security controls
 
@@ -301,14 +301,22 @@ Documents are public by default and remain so unless explicitly restricted.
 
 The one exception is PDF access control (above): a PDF explicitly set to
 "restricted" or "hidden," on a server where that's confirmed enforced, is not
-reachable at its plain URL. Video uses a simpler model: restricted and hidden
-video withholds the file URL from the public entirely (they get a notice in
-place of the player), with no webserver block or signed URL — protection is
-at the page level, not the byte level, which is an accepted trade-off for
-playback speed (see changelog 1.38.0). Every other file format has no
-per-file access control — `EXCLUDE_PATTERNS` can hide a file from listings
-and public URLs entirely, but there is no partial-access tier beyond PDFs and
-video.
+reachable at its plain URL. Video is deliberately different and lighter. Its
+"restricted" and "hidden" tiers **delist** a clip rather than withhold it. The
+player and the file's URL are not shown to the public, who see a notice in
+place of the player, yet the file itself is served directly by the webserver
+and is **not gated**: there is no webserver block, no signed URL, and no
+byte-level check. The direct URL is derived from the filename, so a restricted
+or hidden video must be treated as reachable by anyone who has, or can
+construct, that URL, and any clip that was public before it was hidden is
+already crawled and cached. This is intentional, an accepted trade-off for
+direct-serve playback speed (see changelog 1.38.0), and it is the settled
+design: video tiers hide a clip from view, they do not make it private. A
+video that must be private should be kept out of the library entirely (for
+example with `EXCLUDE_PATTERNS`) or restricted at the webserver, rather than
+relying on the tier. Every other file format has no per-file access control.
+`EXCLUDE_PATTERNS` can hide a file from listings and public URLs entirely, and
+there is no partial-access tier beyond PDFs and video.
 
 Note that a "restricted" document's *detail page* is intentionally public and
 indexable — that is the point of the tier: the page (title, description,
@@ -345,7 +353,10 @@ Yes, please report:
   confirmed enforced (`PDF_GATE_CONFIRMED` true and `FOLIO_URL_SIGNING_KEY`
   set). A server where enforcement is not confirmed is expected to serve
   every PDF as public — that is not a vulnerability, it's the documented
-  fail-safe default.
+  fail-safe default. This applies to PDFs only: reaching a "restricted" or
+  "hidden" **video** at its direct URL is expected and intentional (the video
+  tiers delist a clip, they do not withhold it, as described above), so it is
+  not a vulnerability and does not need reporting.
 - Any way to read or write files outside `uploads/` and `data/`.
 - Any way to execute arbitrary PHP or shell commands.
 - Any way to make Folio serve an active file format (HTML, XML, MHTML) inline

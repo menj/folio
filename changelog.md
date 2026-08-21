@@ -3,6 +3,45 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.41.0 — 22 August 2026
+
+### Added
+
+- **`vcard.vcf`: a downloadable vCard for identity.json's subject.** A vCard
+  3.0 document at `/vcard.vcf` (or `?action=vcard`), built from the same
+  fields identity.json already declares — publisher name, URL, description,
+  icon (embedded as the vCard's photo), and same-as profiles, one
+  `X-SOCIALPROFILE` entry per network. Four fields exist only for the vCard
+  and are entirely optional — `PUBLISHER_NICKNAME`, `PUBLISHER_EMAIL`,
+  `PUBLISHER_PHONE`, `PUBLISHER_COUNTRY` — each rendered only when set in
+  config.php, so an unfilled field is simply absent rather than emitted
+  empty. Linked from the footer and cross-referenced from identity.json and
+  robots.txt. Requires identity.json to be enabled, and has its own toggle
+  on the Crawlers screen on top of that.
+
+### Changed
+
+- **Custom video player across the detail page and playlist view.** Video now
+  plays through a fully themed player rather than the browser's default
+  controls. On a document page the video fills the available view area at its
+  own aspect ratio, with no stretching or cropping, and carries play and pause,
+  a seek bar, volume and mute, fullscreen, a centre play and replay target, a
+  buffering indicator, keyboard shortcuts, and double-click to fill the screen.
+  A folder played as a video playlist becomes a standalone player: a large
+  stage beside a scrolling queue on wide screens, stacked on phones, with a
+  clearly labelled Full view control that fills the screen with the clip alone
+  while the queue stays out of the frame. Audio playback is unchanged.
+
+- **`library.html` renamed to `sitemap.html`, laid out as an HTML sitemap.**
+  The human-readable index of `library.yaml` now lives at `/sitemap.html`,
+  joining `sitemap.xml`, `sitemap-pdf.xml`, and `sitemap-categories.xml` in the
+  sitemap family. Its documents are grouped by category under an index of the
+  groups, in the manner of an HTML sitemap, while every field the previous view
+  carried (title link, date, language, description, tags) is kept. The old
+  `/library.html` address issues a permanent redirect to the new one, so
+  existing links and bookmarks continue to work. The `?action=yaml_view` query
+  form still resolves as an alias.
+
 ## 1.40.2 — 20 August 2026
 
 ### Added

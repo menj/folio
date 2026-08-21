@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.40.2');
+define('FOLIO_VERSION', '1.41.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -136,6 +136,12 @@ defined('SITE_DESCRIPTION')     || define('SITE_DESCRIPTION', 'A reading library
 defined('PUBLISHER_TYPE')       || define('PUBLISHER_TYPE', 'Person');
 defined('PUBLISHER_NAME')       || define('PUBLISHER_NAME', '');
 defined('PUBLISHER_URL')        || define('PUBLISHER_URL', '');
+// Optional, vCard-only. Never required, never guessed: each renders in
+// vcard.vcf only when set, exactly like SITE_SAMEAS already works.
+defined('PUBLISHER_NICKNAME')   || define('PUBLISHER_NICKNAME', '');
+defined('PUBLISHER_EMAIL')      || define('PUBLISHER_EMAIL', '');
+defined('PUBLISHER_PHONE')      || define('PUBLISHER_PHONE', '');
+defined('PUBLISHER_COUNTRY')    || define('PUBLISHER_COUNTRY', '');
 defined('SITE_LANGUAGE')        || define('SITE_LANGUAGE', 'en');
 defined('SITE_SAMEAS')          || define('SITE_SAMEAS', '');
 /**
@@ -179,6 +185,7 @@ defined('SITEMAP_ENABLED')      || define('SITEMAP_ENABLED', true);
 defined('LLMS_ENABLED')         || define('LLMS_ENABLED', true);
 defined('YAML_ENABLED')         || define('YAML_ENABLED', true);
 defined('IDENTITY_ENABLED')     || define('IDENTITY_ENABLED', true);
+defined('VCARD_ENABLED')        || define('VCARD_ENABLED', true);
 defined('AI_ALLOW_QUOTE')       || define('AI_ALLOW_QUOTE', true);
 defined('AI_ALLOW_SUMMARISE')   || define('AI_ALLOW_SUMMARISE', true);
 defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', false);
@@ -1285,6 +1292,14 @@ function url_identity(): string
         : BASE_URL . '?action=identity';
 }
 
+/** URL of the downloadable vCard for the site's subject. */
+function url_vcard(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/vcard.vcf'
+        : BASE_URL . '?action=vcard';
+}
+
 /** URL of the llms.txt guidance file. */
 function url_llms(): string
 {
@@ -1301,12 +1316,12 @@ function url_yaml(): string
         : BASE_URL . '?action=yaml';
 }
 
-/** URL of the human-readable HTML rendering of library.yaml. */
-function url_yaml_view(): string
+/** URL of the human-readable HTML sitemap: a readable rendering of library.yaml. */
+function url_sitemap_html(): string
 {
     return PRETTY_URLS
-        ? rtrim(BASE_URL, '/') . '/library.html'
-        : BASE_URL . '?action=yaml_view';
+        ? rtrim(BASE_URL, '/') . '/sitemap.html'
+        : BASE_URL . '?action=sitemap_html';
 }
 
 /**
@@ -1589,8 +1604,13 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'llms';
     } elseif ($route === 'library.yaml') {
         $_GET['action'] = 'yaml';
+    } elseif ($route === 'sitemap.html') {
+        $_GET['action'] = 'sitemap_html';
     } elseif ($route === 'library.html') {
-        $_GET['action'] = 'yaml_view';
+        // Renamed to sitemap.html in 1.41.0. The old address still resolves and
+        // is redirected to the new one, so existing links and bookmarks survive.
+        $_GET['action'] = 'sitemap_html';
+        $_GET['renamed_from_library'] = '1';
     } elseif ($route === 'sitemap.xml') {
         $_GET['action'] = 'sitemap';
     } elseif ($route === 'sitemap-pdf.xml') {
@@ -1599,6 +1619,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'sitemap_categories';
     } elseif ($route === 'identity.json') {
         $_GET['action'] = 'identity';
+    } elseif ($route === 'vcard.vcf') {
+        $_GET['action'] = 'vcard';
     } elseif (preg_match('#^sitemap-([0-9]+)\.xml$#', $route, $m)) {
         $_GET['action'] = 'sitemap';
         $_GET['part'] = $m[1];
@@ -2955,8 +2977,8 @@ function reserved_slugs(): array
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
         'diagnostics', 'pages', 'page', 'about', 'faq', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
-        'yaml', 'library.yaml', 'yaml_view', 'library.html',
-        'identity', 'identity.json',
+        'yaml', 'library.yaml', 'yaml_view', 'library.html', 'sitemap_html', 'sitemap.html',
+        'identity', 'identity.json', 'vcard', 'vcard.vcf',
         'raw', 'render', 'thumb', 'flipbook', 'ocr', 'meta', 'view', 'search',
         'feed', 'rss', 'atom', 'assets', 'lib', 'data', 'docs', 'uploads',
         'install', 'index', 'api', 'relink', 'reconcile',
@@ -4650,10 +4672,13 @@ function render_footer(): void
             <?php endif; ?>
             <?php if (YAML_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(url_yaml()) ?>">YAML</a>
-                <a href="<?= e(url_yaml_view()) ?>">HTML</a>
+                <a href="<?= e(url_sitemap_html()) ?>">HTML</a>
             <?php endif; ?>
             <?php if (IDENTITY_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(url_identity()) ?>">JSON</a>
+            <?php endif; ?>
+            <?php if (VCARD_ENABLED && IDENTITY_ENABLED && SITE_INDEXABLE): ?>
+                <a href="<?= e(url_vcard()) ?>">vCard</a>
             <?php endif; ?>
             <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
                 <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">XML</a>
@@ -6205,6 +6230,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                     'LLMS_ENABLED' => !empty($_POST['llms_enabled']),
                     'YAML_ENABLED' => !empty($_POST['yaml_enabled']),
                     'IDENTITY_ENABLED' => !empty($_POST['identity_enabled']),
+                    'VCARD_ENABLED' => !empty($_POST['vcard_enabled']),
                     'LLMS_INTRO' => $intro,
                     'SITE_INDEXABLE' => !empty($_POST['site_indexable']),
                 ])) {
@@ -6238,6 +6264,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $sitemap_url = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap';
     $llms_url    = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms';
     $identity_url = url_identity();
+    $vcard_url   = url_vcard();
     $yaml_url    = url_yaml();
 
     /* Sitemap preview: URL count and a small sample. */
@@ -6335,6 +6362,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         if (IDENTITY_ENABLED) {
             $related[] = 'identity.json (who the site is): ' . url_identity();
         }
+        if (VCARD_ENABLED && IDENTITY_ENABLED) {
+            $related[] = 'vcard.vcf (downloadable contact card): ' . url_vcard();
+        }
         if (YAML_ENABLED) {
             $related[] = 'library.yaml (full index + AI usage policy): ' . url_yaml();
         }
@@ -6409,6 +6439,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             Serve the identity.json document
         </label>
         <p class="field-note">A Schema.org identity document (Person + WebSite) telling AI systems who the site is and who it is about. Currently at <a href="<?= e($identity_url) ?>"><?= e($identity_url) ?></a><?= IDENTITY_ENABLED ? '' : ' (disabled, returns 404)' ?>.</p>
+
+        <label class="check-row">
+            <input type="checkbox" name="vcard_enabled" value="1" <?= VCARD_ENABLED ? 'checked' : '' ?>>
+            Serve a downloadable vCard
+        </label>
+        <p class="field-note">A vCard (.vcf) for the same subject identity.json describes, built from the publisher name, URL, description, icon, and same-as profiles — nothing beyond what is already declared there. Requires identity.json to be enabled. Currently at <a href="<?= e($vcard_url) ?>"><?= e($vcard_url) ?></a><?= (VCARD_ENABLED && IDENTITY_ENABLED) ? '' : ' (disabled, returns 404)' ?>.</p>
 
         <label class="check-row">
             <input type="checkbox" name="yaml_enabled" value="1" <?= YAML_ENABLED ? 'checked' : '' ?>>
@@ -8746,7 +8782,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
     </div>
 </header>
 <main class="playlist-page" id="folio-main" tabindex="-1">
-    <div class="playlist-wrap">
+    <div class="playlist-wrap playlist-<?= e($playlist_kind) ?>">
         <p class="playlist-head"><?= e($pl_title) ?> <span class="playlist-count"><?= count($queue) ?> <?= $playlist_kind === 'video' ? 'videos' : 'tracks' ?></span></p>
         <div class="folio-media fm-<?= e($playlist_kind) ?> fm-standalone" data-media-kind="<?= e($playlist_kind) ?>"
              data-playlist="<?= e($pl_json) ?>" data-playlist-index="0">
@@ -9527,6 +9563,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     if (YAML_ENABLED) {
         $related[] = url_yaml();
     }
+    if (VCARD_ENABLED) {
+        $related[] = url_vcard();
+    }
     $related[] = rtrim(BASE_URL, '/') . '/robots.txt';
     if ($related) {
         // subjectOf ties the discovery files to the WebSite entity.
@@ -9538,6 +9577,186 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
         '@graph'   => [$subject, $website],
     ];
     echo json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
+/* vcard.vcf: a downloadable vCard for identity.json's subject          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Escape a value for a vCard text property per RFC 6350 §3.4: backslash,
+ * comma, and semicolon are structural and must be escaped, and a literal
+ * newline becomes the two-character sequence backslash-n.
+ */
+function vcard_escape(string $v): string
+{
+    return str_replace(
+        ["\\", ",", ";", "\r\n", "\n"],
+        ["\\\\", "\\,", "\\;", "\\n", "\\n"],
+        $v
+    );
+}
+
+/**
+ * Fold one logical vCard line to RFC 6350 §3.2: no line may exceed 75 octets
+ * (including the trailing CRLF is excluded from the count, but each folded
+ * continuation starts with a space). Folding is byte-based, so a multibyte
+ * UTF-8 character is never split across the boundary.
+ */
+function vcard_fold(string $line): string
+{
+    $limit = 75;
+    if (strlen($line) <= $limit) {
+        return $line . "\r\n";
+    }
+    $out = '';
+    $rest = $line;
+    $first = true;
+    while (strlen($rest) > 0) {
+        $take = $first ? $limit : $limit - 1;
+        $first = false;
+        if (strlen($rest) <= $take) {
+            $chunk = $rest;
+            $rest = '';
+        } else {
+            // Back off from the byte boundary until it does not split a
+            // multibyte UTF-8 sequence (a continuation byte is 10xxxxxx).
+            $cut = $take;
+            while ($cut > 0 && (ord($rest[$cut]) & 0xC0) === 0x80) {
+                $cut--;
+            }
+            $chunk = substr($rest, 0, $cut);
+            $rest = substr($rest, $cut);
+        }
+        $out .= ($out === '' ? '' : ' ') . $chunk;
+        if ($rest !== '') {
+            $out .= "\r\n";
+        }
+    }
+    return $out . "\r\n";
+}
+
+/**
+ * Best-effort network label for an X-SOCIALPROFILE entry, matched by host.
+ * Falls back to the capitalised host when the network isn't recognised, so
+ * an unlisted profile still renders with a sensible label instead of none.
+ */
+function vcard_social_label(string $url): string
+{
+    $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+    $host = preg_replace('/^www\./', '', $host);
+    $map = [
+        'x.com' => 'X', 'twitter.com' => 'X',
+        'linkedin.com' => 'LinkedIn',
+        'github.com' => 'GitHub',
+        'flickr.com' => 'Flickr',
+        'facebook.com' => 'Facebook',
+        'instagram.com' => 'Instagram',
+        'mastodon.social' => 'Mastodon',
+        'youtube.com' => 'YouTube',
+    ];
+    if (isset($map[$host])) {
+        return $map[$host];
+    }
+    $label = preg_replace('/\.(com|org|net|social|io|co)$/', '', $host);
+    return $label !== '' ? ucfirst($label) : 'Profile';
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
+    // A vCard 4.0 (RFC 6350) download for the same subject identity.json
+    // describes. Built from the same fields — PUBLISHER_NAME, PUBLISHER_TYPE,
+    // PUBLISHER_URL, SITE_DESCRIPTION, SITE_ICON, SITE_SAMEAS — so the two
+    // never disagree, and shares identity.json's gating plus its own toggle.
+    if (!VCARD_ENABLED || !IDENTITY_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    $name = PUBLISHER_NAME !== '' ? PUBLISHER_NAME : SITE_NAME;
+    $isOrg = PUBLISHER_TYPE === 'Organization';
+
+    $lines   = [];
+    $lines[] = 'BEGIN:VCARD';
+    $lines[] = 'VERSION:3.0';
+    $lines[] = 'PRODID:-//Folio//Folio ' . FOLIO_VERSION . '//EN';
+    $lines[] = 'REV:' . gmdate('Y-m-d H:i:s');
+    $lines[] = 'FN:' . vcard_escape($name);
+    // Structured name left empty: Folio collects no given/family split, and a
+    // guessed split could be wrong for names in any order. FN is what every
+    // vCard consumer displays; N exists only because the field is expected.
+    $lines[] = 'N:;;;;';
+    if ($isOrg) {
+        $lines[] = 'ORG:' . vcard_escape($name);
+    }
+    if (PUBLISHER_NICKNAME !== '') {
+        $lines[] = 'NICKNAME:' . vcard_escape(PUBLISHER_NICKNAME);
+    }
+    if (PUBLISHER_COUNTRY !== '') {
+        // ADR structured fields: pobox;ext;street;locality;region;postal;country.
+        // Only country is collected, so the rest stay empty rather than guessed.
+        $lines[] = 'ADR;TYPE=home:;' . vcard_escape(PUBLISHER_COUNTRY) . ';;;;;';
+    }
+    if (PUBLISHER_EMAIL !== '' && filter_var(PUBLISHER_EMAIL, FILTER_VALIDATE_EMAIL)) {
+        $lines[] = 'EMAIL;TYPE=internet,pref:' . vcard_escape(PUBLISHER_EMAIL);
+    }
+    if (PUBLISHER_PHONE !== '') {
+        $lines[] = 'TEL;TYPE=cell,voice:' . vcard_escape(PUBLISHER_PHONE);
+    }
+    if (PUBLISHER_URL !== '') {
+        $lines[] = 'URL;TYPE=work:' . vcard_escape(PUBLISHER_URL);
+    }
+    $site_url = rtrim(BASE_URL, '/') . '/';
+    if (rtrim($site_url, '/') !== rtrim(PUBLISHER_URL, '/')) {
+        $lines[] = 'URL;TYPE=work:' . vcard_escape($site_url);
+    }
+    if (SITE_DESCRIPTION !== '') {
+        $lines[] = 'NOTE:' . vcard_escape(SITE_DESCRIPTION);
+    }
+    // Verified profile links, the same list identity.json exposes as sameAs,
+    // one X-SOCIALPROFILE per network — the de-facto convention vCard
+    // consumers (Apple Contacts, Google Contacts, Gravatar exports) read.
+    $sameAs = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
+    $sameAs = array_values(array_filter($sameAs, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
+    foreach ($sameAs as $u) {
+        $lines[] = 'X-SOCIALPROFILE;type=' . vcard_social_label($u) . ':' . vcard_escape($u);
+    }
+    $lines[] = 'TZ:+0000';
+    if (SITE_ICON !== '' && !preg_match('#^https?://#i', SITE_ICON)) {
+        $icon_abs = realpath(__DIR__ . '/' . ltrim(SITE_ICON, '/'));
+        $icon_ext = $icon_abs !== false ? strtolower(pathinfo($icon_abs, PATHINFO_EXTENSION)) : '';
+        $icon_type = ['png' => 'PNG', 'jpg' => 'JPEG', 'jpeg' => 'JPEG', 'gif' => 'GIF', 'webp' => 'PNG'][$icon_ext] ?? '';
+        // Embedded as base64, matching every vCard consumer's expectation, but
+        // only for a real, modestly-sized raster file — an oversized icon or an
+        // SVG (no PHOTO;TYPE mapping) is skipped rather than producing a
+        // malformed or bloated card. Confined to inside the installation the
+        // same way site_icon_tags() resolves it, so this can't be tricked into
+        // reading an arbitrary file via a crafted SITE_ICON path.
+        if ($icon_type !== '' && $icon_abs !== false && strpos($icon_abs, realpath(__DIR__)) === 0
+            && is_file($icon_abs) && filesize($icon_abs) <= 512 * 1024) {
+            $data = @file_get_contents($icon_abs);
+            if ($data !== false) {
+                $lines[] = 'PHOTO;TYPE=' . $icon_type . ';ENCODING=BASE64:' . base64_encode($data);
+            }
+        }
+    }
+    $lines[] = 'SOURCE:' . vcard_escape(url_identity());
+    $lines[] = 'END:VCARD';
+
+    $out = '';
+    foreach ($lines as $line) {
+        $out .= vcard_fold($line);
+    }
+
+    $filename = preg_replace('/[^A-Za-z0-9 _.-]/', '', $name);
+    $filename = trim($filename) !== '' ? trim($filename) : 'contact';
+
+    header('Content-Type: text/vcard; charset=UTF-8');
+    header('Content-Length: ' . (string) strlen($out));
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: public, max-age=900');
+    header('Content-Disposition: attachment; filename="' . str_replace(['"', "\r", "\n"], '', $filename) . '.vcf"');
+    echo $out;
     exit;
 }
 
@@ -9672,14 +9891,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
     exit;
 }
 
-if (isset($_GET['action']) && $_GET['action'] === 'yaml_view') {
-    // Human-readable HTML rendering of library.yaml, parsed in the browser by
-    // the bundled js-yaml (lib/js-yaml/). Shares the YAML endpoint's gating, so
-    // it is available exactly when library.yaml is. Progressive enhancement: a
-    // reader without JavaScript still gets a link to the raw file.
+if (isset($_GET['action']) && ($_GET['action'] === 'sitemap_html' || $_GET['action'] === 'yaml_view')) {
+    // Human-readable HTML sitemap: a browser-rendered view of library.yaml,
+    // parsed by the bundled js-yaml (lib/js-yaml/). Shares the YAML endpoint's
+    // gating, so it is available exactly when library.yaml is. Progressive
+    // enhancement: a reader without JavaScript still gets a link to the raw file.
     if (!YAML_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
         exit('Not found');
+    }
+    // The page was named library.html before 1.41.0. The old address is sent to
+    // the new one with a permanent redirect so search engines consolidate on it.
+    if (!empty($_GET['renamed_from_library'])) {
+        header('Location: ' . url_sitemap_html(), true, 301);
+        exit;
     }
     $has_jsyaml = is_file(__DIR__ . '/lib/js-yaml/js-yaml.min.js');
     header('Content-Type: text/html; charset=UTF-8');
@@ -9691,16 +9916,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml_view') {
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Library — <?= e(SITE_NAME) ?></title>
+<title>Sitemap — <?= e(SITE_NAME) ?></title>
 <meta name="robots" content="<?= SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow' ?>">
-<link rel="canonical" href="<?= e(rtrim(BASE_URL, '/') . '/library.html') ?>">
+<link rel="canonical" href="<?= e(url_sitemap_html()) ?>">
 <?= stylesheet_tag() ?>
 <?= site_icon_tags() ?>
 </head>
 <body>
 <header class="topbar">
     <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
-    <span class="running-head">Library index</span>
+    <span class="running-head">Sitemap</span>
     <div class="theme-picker" role="group" aria-label="Colour scheme">
         <button data-set-theme="folio" title="Folio"></button>
         <button data-set-theme="ledger" title="Ledger"></button>
@@ -9710,7 +9935,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml_view') {
 </header>
 <main class="library-view-page" id="folio-main" tabindex="-1">
     <div id="library-view" data-yaml-url="<?= e(url_yaml()) ?>">
-        <p>This page renders <a href="<?= e(url_yaml()) ?>">library.yaml</a> in a readable form.
+        <p>This sitemap renders <a href="<?= e(url_yaml()) ?>">library.yaml</a> in a readable form.
         <?php if (!$has_jsyaml): ?>The YAML viewer library is not installed; open the raw file directly.<?php else: ?>If it does not load, your browser may have JavaScript disabled — the raw file is linked above.<?php endif; ?></p>
     </div>
 </main>
@@ -10650,7 +10875,7 @@ if (isset($_GET['view'])) {
             : 'Updated ' . e(date('j F Y', $mtime));
         ?>
         <p class="detail-facts detail-facts-lead"><?= implode(' <span class="sep">&middot;</span> ', $facts) ?></p>
-        <figure class="detail-media">
+        <figure class="detail-media<?= $kind === 'video' && !$video_restricted ? ' detail-media-stage' : '' ?>">
             <?php if ($pdf_is_hidden): ?>
                 <?php if ($hidden_preview_url !== ''): ?>
                     <img class="document-restricted-preview" src="<?= e($hidden_preview_url) ?>" alt="Redacted preview of <?= e($title) ?>">

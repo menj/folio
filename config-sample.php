@@ -53,6 +53,16 @@ define('PUBLISHER_TYPE', 'Person');
 define('PUBLISHER_NAME', '');
 define('PUBLISHER_URL', '');
 
+/**
+ * Optional, used only by the downloadable vCard (vcard.vcf), never by
+ * identity.json. Each renders in the card only when set; leave any of them
+ * as '' to omit that field entirely rather than emit an empty one.
+ */
+define('PUBLISHER_NICKNAME', '');
+define('PUBLISHER_EMAIL', '');
+define('PUBLISHER_PHONE', '');
+define('PUBLISHER_COUNTRY', '');
+
 /** Library language as a BCP 47 tag, for example en or ms. */
 define('SITE_LANGUAGE', 'en');
 
