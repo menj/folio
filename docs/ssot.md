@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.41.0. Update this file in the same commit as any change it describes.
+Version 1.48.0. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.41.0');` |
-| `changelog.md` | `## 1.41.0 — 22 August 2026` |
-| `readme.txt` | `Stable tag: 1.41.0` |
-| `readme.md` | `1.41.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.41.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.48.0');` |
+| `changelog.md` | `## 1.48.0 — 23 August 2026` |
+| `readme.txt` | `Stable tag: 1.48.0` |
+| `readme.md` | `1.48.0.` under `## Version` |
+| `security.md` | `The current supported release is **1.48.0**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -85,11 +85,14 @@ assets/css/flipbook.css   flip reader only
 assets/js/app.js          listing behaviour
 assets/js/view.js         detail page behaviour
 assets/js/media.js        themed audio and video transport
+assets/js/library-view.js renders sitemap.html from library.yaml in the browser
 assets/js/admin.js        admin screens
 assets/js/flipbook.js     flip reader
 assets/img/               favicon.svg, favicon.ico, apple-touch-icon.png
 lib/parsedown/            Parsedown 1.8.0, MIT
 lib/pdfjs/                PDF.js, Apache 2.0
+lib/js-yaml/              js-yaml 5.3.0, MIT — renders sitemap.html in the browser
+lib/vendor/               Google API client and dependencies, MIT/Apache 2.0 — Google Indexing API
 
 tests/smoke.sh            regression suite
 tests/readme.md           how to run it
@@ -99,6 +102,7 @@ uploads/.htaccess         hardening for the served uploads folder
 uploads/readme.txt        keeps the folder present in git and on GitHub
 data/readme.txt           keeps the folder present in git and on GitHub
 data/thumbs/              generated image derivatives; safe to delete
+data/video-previews/      generated moving preview clips for video; safe to delete
 data/compressed/          prepared smaller copies of PDFs; safe to delete
 data/.htaccess            denies web access to data/
 ```
@@ -160,6 +164,18 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `PUBLISHER_URL` | empty | Settings |
 | `SHOW_ADMIN_LINK` | `true` | Settings |
 | `AUDIO_PLAYLIST` | `true` | Settings |
+| `PUBLISHER_NICKNAME` | empty | no — vCard only, never identity.json |
+| `PUBLISHER_EMAIL` | empty | no — vCard only, never identity.json |
+| `PUBLISHER_PHONE` | empty | no — vCard only, never identity.json |
+| `PUBLISHER_COUNTRY` | empty | no — vCard only, never identity.json |
+| `PUBLISHER_BIO` | empty | no — config.php only; identity.json's `Person.description`, replacing the library's own description as the fallback |
+| `PUBLISHER_OCCUPATION` | empty | no — config.php only; identity.json's `Person.jobTitle` |
+| `PUBLISHER_ALT_NAMES` | empty | no — config.php only; identity.json's `Person.alternateName` |
+| `PUBLISHER_NATIONALITY` | empty | no — config.php only; identity.json's `Person.nationality` |
+| `PUBLISHER_ALUMNI_OF` | empty | no — config.php only; identity.json's `Person.alumniOf` |
+| `PUBLISHER_AFFILIATION` | empty | no — config.php only; identity.json's `Person.affiliation` |
+| `PUBLISHER_RELATED_SITE_URL` | empty | no — config.php only; a second site about the same person, as a named `additionalProperty` |
+| `PUBLISHER_RELATED_SITE_LABEL` | empty | no — config.php only; label for the above, defaulting to "Related site" |
 
 ### Addressing
 
@@ -187,6 +203,10 @@ a host matching `/^[A-Za-z0-9._-]+(:[0-9]{1,5})?$/`.
 | `LLMS_ENABLED` | `true` | Crawlers |
 | `LLMS_INTRO` | empty | Crawlers |
 | `INDEXNOW_KEY` | empty | Crawlers |
+| `IDENTITY_ENABLED` | `true` | Crawlers |
+| `VCARD_ENABLED` | `true` | Crawlers — also requires `IDENTITY_ENABLED` |
+| `YAML_ENABLED` | `true` | Crawlers |
+| `FOOTER_LINKS` | `llms,yaml,vcard,json,html,xml` | Crawlers — order and presence of the footer's discovery-file links; a key's own `*_ENABLED` toggle above still governs whether it can be served at all |
 
 ### Analytics
 
@@ -211,8 +231,9 @@ Content-Security-Policy is identical to a build without the feature.
 | `ADMIN_PASSWORD_HASH` | `CHANGE_ME` | Accounts |
 | `FOLIO_AUTH_PEPPER` | empty | no |
 | `FOLIO_COOKIE_NAME` | `FOLIOSESSID` | no |
-| `FOLIO_URL_SIGNING_KEY` | empty | no — signs "restricted" pdf_access URLs, deliberately separate from `FOLIO_AUTH_PEPPER` |
+| `FOLIO_URL_SIGNING_KEY` | empty | no — signs "restricted" pdf_access URLs and, once the video gate is confirmed, video URLs too, deliberately separate from `FOLIO_AUTH_PEPPER` |
 | `PDF_GATE_CONFIRMED` | `false` | Crawlers, via the PDF-routing preflight — never set by hand |
+| `VIDEO_GATE_CONFIRMED` | `false` | Crawlers, via the video-routing preflight — never set by hand |
 
 `ADMIN_PASSWORD_HASH` left at `CHANGE_ME` disables login rather than accepting
 anything. **`FOLIO_AUTH_PEPPER` must never change once accounts exist**: it is
@@ -236,10 +257,12 @@ Public:
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
 | `?action=identity` | Schema.org identity document — Person + WebSite (`/identity.json`) |
-| `?action=vcard` | Downloadable vCard 4.0 for identity.json's subject (`/vcard.vcf`); requires identity.json enabled, plus its own toggle |
+| `?action=vcard` | Downloadable vCard 3.0 for identity.json's subject (`/vcard.vcf`); requires identity.json enabled, plus its own toggle |
 | `?action=yaml` | YAML index of every public document (`/library.yaml`) |
 | `?action=sitemap_html` | Human-readable HTML sitemap of library.yaml (`/sitemap.html`; old `/library.html` and `?action=yaml_view` still resolve, redirected) |
 | `?action=llms` | llms.txt for AI crawlers |
+| `?action=playlist` | standalone audio or video player for a folder (`&kind=video` for video) |
+| `?action=video_preview` | short, silent, looping moving preview clip for a public video's hover/listing thumbnail; requires ffmpeg |
 | `?indexnow_key=` | IndexNow ownership file |
 | `?action=rewrite_probe` | JSON, reports whether rewriting reached PHP |
 
@@ -263,6 +286,8 @@ Admin, all requiring a session:
 | `?action=reconcile` | POST, admin: match records to renamed or moved files |
 | `?action=relink` | POST, admin: attach one record to one file by hand |
 | `?action=meta` | POST, admin: save a document's metadata and slug |
+| `?action=redact_page` | admin: page count (`&meta=1`) or one rendered page image, for the redaction editor's live preview |
+| `?action=video_gate_test` | admin: a true dry run of the video-routing preflight — writes the deny rule, checks it, always undoes the write before responding |
 | `?action=logout` | POST, admin: end the session |
 
 Under clean URLs these become `/slug/`, `/category/slug/`, `/sitemap.xml`,
@@ -321,6 +346,7 @@ absent, and nothing in it may become a hard requirement.
 | `pdfinfo` | Page counts, encryption check | Page counts unknown; Tesseract OCR route unavailable |
 | `pdftocairo` | PDF page rendering | Falls back to `pdftoppm` |
 | `pdftoppm` | PDF page rendering | With neither, no PDF previews |
+| `ffmpeg` | Video hover/listing preview: a short moving clip, plus its static poster frame | No preview at all for video; the play glyph shows instead |
 | `qpdf` | Joining OCR'd pages | Single-page documents still OCR; multi-page reports why not |
 | `pngquant` | Shrinking rendered PDF pages | Renders are simply larger |
 | `exiftool` | Reading a document's own creation date | The filesystem date is used |
@@ -471,6 +497,8 @@ the release undistributable without removing pdf.js first.
 | Parsedown 1.8.0 | MIT | `lib/parsedown/license.txt` |
 | Mozilla pdf.js 5.4.149 | Apache-2.0 | `lib/pdfjs/license.txt` |
 | OpenJPEG, QCMS (WASM) | own permissive | `lib/pdfjs/wasm/` |
+| js-yaml 5.3.0 | MIT | `lib/js-yaml/license.txt` |
+| Google API client and dependencies | MIT/Apache-2.0 | `lib/vendor/*/license*` (per-package) |
 
 Every source file carries an `SPDX-License-Identifier: GPL-3.0-or-later`
 line, so the licence is discoverable from any single file rather than only

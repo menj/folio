@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.41.0**.
+The current supported release is **1.48.0**.
 
 ## Security controls
 
@@ -166,10 +166,46 @@ control.
 If no image engine is installed, every part of this is inert and the original
 file is served exactly as before.
 
+A PDF's page-one thumbnail is never rasterised from the original file when
+the document has redaction regions set. It is rasterised from the same
+redacted derivative the document itself serves, so a black box drawn over
+page one cannot be bypassed by hovering the file in a listing. If the
+redacted derivative cannot be built, the thumbnail route serves no preview
+at all rather than ever falling back to the unredacted page — the same
+fail-closed rule that governs the redacted PDF delivery itself.
+
+A video's hover/listing preview — one extracted frame, and where ffmpeg
+supports it, a short silent looping clip — is generated the same way and
+under the same bounds as the PDF preview above: a source file over
+`VIDEO_PREVIEW_MAX_SOURCE_MB` is skipped rather than encoded, and every
+`ffmpeg` invocation carries the timeout and process-boundary protections
+described in External utilities below. The moving clip strips audio
+unconditionally (`-an`), so nothing beyond silent video is ever generated or
+served from this route. It is offered for a video whose `video_access` is
+`public`, and for any tier to the admin — the same viewer who already gets a
+full, unrestricted player for that file regardless of tier; a restricted or
+hidden video gives a public visitor no listing preview, moving or still, the
+same way it already gives them no direct download link.
+
+A video's hover preview can carry its own redaction, independent of
+`video_access`: one or more boxes drawn over the reference frame, blurred
+into both the still frame and the moving clip. This affects only the hover
+preview — the small poster and the short clip — never the full video played
+from the document page, which is unrestricted for whoever the access tier
+already permits. Like the PDF and image thumbnail paths, this is generated
+through `ffmpeg`'s own filter graph (crop, blur, overlay back at the same
+position) rather than composited from a separate, potentially inconsistent
+step, so there is no code path that could emit the unblurred frame by
+mistake: if the filtered render fails for any reason, the function returns
+nothing rather than falling back to an unfiltered one. The cache key for
+both the still frame and the clip folds in a hash of the redaction regions,
+so editing or clearing them invalidates the cached derivative rather than
+continuing to serve one built under the previous settings.
+
 ### External utilities
 
-Folio can call command-line programs — OCRmyPDF, Tesseract, Poppler, pngquant
-— when a server provides them. That means user-controlled filenames reach a
+Folio can call command-line programs — OCRmyPDF, Tesseract, Poppler,
+pngquant, ffmpeg — when a server provides them. That means user-controlled filenames reach a
 process boundary, so the mechanism matters more than the feature.
 
 Programs are started with `proc_open()` given an **argument array**, with
@@ -218,6 +254,74 @@ trusted, so it cannot be used to poison a cached page or a structured-data
 identifier. `X-Forwarded-Proto` is honoured only when `TRUST_PROXY_HEADERS`
 is explicitly enabled, which should only be done behind a proxy that
 overwrites that header.
+
+### Video access control
+
+By default, video follows a delisting-only model: a restricted or hidden
+video's URL is simply never emitted to a visitor who shouldn't have it — the
+bytes themselves are still directly reachable by anyone who already holds
+the exact URL. This is a deliberate, settled trade-off (documented in the
+Crawlers screen: "not secret from someone who already holds its direct
+URL... for a personal archive this is usually the right balance of speed and
+privacy") and is not what's described below.
+
+An opt-in guard (`video_guard_active()`, mirroring `pdf_access_enforced()`'s
+exact two-condition shape) exists to move video from that delisting-only
+model to one enforced at the webserver: with it on, direct requests for any
+video file are refused unconditionally by Apache, and every video is instead
+served through `?action=raw`, signed the same way a restricted PDF already
+is — `hash_hmac('sha256', ...)` under `FOLIO_URL_SIGNING_KEY`, verified with
+`hash_equals`, a short expiry, hidden refused unconditionally. Enforcement
+requires both a non-empty `FOLIO_URL_SIGNING_KEY` and `VIDEO_GATE_CONFIRMED`,
+a setting turned on only from the Crawlers screen after its own preflight
+succeeds — the same fail-safe shape as `PDF_GATE_CONFIRMED`, checked live on
+every request rather than trusting a stale flag, so a signing key cleared
+after the fact immediately stops being trusted.
+
+Confirming is a two-step, verify-before-trust flow, the same reasoning as
+the PDF gate's own preflight but adapted for a real difference: a PDF's
+preflight is read-only (does a request already reach `?action=raw`?), while
+testing video's rule requires writing it first — there is nothing to
+observe about a deny rule that has not been written yet. The "Test video
+routing" button calls an admin-only endpoint that performs a true dry run:
+write the rule, make an outbound request to a reserved probe file and check
+for a genuine 403, then unconditionally undo the write before responding,
+whatever the result. That endpoint can never be the thing that leaves
+Apache refusing video while Folio still believes the guard is off, because
+it never leaves a change in place. Only "Confirm and enforce" — a separate,
+independently-verified POST — makes a persistent change, and even that
+rolls back the `.htaccess` write if its own verification fails, so a
+half-succeeded confirmation can never leave the two sides disagreeing about
+whether video is actually being blocked.
+
+An earlier version of this mechanism had `.htaccess` check a token's shape
+— 64 hex characters, an 8-or-more-digit expiry — rather than its signature,
+because `mod_rewrite` has no way to compute or hold an HMAC key at all. A
+regex can only confirm a token looks right, never that it is right, so
+anyone who noticed the shape being matched could construct a passing query
+string with no knowledge of the actual key. Compounding it, nothing in
+Folio ever generated a matching token for a direct video URL in the first
+place, so enabling the guard would have simultaneously let a forged request
+through and refused every legitimate one, including the admin's own. Fixed
+by removing every conditional path from the `.htaccess` rule — it now
+refuses unconditionally, with no shape it can be tricked into accepting —
+and building the same real, PHP-verified signing PDF's restricted tier
+already used correctly. A second, unrelated piece of code — predating this
+fix, on the Crawlers screen — automatically cleared the guard's state every
+time that screen loaded, which would have silently undone an admin's own
+confirmation the moment they landed back on the same page after confirming
+it. Removed; its original justification (forcing video through PHP causing
+slow buffering for a logged-in visitor) was a session-locking bug fixed
+separately and is no longer applicable.
+
+Verified end to end against a real running instance, not just read: a
+forged token, an expired token, a missing token, and a hidden video with
+any token all correctly refused; a genuine valid token correctly served the
+file with Range support intact; the confirm handler correctly refuses to
+enable enforcement when its own verification shows the rule isn't actually
+blocking anything, with a clear reason why; the guard's state now persists
+across repeated page loads rather than resetting; and disabling correctly
+restores the default delisting-only model.
 
 ### PDF access control
 

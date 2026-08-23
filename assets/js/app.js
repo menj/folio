@@ -291,6 +291,27 @@
             row.hidden = !show;
             if (show) { shown++; }
         });
+        /* A folder row (one with data-folder — "Up one level" has none, and
+           always stays put) is shown when a category or tag filter is
+           active only if that value turns up somewhere inside it, at any
+           depth. Without this, filtering at a folder-only level — the top
+           of a fresh install, most of the time — visibly did nothing: the
+           chip lit up, but every row.row-file it could touch was already
+           out of sight inside a subfolder. Text search does not narrow
+           folders the same way; matching it would mean walking every
+           descendant file's title and description on every keystroke, a
+           meaningfully heavier cost than the fixed category/tag lists
+           already sitting on each row from page load. */
+        if (activeFilter) {
+            document.querySelectorAll("tr.row-dir[data-folder]").forEach(function (row) {
+                var list = (row.getAttribute(activeFilter.type === "cat" ? "data-dir-cats" : "data-dir-tags") || "");
+                row.hidden = list.split("|").indexOf(activeFilter.value) === -1;
+            });
+        } else {
+            document.querySelectorAll("tr.row-dir[data-folder]").forEach(function (row) {
+                row.hidden = false;
+            });
+        }
         document.querySelectorAll(".chip[data-filter-cat], .chip[data-filter-tag]").forEach(function (c) {
             var val = c.getAttribute("data-filter-cat") || c.getAttribute("data-filter-tag");
             var type = c.hasAttribute("data-filter-cat") ? "cat" : "tag";
@@ -303,7 +324,8 @@
         var emptyRow = document.getElementById("search-empty");
         if (emptyRow) {
             var haveRows = document.querySelectorAll("tr.row-file").length > 0;
-            emptyRow.hidden = !(haveRows && shown === 0);
+            var folderStillShown = document.querySelector("tr.row-dir[data-folder]:not([hidden])") !== null;
+            emptyRow.hidden = !(haveRows && shown === 0 && !folderStillShown);
         }
     }
 
@@ -404,8 +426,22 @@
         var rows = document.querySelectorAll(".row-file");
         var hideTimer = null;
         var lastKey = null;
+        var mediaGen = 0;
 
-        function buildMedia(kind, url, title, isServerThumb) {
+        function stopHoverVideo() {
+            // Explicit pause + src removal rather than relying on the DOM swap
+            // below to release it: some browsers keep decoding a detached but
+            // still-referenced <video> for a moment, which is wasted work for
+            // a card that just lost hover.
+            var v = mediaBox.querySelector("video");
+            if (v) {
+                try { v.pause(); v.removeAttribute("src"); v.load(); } catch (e) { /* nothing more to do */ }
+            }
+        }
+
+        function buildMedia(kind, url, title, isServerThumb, previewUrl) {
+            stopHoverVideo();
+            var myGen = ++mediaGen;
             mediaBox.className = "hover-card-media kind-" + (kind || "other");
             if (kind === "image" && url) {
                 var img = document.createElement("img");
@@ -415,26 +451,72 @@
                 img.src = url;
                 mediaBox.innerHTML = "";
                 mediaBox.appendChild(img);
-            } else if (kind === "pdf" && url && isServerThumb) {
-                /* The server rendered page one already, so this is a small
-                   cached image. Fetching it costs a few kilobytes instead of
-                   pulling down the whole document — a 6 MB scan took seconds
-                   to appear when the browser had to render it itself. */
+            } else if (kind === "video" && previewUrl && isServerThumb) {
+                /* A short, silent, looping clip — the moving equivalent of a
+                   PDF's rendered page one. poster is the static frame, so
+                   something shows immediately while the clip itself loads.
+                   muted + playsInline are both required for autoplay to be
+                   permitted at all; loop keeps it running for as long as the
+                   row is hovered. If the clip URL fails (ffmpeg missing,
+                   source too large, encode failed, or — some browsers simply
+                   never fire a video 'error' event for a failed/unsupported
+                   source, so a stall timer backs it up) this falls back to
+                   the plain poster image one level down, by rebuilding with
+                   the preview URL cleared. myGen guards both callbacks: if
+                   the row under the mouse has changed by the time either
+                   fires, this is stale and must not touch the new content. */
+                mediaBox.innerHTML = "";
+                var vid = document.createElement("video");
+                vid.className = "hover-card-video";
+                vid.muted = true;
+                vid.defaultMuted = true;
+                vid.loop = true;
+                vid.playsInline = true;
+                vid.preload = "auto";
+                vid.poster = url;
+                vid.setAttribute("aria-hidden", "true");
+                var fellBack = false;
+                function fallBackToPoster() {
+                    if (fellBack || myGen !== mediaGen) { return; }
+                    fellBack = true;
+                    buildMedia(kind, url, title, isServerThumb, "");
+                }
+                vid.addEventListener("error", fallBackToPoster);
+                vid.addEventListener("playing", function () {
+                    if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
+                });
+                var source = document.createElement("source");
+                source.src = previewUrl;
+                source.type = "video/mp4";
+                vid.appendChild(source);
+                mediaBox.appendChild(vid);
+                var playPromise = vid.play();
+                if (playPromise && playPromise.catch) {
+                    playPromise.catch(fallBackToPoster);
+                }
+                // Backstop: a 404, an unsupported codec, or anything else that
+                // leaves the element stuck without ever reaching "playing" —
+                // observed in the wild, not just theoretical — is caught here
+                // rather than leaving a dead, motionless <video> in place.
+                var stallTimer = setTimeout(fallBackToPoster, 2500);
+            } else if ((kind === "pdf" || kind === "video") && url && isServerThumb) {
+                /* The server rendered a frame/page already, so this is a small
+                   cached image: page one for a PDF, one extracted frame for a
+                   video (or a video whose moving clip is unavailable).
+                   Fetching it costs a few kilobytes instead of pulling down
+                   the whole file — a 6 MB scan or a 40 MB clip took seconds
+                   to appear when the browser had to decode it itself. */
                 var pimg = document.createElement("img");
                 pimg.loading = "lazy";
                 pimg.decoding = "async";
                 pimg.alt = "";
-                /* A page Folio could not render — an encrypted or damaged
-                   document, or one the server ran out of time on — answers
-                   404 here. Without this the browser paints its broken-image
-                   icon, which looks like Folio is broken rather than like a
-                   document that has no preview. */
+                /* A page/frame Folio could not render — an encrypted or
+                   damaged document, or one the server ran out of time on —
+                   answers 404 here. Without this the browser paints its
+                   broken-image icon, which looks like Folio is broken rather
+                   than like a document that has no preview. */
                 pimg.addEventListener("error", function () {
-                    mediaBox.innerHTML = "";
-                    var g = document.createElement("span");
-                    g.className = "hover-card-glyph";
-                    g.textContent = "\u25A4";
-                    mediaBox.appendChild(g);
+                    showGlyph(mediaBox, kind);
                 });
                 pimg.src = url;
                 mediaBox.innerHTML = "";
@@ -452,8 +534,9 @@
                 mediaBox.appendChild(pcanvas);
                 renderPdfThumb(url, pcanvas, mediaBox);
             } else {
-                // Audio / video / text / markdown / other: a clean titled
-                // tile with a kind glyph, no invented image.
+                // Audio / text / markdown / other, and a video with no server
+                // thumbnail (ffmpeg missing, or a restricted/hidden file):
+                // a clean titled tile with a kind glyph, no invented image.
                 showGlyph(mediaBox, kind);
             }
         }
@@ -514,7 +597,8 @@
                 var url = row.getAttribute("data-hover-url") || "";
                 var title = row.getAttribute("data-hover-title") || "";
                 var served = row.getAttribute("data-hover-thumb") === "1";
-                buildMedia(kind, url, title, served);
+                var preview = row.getAttribute("data-hover-preview") || "";
+                buildMedia(kind, url, title, served, preview);
             }
             card.classList.add("is-visible");
             card.setAttribute("aria-hidden", "false");
@@ -526,6 +610,7 @@
                 card.classList.remove("is-visible");
                 card.setAttribute("aria-hidden", "true");
                 lastKey = null;
+                stopHoverVideo();
             }, 180);
         }
 

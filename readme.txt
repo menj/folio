@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.41.0
+Stable tag: 1.48.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -14,8 +14,9 @@ Folio turns a web folder into a small public document library with crawlable
 file pages, previews, metadata, categories, accounts, sitemap, and llms.txt.
 Files remain managed over FTP and no database is required. Optional standalone
 pages (About, FAQ, custom) sit alongside the library. Hover preview cards give
-each row a real thumbnail on desktop, and the layout collapses cleanly on
-mobile.
+each row a real thumbnail on desktop — a short moving clip for video, where
+ffmpeg is available — and the layout holds up cleanly at desktop, tablet, and
+mobile widths.
 
 == Requirements ==
 

@@ -29,13 +29,20 @@
   respects `prefers-reduced-motion`
 * Markdown (.md) files rendered to formatted HTML by Parsedown, in safe mode
 * Hover preview cards on the listing: image thumbnails, first-page PDF previews,
-  and titled tiles for other formats; on desktop and hover-capable pointers only
+  a short silent looping moving clip for video (ffmpeg required; falling back
+  to a static frame if the clip itself cannot be built, e.g. a large source
+  file; offered for public video, and for any tier to the admin), optionally
+  with a face or other detail blurred out via drawn redaction boxes, and
+  titled tiles for other formats; on desktop and hover-capable pointers only
 * Responsive layout: the listing collapses from a table into stacked cards on
   narrow screens, so rows never scroll sideways
 * Editable title and short description per file; the raw filename and extension stay out of sight
 * One category and up to ten tags per file
 * Browsable category archive pages with their own indexable URLs, gathering
-  documents from every folder; tags filter the current view by chip
+  documents from every folder; tags filter the current view by chip. A
+  category or tag chip also shows or hides subfolders by whether they
+  contain a match at any depth, so filtering does something useful even in
+  a folder holding only other folders, not files directly
 * Client-side search across titles, descriptions, categories, tags, and
   filenames; appears once a folder holds three or more files and composes with
   the chip filters
@@ -258,8 +265,11 @@ authentication, metadata integrity, session revocation, and sitemap caching.
 
 Listing and category pages emit a focused graph containing `WebSite`, an
 optional publisher, `BreadcrumbList`, `CollectionPage`, and a lightweight
-`ItemList`. File pages add `ItemPage` and the file itself as `ImageObject`,
-`DigitalDocument`, `Article`, or `TextDigitalDocument`.
+`ItemList`. File pages add `ItemPage` and the file itself typed by kind:
+`ImageObject`, `DigitalDocument`, `Article`, `TextDigitalDocument`,
+`VideoObject`, `AudioObject`, or `MediaObject` for anything else. A video's
+`video_type` (documentary, interview, and so on) becomes both `genre` and
+`additionalType` on its `VideoObject` node when set.
 
 Filesystem modification time is used only as `dateModified`; Folio does not
 pretend it is the publication or upload date. Publisher nodes are omitted when
@@ -347,6 +357,23 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   search engines, distinct from the sitemap and YAML index (what the library
   contains) and llms.txt (a reading map). It cross-references its siblings and
   is cross-referenced by them. Toggle it off to return 404.
+
+  The Person node is bare by default — name, URL, the library's own
+  description as a fallback — until `PUBLISHER_BIO`, `PUBLISHER_OCCUPATION`,
+  `PUBLISHER_ALT_NAMES`, `PUBLISHER_NATIONALITY`, `PUBLISHER_ALUMNI_OF`, and
+  `PUBLISHER_AFFILIATION` are set in `config.php`, each rendering only when
+  filled in. `PUBLISHER_BIO` in particular replaces the library's own
+  description as the Person's, since without it the one sentence identity.json
+  had to say about its subject ended up describing the collection rather than
+  the person. `PUBLISHER_RELATED_SITE_URL` (and an optional
+  `PUBLISHER_RELATED_SITE_LABEL`) names a second site about the same person —
+  a blog alongside this library, say — explicitly, rather than leaving it for
+  a reader to infer from an unlabelled `sameAs` entry. Every document's own
+  `author`/`publisher` link, and the WebSite's `publisher` link, resolve to
+  the exact same `@id` as this Person node, so anything that finds one of
+  those references and then finds identity.json separately can tell they
+  describe the same entity, rather than two unlinked records that merely
+  happen to share a name.
 * **vcard.vcf.** A downloadable vCard (RFC 2426, version 3.0) at `/vcard.vcf`
   (or `?action=vcard`) for identity.json's subject, so a visitor or a contacts
   app can save the site's publisher as a contact. Built from the publisher
@@ -361,6 +388,11 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   summarise, train, commercial use — plus an optional note, all set on the
   Settings screen. It states terms; it does not enforce them (robots.txt and the
   access gates do that).
+* **Footer link order.** The Crawlers screen also controls which discovery-file
+  links (llms.txt, YAML, vCard, JSON, HTML, XML) appear in the site footer and
+  in what order, independent of each link's own enable/disable toggle above —
+  removing one from the footer only hides it there. Default order: llms.txt,
+  YAML, vCard, JSON, HTML, XML.
 * **robots.txt generator.** The screen shows a robots.txt reflecting the
   settings above, ready to copy into the file at your domain root. Folio never
   writes outside its own folder, so that final step stays manual by design.
@@ -490,6 +522,7 @@ enables.
 | `pdftotext` | Pull text out of PDFs, cached for reuse |
 | `pdfinfo` | Page counts and PDF facts |
 | `pdftocairo` or `pdftoppm` | Render PDF page previews |
+| `ffmpeg` | A short moving preview clip on video hover, plus its static poster frame |
 | `pngquant` | Smaller PNG derivatives |
 | `unpaper` | Straighten crooked scans before OCR |
 
@@ -533,6 +566,7 @@ Diagnostics lists everything found and where it looked.
 | `tesseract` | No OCR. Everything else is unaffected |
 | `pdftotext` | No text extraction from PDFs |
 | `pdftocairo` and `pdftoppm` | No PDF previews; the original file is served |
+| `ffmpeg` | No hover/listing preview for video at all — clip or frame; the play glyph shows instead |
 | `qpdf` | Single-page documents still OCR; multi-page ones explain why not |
 | `pngquant` | Rendered PDF pages are simply larger |
 | everything | Folio behaves exactly as it did before this feature existed |
@@ -799,7 +833,12 @@ page. Escape closes it and keeps the results.
 
 Sorting and filtering are separate. The category chips and the search box
 choose which documents appear; sorting only changes their order, so the two
-compose. Your chosen order is remembered while you browse.
+compose. Your chosen order is remembered while you browse. A category or tag
+chip also narrows the subfolders shown, to the ones containing a match
+somewhere below them — text search narrows the files shown, but not the
+folder list, since matching it would mean checking every descendant file's
+title and description on every keystroke rather than a fixed list already
+in hand.
 
 ## Making a PDF smaller
 
@@ -1109,4 +1148,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.41.0. Single-file application with separated CSS and JS assets.
+1.48.0. Single-file application with separated CSS and JS assets.

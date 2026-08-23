@@ -120,11 +120,17 @@
     }());
 
     /* Video access-control preflight (Crawlers screen).
-       Fetches the video probe file directly and expects it to be REFUSED with
-       403, which proves the webserver honours the deny block Folio writes into
-       uploads/.htaccess. Anonymous on purpose: the public is who must be
-       refused. On success it flags probe_result=forbidden so the server can
-       enforce even where it cannot reach its own public URL. */
+       Calls the admin-only video_gate_test endpoint, which does a true dry
+       run server-side — writes the deny rule, checks whether a direct
+       request is actually refused, then always undoes the write before
+       responding, whatever the result. Unlike the PDF gate's read-only
+       probe, there is nothing to observe about a video rule that has not
+       been written yet, so the write has to happen somewhere; doing it
+       inside an endpoint that unconditionally rolls back is what keeps
+       clicking "test" from being able to leave the site half-configured if
+       the admin never returns to actually confirm it. On success it flags
+       probe_result=forbidden so the confirm step can still proceed even
+       where the server cannot reach its own public URL a second time. */
     (function () {
         var host = document.getElementById("video-gate-preflight");
         if (!host) {
@@ -139,23 +145,29 @@
         btn.addEventListener("click", function () {
             result.textContent = "Testing…";
             result.classList.remove("rewrite-ok", "rewrite-bad");
-            fetch(host.dataset.probe, { credentials: "omit", cache: "no-store" })
-                .then(function (r) {
-                    if (r.status === 403) {
-                        result.textContent = "The server refuses direct video access. Safe to verify and enforce.";
+            btn.disabled = true;
+            fetch(host.dataset.probe, { credentials: "same-origin", cache: "no-store" })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data && data.blocked) {
+                        result.textContent = "The server refuses direct video access. Safe to confirm and enforce.";
                         result.classList.add("rewrite-ok");
                         form.classList.add("is-visible");
                         var input = form.querySelector('input[name="probe_result"]');
                         if (input) { input.value = "forbidden"; }
                     } else {
-                        result.textContent = "The server served the video probe (HTTP " + r.status + ") instead of refusing it. The uploads/.htaccess rules are not being applied here. Do not enforce.";
+                        var status = data && data.status ? data.status : 0;
+                        result.textContent = status
+                            ? "The server served the video probe (HTTP " + status + ") instead of refusing it. The uploads/.htaccess rules are not being applied here. Do not enforce."
+                            : "Could not verify the rule from this server. Check that AllowOverride permits .htaccess rules in the uploads folder.";
                         result.classList.add("rewrite-bad");
                     }
                 })
                 .catch(function () {
-                    result.textContent = "Could not reach the probe. Try again.";
+                    result.textContent = "Could not reach the test endpoint. Try again.";
                     result.classList.add("rewrite-bad");
-                });
+                })
+                .then(function () { btn.disabled = false; });
         });
     }());
 
@@ -665,6 +677,263 @@
                 state = null;
                 return;
             }
+            buildEditor();
+        });
+    })();
+
+    /* ---------------------------------------------------------------- */
+    /* Video hover-preview redaction editor.
+     * Same idea as the PDF editor above — draw fractional {x,y,w,h} boxes,
+     * store them, let the server burn them in — but there is only ever one
+     * reference frame to draw on (the existing hover thumbnail), not a
+     * multi-page document, so this loads a plain <img> instead of driving
+     * pdf.js, and drops the page number and Prev/Next controls entirely.
+     * ---------------------------------------------------------------- */
+    (function () {
+        var overlay = null;
+        var state = null;   // { fieldset,input,frameUrl,regions }
+
+        function parseRegions(input) {
+            try {
+                var v = JSON.parse(input.value || "[]");
+                return Array.isArray(v) ? v : [];
+            } catch (e) { return []; }
+        }
+
+        function updateCount(fieldset, regions) {
+            var span = fieldset.querySelector(".video-redact-count");
+            if (span) {
+                span.textContent = regions.length + " region" + (regions.length === 1 ? "" : "s");
+            }
+        }
+
+        function closeEditor() {
+            if (overlay && overlay.parentNode) { overlay.parentNode.removeChild(overlay); }
+            overlay = null;
+            state = null;
+            document.removeEventListener("keydown", onKey);
+        }
+
+        function onKey(ev) {
+            if (ev.key === "Escape") { closeEditor(); }
+        }
+
+        function save() {
+            if (!state) { return; }
+            state.input.value = JSON.stringify(state.regions);
+            updateCount(state.fieldset, state.regions);
+            closeEditor();
+        }
+
+        function drawRegions(canvasWrap) {
+            var old = canvasWrap.querySelectorAll(".redact-box");
+            Array.prototype.forEach.call(old, function (b) { b.parentNode.removeChild(b); });
+            state.regions.forEach(function (r, i) {
+                var box = document.createElement("div");
+                box.className = "redact-box";
+                box.style.position = "absolute";
+                box.style.left = (r.x * 100) + "%";
+                box.style.top = (r.y * 100) + "%";
+                box.style.width = (r.w * 100) + "%";
+                box.style.height = (r.h * 100) + "%";
+                box.style.background = "rgba(0,0,0,0.85)";
+                box.style.outline = "1px solid #fff";
+                box.style.cursor = "pointer";
+                box.title = "Click to remove";
+                box.setAttribute("data-idx", String(i));
+                box.addEventListener("click", function (ev) {
+                    ev.stopPropagation();
+                    var idx = parseInt(box.getAttribute("data-idx"), 10);
+                    state.regions.splice(idx, 1);
+                    drawRegions(canvasWrap);
+                });
+                canvasWrap.appendChild(box);
+            });
+        }
+
+        function showError(canvasWrap, message) {
+            canvasWrap.innerHTML = "";
+            var p = document.createElement("p");
+            p.style.padding = "1rem";
+            p.style.lineHeight = "1.4";
+            p.textContent = message;
+            canvasWrap.appendChild(p);
+        }
+
+        function mkBtn(text) {
+            var b = document.createElement("button");
+            b.type = "button";
+            b.className = "btn-small btn-ghost";
+            b.textContent = text;
+            return b;
+        }
+
+        function buildEditor() {
+            overlay = document.createElement("div");
+            overlay.className = "redact-overlay";
+            overlay.style.position = "fixed";
+            overlay.style.inset = "0";
+            overlay.style.background = "rgba(0,0,0,0.6)";
+            overlay.style.zIndex = "9999";
+            overlay.style.display = "flex";
+            overlay.style.alignItems = "center";
+            overlay.style.justifyContent = "center";
+
+            var panel = document.createElement("div");
+            panel.className = "redact-panel";
+            panel.style.background = "#fff";
+            panel.style.maxWidth = "min(700px, 95vw)";
+            panel.style.maxHeight = "95vh";
+            panel.style.overflow = "auto";
+            panel.style.padding = "1rem";
+            panel.style.borderRadius = "6px";
+
+            var bar = document.createElement("div");
+            bar.style.display = "flex";
+            bar.style.gap = "0.5rem";
+            bar.style.alignItems = "center";
+            bar.style.marginBottom = "0.5rem";
+            bar.style.flexWrap = "wrap";
+
+            var label = document.createElement("span");
+            label.style.fontWeight = "bold";
+            label.textContent = "Hover preview frame";
+            var spacer = document.createElement("span");
+            spacer.style.flex = "1";
+            var saveBtn = mkBtn("Save redactions");
+            var cancelBtn = mkBtn("Cancel");
+            var hint = document.createElement("p");
+            hint.textContent = "Drag on the frame to add a box. Click a box to remove it. The box stays fixed at this position for the whole preview clip.";
+            hint.style.margin = "0 0 0.5rem";
+            hint.style.fontSize = "0.85em";
+            hint.style.opacity = "0.8";
+
+            bar.appendChild(label);
+            bar.appendChild(spacer);
+            bar.appendChild(saveBtn);
+            bar.appendChild(cancelBtn);
+
+            var canvasWrap = document.createElement("div");
+            canvasWrap.className = "redact-canvas";
+            canvasWrap.style.position = "relative";
+            canvasWrap.style.userSelect = "none";
+            canvasWrap.style.lineHeight = "0";
+            canvasWrap.style.border = "1px solid #ccc";
+            canvasWrap.style.overflow = "hidden";
+            canvasWrap.style.minHeight = "100px";
+            canvasWrap.style.background = "#000";
+
+            var img = document.createElement("img");
+            img.setAttribute("aria-label", "Hover preview reference frame");
+            img.alt = "";
+            img.style.display = "block";
+            img.style.width = "100%";
+            img.style.height = "auto";
+            canvasWrap.appendChild(img);
+
+            panel.appendChild(bar);
+            panel.appendChild(hint);
+            panel.appendChild(canvasWrap);
+            overlay.appendChild(panel);
+            document.body.appendChild(overlay);
+
+            saveBtn.addEventListener("click", save);
+            cancelBtn.addEventListener("click", closeEditor);
+            overlay.addEventListener("click", function (ev) {
+                if (ev.target === overlay) { closeEditor(); }
+            });
+            document.addEventListener("keydown", onKey);
+
+            var dragging = false, sx = 0, sy = 0, ghost = null;
+            canvasWrap.addEventListener("pointerdown", function (ev) {
+                if (ev.target.classList.contains("redact-box") || !img.complete || !img.naturalWidth) { return; }
+                dragging = true;
+                var rect = canvasWrap.getBoundingClientRect();
+                sx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                sy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+                ghost = document.createElement("div");
+                ghost.style.position = "absolute";
+                ghost.style.background = "rgba(0,0,0,0.4)";
+                ghost.style.outline = "1px dashed #000";
+                ghost.style.left = (sx * 100) + "%";
+                ghost.style.top = (sy * 100) + "%";
+                canvasWrap.appendChild(ghost);
+                try { canvasWrap.setPointerCapture(ev.pointerId); } catch (e) {}
+            });
+            canvasWrap.addEventListener("pointermove", function (ev) {
+                if (!dragging || !ghost) { return; }
+                var rect = canvasWrap.getBoundingClientRect();
+                var cx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                var cy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+                var x = Math.min(sx, cx);
+                var y = Math.min(sy, cy);
+                var w = Math.abs(cx - sx);
+                var h = Math.abs(cy - sy);
+                ghost.style.left = (x * 100) + "%";
+                ghost.style.top = (y * 100) + "%";
+                ghost.style.width = (w * 100) + "%";
+                ghost.style.height = (h * 100) + "%";
+            });
+            function endDrag(ev) {
+                if (!dragging) { return; }
+                dragging = false;
+                var rect = canvasWrap.getBoundingClientRect();
+                var cx = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                var cy = Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height));
+                var x = Math.min(sx, cx);
+                var y = Math.min(sy, cy);
+                var w = Math.abs(cx - sx);
+                var h = Math.abs(cy - sy);
+                if (ghost && ghost.parentNode) { ghost.parentNode.removeChild(ghost); }
+                ghost = null;
+                if (w > 0.01 && h > 0.01) {
+                    state.regions.push({
+                        x: +x.toFixed(5), y: +y.toFixed(5),
+                        w: +w.toFixed(5), h: +h.toFixed(5)
+                    });
+                    drawRegions(canvasWrap);
+                }
+            }
+            canvasWrap.addEventListener("pointerup", endDrag);
+            canvasWrap.addEventListener("pointercancel", function () {
+                dragging = false;
+                if (ghost && ghost.parentNode) { ghost.parentNode.removeChild(ghost); }
+                ghost = null;
+            });
+
+            img.addEventListener("load", function () { drawRegions(canvasWrap); });
+            img.addEventListener("error", function () {
+                showError(canvasWrap, "The reference frame could not be loaded. Try again once the video has a hover preview available.");
+            });
+            img.src = state.frameUrl;
+        }
+
+        document.addEventListener("click", function (ev) {
+            var openBtn = ev.target.closest && ev.target.closest(".video-redact-open");
+            var clearBtn = ev.target.closest && ev.target.closest(".video-redact-clear");
+            if (!openBtn && !clearBtn) { return; }
+            var fieldset = ev.target.closest(".meta-video-redact-fields");
+            if (!fieldset) { return; }
+            var input = fieldset.querySelector(".video-redact-regions-input");
+            if (!input) { return; }
+
+            if (clearBtn) {
+                input.value = "[]";
+                updateCount(fieldset, []);
+                return;
+            }
+
+            var frameUrl = fieldset.getAttribute("data-video-redact-frame");
+            if (!frameUrl) {
+                alert("The hover preview frame is not available for this video yet.");
+                return;
+            }
+            state = {
+                fieldset: fieldset,
+                input: input,
+                frameUrl: frameUrl,
+                regions: parseRegions(input)
+            };
             buildEditor();
         });
     })();

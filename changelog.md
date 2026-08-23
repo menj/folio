@@ -3,6 +3,507 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.48.0 — 23 August 2026
+
+### Added
+
+- **Video access control is now a real, working, admin-facing feature**,
+  completing the mechanism fixed in 1.47.2 rather than leaving it correct
+  but unreachable. The Crawlers screen gained the same shape of
+  confirm-and-verify flow the PDF gate already has, adapted for a genuine
+  difference: a PDF's preflight is read-only, but testing video's deny rule
+  requires writing it first — there is nothing to observe about a rule that
+  has never existed. "Test video routing" now calls a true dry run: write
+  the rule, check it for real with an outbound request to a reserved probe
+  file, then unconditionally undo the write before responding, whatever the
+  result — that endpoint can never itself be the thing that leaves Apache
+  blocking video while Folio still believes the guard is off. Only
+  "Confirm and enforce" makes a persistent change, independently
+  re-verified, with the same rollback if that verification fails. Two
+  parallel, disconnected mechanisms for the same concept — a separate flag
+  file left over from 1.47.2, and a `VIDEO_GATE_CONFIRMED` setting the
+  admin screen's JS was already built against but nothing implemented —
+  are now one, consolidated onto the settings-based pattern already proven
+  correct for PDF.
+
+### Fixed
+
+- **Existing code on the Crawlers screen automatically cleared video
+  access control every time that screen loaded**, predating this session
+  entirely, with a comment citing buffering from forcing video through PHP.
+  That would have silently undone an admin's own confirmation the moment
+  they landed back on the same page after confirming it — the two features
+  could not coexist. Removed: its cause, a PHP session file lock
+  serialising concurrent Range requests, was fixed independently in 1.44.7,
+  and forcing video through PHP no longer carries that cost.
+
+  Verified against a real running instance: the confirm handler correctly
+  refuses to enable enforcement when its own check shows the rule isn't
+  actually blocking anything (expected in this environment — PHP's
+  built-in dev server does not process `.htaccess` at all, a limitation of
+  the test environment rather than the code, and precisely the case the
+  fail-safe design exists for); the dry-run endpoint correctly rolls back
+  in both the "couldn't reach it" and "reached it, not blocked" cases; the
+  guard's state now persists across repeated page loads instead of
+  resetting; disabling correctly restores the default model; and the full
+  signed-URL mechanism from 1.47.2 — forged token, expired token, missing
+  token, hidden video, and a genuine valid token with Range support —
+  still behaves identically after being re-pointed at the new settings
+  flag.
+
+## 1.47.2 — 23 August 2026
+
+### Fixed
+
+- **Video access control's signed-URL mechanism was forgeable, and also
+  non-functional for anyone legitimate.** The opt-in guard that moves video
+  from the default delisting-only model to one enforced by the webserver
+  wrote an `.htaccess` rule that checked a token's *shape* — 64 hex
+  characters, an 8-or-more-digit expiry — never its *signature*.
+  `mod_rewrite` has no way to compute or hold an HMAC key, so a regex can
+  only confirm a token looks right, never that it is right: anyone who
+  noticed the shape being matched could construct a passing query string
+  with no knowledge of any real secret. Compounding it, nothing in Folio
+  ever generated a token matching that shape for an actual video URL in the
+  first place — so turning the guard on would have simultaneously let a
+  forged request through and refused every legitimate one, admin included.
+
+  Fixed by removing every conditional path from the `.htaccess` rule
+  entirely — `mod_rewrite` cannot verify a signature, so the only thing it
+  safely does now is refuse direct access unconditionally — and building
+  real PHP-side signing and verification for video, `hash_hmac`/
+  `hash_equals` under `FOLIO_URL_SIGNING_KEY`, mirroring the pattern a
+  restricted PDF already used correctly. Also closed: the guard could
+  previously be considered active on `FOLIO_URL_SIGNING_KEY`'s own empty
+  default — not a secret at all, the same value on every unconfigured
+  install — now refused at enable time and rechecked on every request, the
+  same live check `pdf_access_enforced()` already does for PDF.
+
+  Verified with real requests rather than code review alone: a forged
+  token, an expired-but-correctly-signed token, a missing token, and a
+  hidden video with any token all correctly refused; a genuine valid token
+  correctly served the file, Range request included, confirming seeking
+  still works through the fixed path.
+
+  Two things this does **not** address, deliberately, pending direction
+  rather than a unilateral call: there is still no admin UI to turn this
+  guard on — the PDF gate's confirm-and-verify preflight has no video
+  equivalent yet — and existing code on the Crawlers screen, predating this
+  fix, automatically disables the guard every time that screen loads, with
+  a comment citing buffering concerns from forcing all video through PHP.
+  That code is untouched. Until either is addressed, every Folio site
+  continues to use the default delisting-only model regardless of this fix
+  being correct.
+
+## 1.47.1 — 23 August 2026
+
+### Fixed
+
+- **A portrait video's player showed wide black bars down both sides**
+  instead of the stage matching the video's own shape. The stage's box was
+  a fixed aspect-ratio computed in JS from `videoWidth`/`videoHeight` —
+  properties well known across every browser to ignore a video's rotation
+  metadata, the tag a phone commonly records portrait video with, reporting
+  the raw encoded frame's landscape dimensions even though the video
+  visibly renders rotated. A stage built from that number came out the
+  wrong shape for exactly the portrait clips it most needed to get right,
+  pillarboxing real video inside a mis-shaped black box.
+
+  Fixed by not computing a shape in JS at all: the stage now shrinks to fit
+  its content, and the video sizes itself with plain auto width and height,
+  capped by the available column width and by height so a tall clip does
+  not run off the screen. A replaced element's own native layout sizing —
+  unlike the JS-queryable `videoWidth`/`videoHeight` properties — correctly
+  reflects rotation, so the right shape now comes from the browser's own
+  layout engine rather than a number that could be wrong for the exact
+  files this was meant to handle. A landscape video still fills the full
+  available width edge to edge; nothing else on the page moves.
+
+## 1.47.0 — 23 August 2026
+
+### Fixed
+
+- **Every document's `author`/`publisher` link used a different `@id` than
+  identity.json's own Person node** — `#publisher` on every document page
+  and the WebSite's own publisher link, `#person` in identity.json, two
+  disconnected identifiers for the same real person. Anything that found
+  one and separately found identity.json had no structural way to know they
+  described the same entity, short of matching name strings. Unified to
+  `#person` everywhere, so a document's own reference and identity.json's
+  full record are now the same node, not two that merely happen to agree.
+
+### Added
+
+- **identity.json's Person node was thin** — name, URL, and the library's
+  own description standing in for the person's, since there was nothing
+  else to say. Six new optional fields, `config.php`-only and each entirely
+  absent unless set: `PUBLISHER_BIO` (replaces the library's description as
+  the Person's own — without it, the one sentence identity.json had to say
+  about its subject described the collection instead), `PUBLISHER_OCCUPATION`
+  (`jobTitle`), `PUBLISHER_ALT_NAMES` (`alternateName`), `PUBLISHER_NATIONALITY`
+  (`nationality`), `PUBLISHER_ALUMNI_OF` (`alumniOf`), and
+  `PUBLISHER_AFFILIATION` (`affiliation`). `PUBLISHER_RELATED_SITE_URL` and
+  `_LABEL` name a second site about the same person explicitly, rather than
+  leaving it for a reader to infer from an unlabelled `sameAs` entry.
+  llms.txt gets the same facts as plain prose, for whatever reads that file
+  and never reaches the JSON-LD.
+
+## 1.46.0 — 23 August 2026
+
+### Changed
+
+- **The video player's controls now use the site's actual theme colour**,
+  instead of the same plain white in every theme regardless of which one
+  was chosen. The scrub knob, the played portion of the seek bar, the
+  volume slider, the buffering spinner, and an engaged repeat/shuffle
+  button all pick up a themed tint now — audio's transport already did
+  this; video's did not, hardcoding white instead.
+
+  Not a straight swap to the raw theme accent, deliberately: measured
+  against a black video frame, folio's oxblood comes out at 1.86:1
+  contrast, ledger's blue at 2.28:1, garden's green at 2.75:1 — all under
+  even the 3:1 floor for a UI control, before accounting for whatever is
+  actually playing behind it. A new `--fm-video-accent` variable blends
+  each theme's accent 35% toward white — chosen empirically, checked
+  against the same contrast math, landing at 4.86:1, 5.78:1, and 6.38:1
+  respectively, comfortable margin above the WCAG text threshold, while
+  staying clearly recognisable as that theme's own colour rather than
+  washing out toward plain white. night's already-light tan accent clears
+  7:1 either way. Defined once from whichever `--accent` is active, so it
+  never needs updating by hand if a theme's colour changes.
+
+## 1.45.4 — 23 August 2026
+
+### Fixed
+
+- **"Play audio"/"Play videos" sat flush against the left edge**, out of
+  line with the category chips above it and the file listing below it. Its
+  container had no horizontal padding of its own, while every sibling
+  around it — the filter bar, the table cells — supplies its own; both now
+  match, at both the standard and the narrow-screen padding used elsewhere
+  in the same column.
+
+## 1.45.3 — 23 August 2026
+
+### Fixed
+
+- **Category and tag chips visibly did nothing in a folder that only held
+  other folders.** Clicking a chip highlighted it and could hide files
+  directly in the current listing, but never touched the subfolder rows —
+  at a folder-only level (a fresh install's top level, most of the time)
+  there was nothing else for it to affect, so filtering looked entirely
+  broken even though it was working exactly as built. Each subfolder now
+  carries the set of categories and tags found among its files at any
+  depth below it, computed once from the same file index already built for
+  the category chip counts, so a chip now also shows or hides the folders
+  that do or don't lead to a match — the click finally does something
+  visible at any level, not only inside a folder that happens to mix files
+  in with its subfolders. Text search does not extend to folders the same
+  way, deliberately: matching it would mean checking every descendant
+  file's title and description on every keystroke, real additional cost
+  for every list on every folder page, rather than reading a fixed list
+  already sitting on each row from page load.
+
+## 1.45.2 — 23 August 2026
+
+### Fixed
+
+- **Video's schema type was never `VideoObject`.** `schema_type()` had no
+  case for any video or audio extension at all, so every video and audio
+  file fell through to the generic `MediaObject` — silently, since nothing
+  reported an error, it simply never emitted the more specific type search
+  engines give richer treatment to. This also meant the existing code that
+  turns a video's `video_type` (documentary, interview, and so on) into
+  `genre` and `additionalType` could never actually run, no matter what was
+  set in the editor, because it only fires `if ($type === 'VideoObject')`.
+  Video now correctly gets `VideoObject` and audio `AudioObject`; PDF,
+  image, markdown, and plain text are unaffected. `readme.md`'s own list of
+  emitted schema types was already stale in the same way and is corrected
+  alongside the fix.
+
+### Changed
+
+- **A document's language and a video's type are now visible on its own
+  page**, not only stored in its metadata and structured data. Both were
+  collected in the editor and already fed `inLanguage`/`genre` in the
+  page's JSON-LD, but nothing on the page itself ever showed them to a
+  human reader. They now appear in the existing type · size · date line
+  below the media, in the same short, uppercased style already used there
+  for the file extension — document type and video type share one slot,
+  since a file is never both.
+
+## 1.45.1 — 23 August 2026
+
+### Changed
+
+- **Dropped Creator/presenter, Series/programme, Season, and Episode from a
+  video's metadata form**, keeping only Video type. The single remaining
+  field no longer sits inside its own boxed fieldset — with nothing else in
+  it, a labelled dropdown matching the rest of the form reads more plainly.
+  The three removed fields are gone from the admin form, from what gets
+  read from a save, from what gets written to metadata.json, and from the
+  Schema.org structured data a video page emits (`creator`, `isPartOf`, and
+  the season/episode `additionalProperty` entries no longer appear); Video
+  type's own structured-data output is unchanged. Existing metadata.json
+  records that already have these keys are left as they are — Folio simply
+  stops reading or writing them going forward.
+
+## 1.45.0 — 22 August 2026
+
+### Added
+
+- **Redaction for a video's hover preview.** A face or other detail can now
+  be blurred out of a video's hover/listing preview — both the static
+  poster frame and the short moving clip — the same admin workflow as PDF
+  redaction: draw a box on the reference frame, save, and the blur is burned
+  in by ffmpeg's own filter graph rather than composited separately, so
+  there is no code path that could show the unblurred version by mistake.
+  This affects only the hover preview, never the full video played from the
+  document page — a moving subject within the short preview clip is not
+  tracked, since the box stays at one fixed position for its duration; a
+  short, relatively static preview clip was judged not to need full motion
+  tracking, and a real face-tracking pipeline is a materially larger
+  undertaking outside what Folio's plain-PHP, ffmpeg-only architecture can
+  reasonably support. The redaction box's blur strength is computed from
+  the box's own pixel size rather than a fixed value — ffmpeg's blur filter
+  has a hard ceiling that scales down for a small crop, confirmed directly:
+  a fixed radius that worked for one region failed outright for a second,
+  smaller one in testing, so a small face-sized box and a large one both
+  now render safely. Editing or clearing the redaction invalidates the
+  cached preview, the same way changing PDF redaction already does.
+
+## 1.44.7 — 22 August 2026
+
+### Fixed
+
+- **No hover preview for a restricted or hidden video, even for the admin
+  who can already play it in full.** The hover/listing thumbnail and moving
+  preview clip were withheld from any non-public video regardless of who
+  was looking — correct for a public visitor, since that tier shows a
+  notice in place of the file, but an admin already gets a complete working
+  player for that exact file via Preview with no restriction at all, so
+  withholding just the hover preview from them was an inconsistency rather
+  than a protection. An admin now gets the same hover preview as they would
+  for a public video, at every access tier.
+
+- **Session file lock held open through file streaming and rendering.**
+  Six routes (`?action=raw`, `?action=thumb`, `?action=video_preview`,
+  `?action=pdf_preview`, `?action=redact_page`, `?action=compressed`) read
+  from `$_SESSION` early on — typically just an `is_admin()` check — and
+  then kept the session's file lock open for the rest of the request:
+  streaming a video, rasterising a thumbnail, encoding a preview clip,
+  rendering a redaction-editor page. PHP's default session handler holds an
+  exclusive lock for as long as the session stays open, so any other
+  request from the same browser — including the several concurrent Range
+  requests a video player fires while buffering, or the one-per-page
+  requests the redaction editor fires stepping through a document — queues
+  behind it rather than running in parallel. A visitor with no session
+  cookie was never affected, since no lock was ever taken out. Each route
+  now releases the lock immediately after its own access checks are
+  decided and before any streaming or rendering begins.
+
+## 1.44.6 — 22 August 2026
+
+### Changed
+
+- **The file facts line (type, size, date) now sits below the media instead
+  of above it**, on every document page regardless of kind — image, PDF,
+  audio, video, or any other file. The reader reaches the actual content
+  right after the title and description, with no metadata line in between;
+  the facts sit in a footer block together with the action buttons instead,
+  directly under the media, separated from it by the same divider rule that
+  used to separate the facts from the chips above.
+
+## 1.44.5 — 22 August 2026
+
+### Changed
+
+- **Trimmed dead weight from `lib/vendor/`.** Removed `paragonie/random_compat`
+  entirely — a polyfill for PHP versions before 7's missing `random_bytes()`
+  and `random_int()`, inert on Folio's required PHP 8.4 and confirmed absent
+  from every autoload map (PSR-4, classmap, and files) before removal —
+  along with two PHPUnit compliance-testing helper folders
+  (`Monolog\Test`, `Psr\Log\Test`) that ship inside the Monolog and PSR
+  logging packages for third-party test suites to extend, never invoked at
+  runtime. Confirmed safe by loading the real autoloader afterward and
+  resolving every class Folio actually uses (`Google\Client`,
+  `GuzzleHttp\Client`, `Monolog\Logger`, `phpseclib3\Crypt\RSA`,
+  `Firebase\JWT\JWT`, and the rest) successfully. 6 fewer directories, 12
+  fewer files; the deeper nesting that remains (`vendor/<org>/<package>/...`,
+  and package-internal paths that repeat their own name, such as
+  `phpseclib/phpseclib/phpseclib/`) is standard Composer and PSR-4
+  convention across the PHP ecosystem, not specific to Folio, and isn't
+  safely restructurable without hand-rewriting the autoloader's path maps.
+
+## 1.44.4 — 22 August 2026
+
+### Fixed
+
+- **`library.yaml` downloaded instead of displaying in the browser.** It was
+  served as `Content-Type: application/yaml`, a MIME type no browser has a
+  native handler for, which triggers a download prompt rather than showing
+  the file. Changed to `text/plain`, the same type `llms.txt` and
+  `robots.txt` already use to render inline. The bytes, the `.yaml`
+  extension, and the URL are all unchanged — only how the browser chooses to
+  present the response.
+
+## 1.44.3 — 22 August 2026
+
+### Fixed
+
+- **Documentation audit: closed drift accumulated across recent releases.**
+  No behaviour changed; several places where the docs had fallen behind the
+  code did:
+
+  - `docs/ssot.md`'s endpoint tables were missing `?action=playlist`,
+    `?action=video_preview`, and `?action=redact_page` entirely, and still
+    called the vCard route "vCard 4.0" after it was rebuilt as vCard 3.0 —
+    the code comments in `index.php` had the same stale RFC 6350 citation,
+    now corrected to RFC 2426.
+  - `docs/ssot.md`'s settings reference was missing `IDENTITY_ENABLED`,
+    `VCARD_ENABLED`, `YAML_ENABLED`, `FOOTER_LINKS`, and the four vCard-only
+    `PUBLISHER_*` fields — all admin-editable settings with no entry in the
+    one table meant to document them.
+  - `docs/ssot.md`'s file inventory and licence table were missing
+    `assets/js/library-view.js`, `lib/js-yaml/`, and `lib/vendor/` (the
+    Google API client), despite both vendored libraries being described in
+    `readme.md` already.
+  - `security.md`'s external-utilities section did not mention `ffmpeg` at
+    all, and did not state that a redacted PDF's thumbnail is generated from
+    the redacted derivative rather than the original — the property the
+    1.42.4 fix actually depends on.
+  - `readme.txt`'s summary said hover previews work "on desktop... and
+    mobile," omitting tablet, and described the hover thumbnail as always a
+    static image rather than mentioning the moving clip.
+
+## 1.44.2 — 22 August 2026
+
+### Changed
+
+- **The video player on a document page no longer breaks out of the reading
+  column.** It previously widened to a wide, centred stage that could exceed
+  the page's grey margins on a wide screen. It now inherits the exact width,
+  max-width, and left/right margins of the column above it — the same one
+  the title, description, and metadata sit in — and lines up with them
+  precisely at every screen size. Aspect ratio, controls, and the pixels
+  inside the player are unchanged; only how wide the frame around them is.
+
+## 1.44.1 — 22 August 2026
+
+### Fixed
+
+- **Responsive audit: desktop, tablet, and mobile.** Checked every major
+  screen at phone, tablet, and desktop widths and fixed what did not hold up:
+
+  - The standalone video playlist's "Full view" button was rendering at a
+    fixed 40&times;40px icon-button size instead of fitting its text label,
+    because it shares the `.fm-btn` class with the transport bar's square
+    icons and that rule happened to come later in the stylesheet. The label
+    was overflowing its own box at every width; it only became visible where
+    the stage's `overflow: hidden` had less spare room to hide it in, which
+    made it look like a tablet-only bug when it was not. Fixed by scoping the
+    override so it cannot lose to source order again.
+  - The admin document table could run wider than the viewport at tablet
+    portrait widths (roughly 560&ndash;900px) once a row's metadata editor
+    was expanded: the "must not exceed the viewport" rule for form fields,
+    and the wrapping behaviour for a row's action buttons, both only applied
+    below 560px, leaving the whole tablet band uncovered. Both are now
+    extended to the full tablet range, and the folder-description form
+    (a second, separate inline form) is covered for the first time.
+  - Two built-in error pages (document not found, folder not found) were
+    missing the viewport meta tag entirely, which renders them zoomed out
+    and hard to read on a phone.
+  - The admin toolbar's horizontal scroll strip could clip a section name
+    mid-word at phone widths with no indication that scrolling reveals the
+    rest (Accounts, Catalogue, Docs, Pages). A right-edge fade now signals
+    there is more to scroll to.
+
+## 1.44.0 — 22 August 2026
+
+### Added
+
+- **Moving video preview clips on hover.** A public video's row now plays a
+  short (4s), silent, looping clip on hover, rather than just a still frame —
+  1.43.0's static thumbnail is kept as the clip's poster image and as the
+  fallback when a moving preview cannot be built (source file over 300MB by
+  default, ffmpeg missing, or the encode itself fails). Encoded as H.264 in
+  an MP4 container for the broadest real-world browser support, including
+  Safari and iOS, which have never reliably supported WebM. Served through a
+  new `?action=video_preview` route with proper Range support, cached
+  alongside the existing derivatives, and gated exactly like the static
+  frame: public video only, never restricted or hidden. The client falls
+  back to the poster frame if the clip fails to start playing within a
+  couple of seconds, not only on an explicit error — some browsers do not
+  reliably fire one for an unplayable source.
+
+## 1.43.0 — 22 August 2026
+
+### Added
+
+- **Video hover/listing thumbnails.** A row for a video file now gets a real
+  preview on hover — one frame extracted with ffmpeg, exactly like a PDF
+  already gets its rendered page one. The frame is taken one second in,
+  skipping the black or fading-in leader common at the very start of an
+  encode, falling back to the first frame for anything shorter. Only offered
+  for public video: a restricted or hidden one gets no thumbnail attribute
+  at all in the listing, the same way it already gets no direct download
+  link, so the notice that tier is meant to show is not undercut by a
+  preview of the content behind it. Where ffmpeg is not installed, video
+  rows keep their existing plain glyph tile — nothing changes or breaks.
+
+## 1.42.4 — 22 August 2026
+
+### Fixed
+
+- **Hover/listing thumbnails leaked redacted PDF content.** The page-one
+  thumbnail used on hover cards and the detail page rasterised the original
+  PDF directly, bypassing the redaction pipeline entirely — if a redacted
+  region fell on page one, the thumbnail showed the unredacted text right
+  through the box the admin drew over it. Thumbnailing a redacted PDF now
+  always renders from the same redacted derivative the document itself
+  serves. Fails closed: if the redacted derivative cannot be built, the
+  thumbnail returns no preview rather than ever falling back to the
+  original page.
+
+## 1.42.3 — 22 August 2026
+
+### Changed
+
+- **Dropped the Bing Webmaster Tools mention from "Notify search engines."**
+  The line now says "search-console tools" generically rather than naming
+  and linking Bing specifically.
+
+## 1.42.2 — 22 August 2026
+
+### Changed
+
+- **Trimmed "Notify search engines" copy.** Cut the Bing/Google
+  ping-endpoint history lesson down to one line stating there's no ping
+  button and why; kept only what to actually do instead.
+
+## 1.42.1 — 22 August 2026
+
+### Fixed
+
+- **Crawlers screen: garbled "Notify search engines" text and inconsistent
+  quota table.** A leftover, orphaned fragment of a previous edit was
+  rendering as broken duplicate text below the real paragraph. Removed. The
+  Google Indexing API's remaining-quota figures were also displayed in a
+  hand-styled block with raw API parameter names
+  (`PublishRequestsPerDayPerProject`); they now use the same table style as
+  the URL counts above them, with plain-English labels.
+
+## 1.42.0 — 22 August 2026
+
+### Added
+
+- **Configurable footer link order.** The footer's discovery-file links
+  (llms.txt, YAML, vCard, JSON, HTML, XML) are now reorderable and
+  individually removable from the Crawlers screen, independent of each
+  link's own enable/disable toggle — removing a link from the footer there
+  only hides it from the footer, it does not disable the underlying file.
+  The default order is llms.txt, YAML, vCard, JSON, HTML, XML.
+
 ## 1.41.0 — 22 August 2026
 
 ### Added

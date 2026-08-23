@@ -70,6 +70,22 @@ html[data-theme="night"] {
     --sheen:   rgba(255, 255, 255, 0.06);
 }
 
+/* The video player sits on a black frame regardless of theme, where none of
+   the four accent colours read reliably on their own: folio's oxblood is
+   1.86:1 against black, ledger's blue 2.28:1, garden's green 2.75:1— all
+   under the 3:1 floor for a UI control, let alone legible against whatever
+   is actually playing behind it. Blended 35% toward white, each clears
+   4.5:1 with real margin (folio 4.86:1, ledger 5.78:1, garden 6.38:1;
+   night's already-light tan stays comfortably higher still) while staying
+   unmistakably tinted with that theme's own hue rather than washing out to
+   plain white — which is what let every theme's video player look
+   identical before this existed. Defined once, rather than once per theme,
+   so it always tracks whichever --accent is active without re-deriving it
+   by hand if a theme's colour ever changes. */
+html {
+    --fm-video-accent: color-mix(in srgb, var(--accent) 65%, white);
+}
+
 /* ---- Type ------------------------------------------------------- */
 
 :root {
@@ -146,15 +162,28 @@ body {
     background: #000;
 }
 
-/* The stage carries the video's own proportions, so the frame never
-   letterboxes: a landscape clip gets a landscape box, a portrait clip a
-   portrait one, capped by height so a tall video does not run off the screen.
-   object-fit: contain keeps every pixel in proportion, so nothing is
-   stretched, squashed, or cropped. */
+/* The stage shrinks to exactly match the video's own rendered shape, so
+   there is no leftover black padding around it: a landscape clip fills the
+   full available width, a portrait one renders narrow, both capped by
+   height so a tall video does not run off the screen. This relies on the
+   browser's own native sizing for the <video> element rather than a
+   JS-computed aspect-ratio from videoWidth/videoHeight — those two
+   properties are well known to ignore a video's rotation metadata (the tag
+   a phone commonly records portrait video with), reporting the raw encoded
+   frame's landscape dimensions even though the video visibly renders
+   rotated. A fixed aspect-ratio box built from that number came out the
+   wrong shape for exactly the portrait clips it was meant to handle,
+   pillarboxing real content inside a mis-shaped container. Auto width and
+   height on the video itself sidesteps the bug entirely: the browser's own
+   layout engine sizes a replaced element correctly post-rotation, even
+   though the JS-queryable numbers do not. object-fit: contain keeps every
+   pixel in proportion regardless, so nothing is stretched, squashed, or
+   cropped either way. */
 .fm-stage {
     position: relative;
-    aspect-ratio: var(--fm-ar, 16 / 9);
-    max-width: var(--fm-maxw, 100%);
+    display: flex;
+    width: fit-content;
+    max-width: 100%;
     max-height: 82vh;
     margin-inline: auto;
     background: #000;
@@ -164,8 +193,10 @@ body {
 
 .fm-video .fm-el {
     display: block;
-    width: 100%;
-    height: 100%;
+    width: auto;
+    height: auto;
+    max-width: 100%;
+    max-height: 82vh;
     object-fit: contain;
     background: #000;
     cursor: pointer;
@@ -207,7 +238,7 @@ body {
     height: 2.6rem;
     margin: -1.3rem 0 0 -1.3rem;
     border: 3px solid rgba(255, 255, 255, 0.25);
-    border-top-color: #fff;
+    border-top-color: var(--fm-video-accent);
     border-radius: 50%;
     opacity: 0;
     pointer-events: none;
@@ -231,9 +262,6 @@ body {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    width: auto;
-    height: auto;
-    padding: 0.3rem 0.6rem;
     border-radius: var(--radius);
     background: rgba(0, 0, 0, 0.5);
     color: #fff;
@@ -242,7 +270,20 @@ body {
     letter-spacing: 0.03em;
     white-space: nowrap;
 }
-.fm-fullview svg { width: 1rem; height: 1rem; flex: none; }
+/* .fm-fullview also carries the shared .fm-btn class for its hover/focus
+   styling, but that class fixes width/height/padding for the square
+   transport-bar icon buttons — wrong here, where the button has a text
+   label. Scoped to outrank .fm-btn regardless of source order, rather than
+   relying on which rule happens to come later in the file: that was the
+   actual bug (the label was overflowing a 40px box all along, only visibly
+   clipped at narrower widths where the stage's overflow:hidden had less
+   spare room to hide it in). */
+.fm-stage-top .fm-fullview {
+    width: auto;
+    height: auto;
+    padding: 0.3rem 0.6rem;
+}
+.fm-stage-top .fm-fullview svg { width: 1rem; height: 1rem; flex: none; }
 @media (hover: hover) {
     .fm-fullview:hover { background: rgba(0, 0, 0, 0.68); }
 }
@@ -368,7 +409,7 @@ body {
 .fm-buffered { background: rgba(127, 127, 127, 0.45); }
 .fm-played { background: var(--accent); }
 
-.fm-video .fm-played { background: #fff; }
+.fm-video .fm-played { background: var(--fm-video-accent); }
 
 .fm-knob {
     position: absolute;
@@ -384,8 +425,8 @@ body {
 }
 
 .fm-video .fm-knob {
-    background: #fff;
-    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.4);
+    background: var(--fm-video-accent);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.85);
 }
 
 .fm-scrub:focus-visible { outline: none; }
@@ -393,7 +434,7 @@ body {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
-.fm-video .fm-scrub:focus-visible .fm-knob { outline-color: #fff; }
+.fm-video .fm-scrub:focus-visible .fm-knob { outline-color: var(--fm-video-accent); }
 
 .fm-time {
     flex: none;
@@ -409,7 +450,7 @@ body {
     accent-color: var(--accent);
 }
 
-.fm-video .fm-vol { accent-color: #fff; }
+.fm-video .fm-vol { accent-color: var(--fm-video-accent); }
 
 @media (max-width: 600px) {
     .fm-vol { display: none; }
@@ -430,7 +471,7 @@ body {
 
 /* Playlist */
 .fm-btn.fm-on { color: var(--accent); }
-.fm-video .fm-btn.fm-on { color: #fff; opacity: 1; }
+.fm-video .fm-btn.fm-on { color: var(--fm-video-accent); opacity: 1; }
 
 .fm-list {
     list-style: none;
@@ -618,7 +659,7 @@ body {
 .fm-standalone .fm-list { max-height: none; }
 
 /* "Play all" on an audio folder */
-.listing-toolbar { padding: 0.6rem 0 0.2rem; }
+.listing-toolbar { padding: 0.6rem 1.5rem 0.2rem; }
 .btn-play-all {
     display: inline-flex;
     align-items: center;
@@ -1023,8 +1064,15 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
 .btn-ghost { background: transparent; color: var(--accent); }
 .btn:hover, .btn-small:hover { background: var(--ink); border-color: var(--ink); color: var(--leaf); }
 
-.row-actions { white-space: nowrap; text-align: right; }
-.row-actions .btn-small { margin-left: 0.25rem; }
+/* Not nowrap: a document with several actions (a PDF can show Preview, Flip
+   view, Edit, OCR, Compress, and Link at once) does not reliably fit one
+   line between 560px and 900px — tablet portrait, squarely — and forcing it
+   to stay on one line there was pushing the whole table wider than the
+   viewport rather than letting the buttons wrap. Below 560px this is
+   overridden by the flex-wrap version with its own spacing; above 900px
+   there is normally room enough that wrapping never triggers anyway. */
+.row-actions { text-align: right; }
+.row-actions .btn-small { margin-left: 0.25rem; margin-top: 0.3rem; }
 .btn-small.btn-ghost { border-color: var(--rule); color: var(--quiet); }
 .btn-small.btn-ghost:hover { background: transparent; color: var(--accent); border-color: var(--accent); }
 
@@ -1239,15 +1287,14 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
 
 .detail-media { margin: 0 0 1rem; }
 
-/* A video on a document page fills the available view area rather than sitting
-   inside the 660px reading column: the figure breaks out to a wide, centred
-   stage while the text around it stays in the column. Aspect ratio and pixels
-   are untouched, since the stage inside still contains the video. */
+/* The video player stays inside the same reading column as the title,
+   description, chips, and metadata above it — same width, same left/right
+   margins, same alignment. No breakout: it must never be wider than that
+   column or extend into the grey page area around it. Aspect ratio and
+   pixels inside the stage are untouched either way. */
 .detail-media-stage {
-    width: min(1080px, 94vw);
+    width: 100%;
     margin-block: 0.4rem 1.4rem;
-    margin-left: 50%;
-    transform: translateX(-50%);
 }
 .detail-media img { max-width: 100%; height: auto; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.16); }
 
@@ -1513,8 +1560,23 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
         box-shadow: none;
     }
     .filter-bar { padding: 0.7rem 1rem; }
+    .listing-toolbar { padding: 0.6rem 1rem 0.2rem; }
     .detail { padding: 1.75rem 1.25rem 3rem; }
     .detail-title { font-size: 1.5rem; }
+
+    /* Form fields inside an expanded table row must not exceed the row's own
+       width — the table can only be as narrow as its widest cell, so one
+       unconstrained input or textarea (browsers give a bare <textarea> a
+       fairly wide default) forces the whole table, and so the whole page,
+       wider than the viewport. This previously only applied below 560px;
+       between 560px and 900px is tablet portrait, squarely, where the table
+       does not switch to stacked cards and needs the same protection.
+       dir-form is the folder-description field, a second inline edit form
+       with no width rule of its own until now. */
+    .meta-form input,
+    .meta-form textarea,
+    .meta-form select,
+    .dir-form textarea { width: 100%; box-sizing: border-box; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1591,8 +1653,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     .topbar .crumbs { flex: 1 1 100%; order: 5; }
     .topbar .theme-picker { order: 2; }
     .topbar .admin-link { order: 6; padding: 0.15rem 0; }
-    /* The admin toolbar keeps its horizontal scroll; tighten its padding. */
+    /* The admin toolbar keeps its horizontal scroll; tighten its padding.
+       A right-edge fade signals there is more to scroll to — the bar can
+       list eight sections plus log out, so at phone widths only some of
+       them fit, and without this a section name just clips mid-word with
+       no hint that scrolling reveals the rest. */
     .admin-bar-inner { padding: 0.5rem 1rem; gap: 0.9rem; }
+    .admin-bar-links {
+        -webkit-mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+        mask-image: linear-gradient(to right, black calc(100% - 28px), transparent 100%);
+    }
 }
 
 @media print {
@@ -1681,6 +1751,30 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 }
 
 /* ---- Crawlers screen -------------------------------------------- */
+
+.footer-links-table {
+    width: 100%;
+    max-width: 26rem;
+    border-collapse: collapse;
+    margin: 0.5rem 0 1.2rem;
+    font-family: var(--sans);
+    font-size: 0.85rem;
+}
+.footer-links-table th {
+    text-align: left;
+    font-weight: 600;
+    color: var(--muted);
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--rule);
+}
+.footer-links-table td {
+    padding: 0.3rem 0.5rem;
+    border-bottom: 1px solid var(--rule);
+}
+.footer-links-table select {
+    font-family: var(--sans);
+    font-size: 0.85rem;
+}
 
 .field-note {
     font-family: var(--sans);
@@ -2057,6 +2151,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     height: 100%;
     object-fit: cover;
     display: block;
+}
+.hover-card-video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    background: #000;
+    pointer-events: none;
 }
 /* Rendered first page. Top-aligned so the title block of a document is what
    shows, rather than the middle of the page. */

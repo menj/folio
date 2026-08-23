@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.41.0');
+define('FOLIO_VERSION', '1.48.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -142,6 +142,24 @@ defined('PUBLISHER_NICKNAME')   || define('PUBLISHER_NICKNAME', '');
 defined('PUBLISHER_EMAIL')      || define('PUBLISHER_EMAIL', '');
 defined('PUBLISHER_PHONE')      || define('PUBLISHER_PHONE', '');
 defined('PUBLISHER_COUNTRY')    || define('PUBLISHER_COUNTRY', '');
+// Optional, identity.json only — the person's own record, not the site's.
+// SITE_DESCRIPTION describes the library; without these, that same sentence
+// was the only thing identity.json had to say about the person it is
+// nominally about, which describes the collection more than its subject.
+// Each renders only when set, the same "declare it or it's silent" pattern
+// as everything else here — an unfilled field is absent, never guessed.
+defined('PUBLISHER_BIO')        || define('PUBLISHER_BIO', '');
+defined('PUBLISHER_OCCUPATION') || define('PUBLISHER_OCCUPATION', '');
+defined('PUBLISHER_ALT_NAMES')  || define('PUBLISHER_ALT_NAMES', '');
+defined('PUBLISHER_NATIONALITY') || define('PUBLISHER_NATIONALITY', '');
+defined('PUBLISHER_ALUMNI_OF')  || define('PUBLISHER_ALUMNI_OF', '');
+defined('PUBLISHER_AFFILIATION') || define('PUBLISHER_AFFILIATION', '');
+// A second site about the same person — a blog alongside this library, say
+// — stated explicitly rather than left for a reader to infer from two
+// unrelated-looking sameAs entries. Distinct from PUBLISHER_URL, which is
+// the one canonical link; this is specifically "also see," named.
+defined('PUBLISHER_RELATED_SITE_URL')   || define('PUBLISHER_RELATED_SITE_URL', '');
+defined('PUBLISHER_RELATED_SITE_LABEL') || define('PUBLISHER_RELATED_SITE_LABEL', '');
 defined('SITE_LANGUAGE')        || define('SITE_LANGUAGE', 'en');
 defined('SITE_SAMEAS')          || define('SITE_SAMEAS', '');
 /**
@@ -186,6 +204,12 @@ defined('LLMS_ENABLED')         || define('LLMS_ENABLED', true);
 defined('YAML_ENABLED')         || define('YAML_ENABLED', true);
 defined('IDENTITY_ENABLED')     || define('IDENTITY_ENABLED', true);
 defined('VCARD_ENABLED')        || define('VCARD_ENABLED', true);
+// Order and presence of the footer's discovery-file links. A comma-separated
+// list of keys from {llms, yaml, vcard, json, html, xml}; a key's own
+// ENABLED toggle and SITE_INDEXABLE still gate whether it actually shows.
+// Admin-editable on the Crawlers screen; removing a key here hides that link
+// without touching its underlying toggle or route.
+defined('FOOTER_LINKS')         || define('FOOTER_LINKS', 'llms,yaml,vcard,json,html,xml');
 defined('AI_ALLOW_QUOTE')       || define('AI_ALLOW_QUOTE', true);
 defined('AI_ALLOW_SUMMARISE')   || define('AI_ALLOW_SUMMARISE', true);
 defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', false);
@@ -250,6 +274,26 @@ defined('THUMB_WIDTHS')         || define('THUMB_WIDTHS', [320, 640, 1280]);
 
 /** JPEG/WebP quality for derivatives. 82 is visually clean and compact. */
 defined('THUMB_QUALITY')        || define('THUMB_QUALITY', 82);
+
+/** Whether hovering a public video shows a short, silent, looping moving
+ *  preview clip (ffmpeg required) rather than a single static frame. */
+defined('VIDEO_PREVIEW_ENABLED')       || define('VIDEO_PREVIEW_ENABLED', true);
+
+/** Width of the moving preview clip. Fixed and modest — this plays
+ *  automatically the moment a row is hovered, so it stays small on purpose. */
+defined('VIDEO_PREVIEW_WIDTH')         || define('VIDEO_PREVIEW_WIDTH', 480);
+
+/** Length of the extracted clip, in seconds. */
+defined('VIDEO_PREVIEW_SECONDS')       || define('VIDEO_PREVIEW_SECONDS', 4);
+
+/** A source video larger than this is skipped for a moving preview (the
+ *  static first-frame thumbnail still applies) — encoding a clip out of a
+ *  large file is real CPU and time, and a shared host's PHP request has a
+ *  hard execution-time ceiling this must stay well under. */
+defined('VIDEO_PREVIEW_MAX_SOURCE_MB') || define('VIDEO_PREVIEW_MAX_SOURCE_MB', 300);
+
+/** Hard cap on ffmpeg's own run time for one clip. */
+defined('VIDEO_PREVIEW_TIME_LIMIT')    || define('VIDEO_PREVIEW_TIME_LIMIT', 25);
 
 /** Refuse to decode images beyond this many pixels. A small file can declare
  *  enormous dimensions and exhaust memory when decoded ("decompression bomb"),
@@ -956,6 +1000,66 @@ function url_raw(string $rel): string
  */
 define('FOLIO_PDF_PROBE_NAME', '.folio-pdf-probe.pdf');
 
+/**
+ * Reserved dotfile used to test whether the video access-control deny rule
+ * is actually being enforced by the webserver on this host. Unlike the PDF
+ * probe above, a working video rule never routes this file to PHP at all —
+ * it refuses the request outright — so there is no admin-only JSON branch
+ * to check here; the response status itself (403 if the rule works, 200 if
+ * the file was simply served) is the whole signal, tested directly by both
+ * the confirm handler below and the Crawlers screen's own client-side probe.
+ */
+define('FOLIO_VIDEO_PROBE_NAME', '.folio-video-probe.mp4');
+
+/** Absolute path to the video-gate preflight probe file. */
+function video_gate_probe_path(): string
+{
+    return rtrim(BASE_DIR, '/\\') . DIRECTORY_SEPARATOR . FOLIO_VIDEO_PROBE_NAME;
+}
+
+/** Create the tiny real probe file if it doesn't already exist. Content is
+ *  irrelevant — the deny rule matches by file extension alone, never by
+ *  inspecting what's inside — a placeholder is enough. */
+function video_gate_ensure_probe_file(): bool
+{
+    $path = video_gate_probe_path();
+    if (is_file($path)) {
+        return true;
+    }
+    if (!is_dir(BASE_DIR) && !@mkdir(BASE_DIR, 0750, true)) {
+        return false;
+    }
+    return @file_put_contents(
+        $path,
+        "Folio video-gate preflight probe file. Safe to delete; Folio recreates it as needed.\n"
+    ) !== false;
+}
+
+/** Make an outbound GET to the video probe file's direct URL and report the
+ *  HTTP status actually received, or 0 if the request couldn't be made at
+ *  all (some hosts block outbound HTTP entirely). Shared by the real
+ *  confirm handler and the dry-run test endpoint so both trust the exact
+ *  same check. */
+function video_gate_probe_status(): int
+{
+    $probe_url = rtrim(BASE_URL, '/') . '/' . rawurlencode(UPLOADS_DIRNAME) . '/' . FOLIO_VIDEO_PROBE_NAME;
+    $ctx = stream_context_create(['http' => [
+        'method' => 'GET',
+        'timeout' => 8,
+        'ignore_errors' => true,
+    ]]);
+    $result = @file_get_contents($probe_url, false, $ctx);
+    if ($result === false) {
+        return 0;
+    }
+    foreach ((array) ($http_response_header ?? []) as $line) {
+        if (preg_match('#^HTTP/\S+\s+(\d+)#', $line, $mm)) {
+            return (int) $mm[1];
+        }
+    }
+    return 0;
+}
+
 /** Absolute path to the PDF-gate preflight probe file. */
 function pdf_gate_probe_path(): string
 {
@@ -1029,6 +1133,34 @@ function pdf_signed_url_valid(string $rel, int $expires, string $token): bool
     return hash_equals(pdf_sign($rel, $expires), $token);
 }
 
+/** Same signing scheme as pdf_sign(), namespaced separately so a video token
+ *  and a PDF token for the same path never collide or cross-validate. */
+function video_sign(string $rel, int $expires): string
+{
+    return hash_hmac('sha256', 'video|' . $rel . '|' . $expires, FOLIO_URL_SIGNING_KEY);
+}
+
+/** A signed, time-limited URL through ?action=raw for a video, used only
+ *  when video access control (the .htaccess guard) is switched on — with
+ *  it off, video keeps its existing direct-URL, delisting-only model
+ *  unchanged. */
+function video_signed_url(string $rel, int $ttl = 900): string
+{
+    $expires = time() + $ttl;
+    $token = video_sign($rel, $expires);
+    return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel)
+        . '&expires=' . $expires . '&token=' . $token;
+}
+
+/** Verify a signed video URL's expiry and signature. Timing-safe. */
+function video_signed_url_valid(string $rel, int $expires, string $token): bool
+{
+    if ($expires < time()) {
+        return false;
+    }
+    return hash_equals(video_sign($rel, $expires), $token);
+}
+
 /**
  * Whether the full set of "public" affordances — direct link, flip-view
  * download, print — should be offered for this file. False for any PDF
@@ -1047,23 +1179,17 @@ function pdf_full_access(string $rel, array $m): bool
 /**
  * Video access control, mirroring pdf_access but fail-closed.
  *
- * The guard is a single small file in data/. Its presence is what makes the
- * shipped uploads/.htaccess refuse direct HTTP access to video, so the only
- * route to a video's bytes becomes ?action=raw, where each file's access level
- * is checked. Folio writes only this flag; it never rewrites .htaccess.
+ * Enforcement lives in one settings flag, VIDEO_GATE_CONFIRMED, set only
+ * after the Crawlers screen's preflight proves the deny rule below actually
+ * refuses a real request on this specific server — the same shape as
+ * PDF_GATE_CONFIRMED, and for the same reason: a restriction that might not
+ * actually be enforced would be a false sense of security, worse than none.
  */
-function video_guard_path(): string
-{
-    return dirname(SETTINGS_FILE) . DIRECTORY_SEPARATOR . '.video-guard';
-}
-
-/** Whether video access control is switched on (the guard file exists). */
 function video_guard_active(): bool
 {
-    return is_file(video_guard_path());
+    return FOLIO_URL_SIGNING_KEY !== '' && !empty(VIDEO_GATE_CONFIRMED);
 }
 
-/** Create or remove the guard file. */
 /** Path of the uploads .htaccess whose managed block refuses direct video. */
 function video_htaccess_path(): string
 {
@@ -1089,30 +1215,25 @@ function video_htaccess_block(bool $on): bool
         || strpos($current, $end) === false) {
         return false;
     }
+    // Regex can check a token's shape — that it looks like 64 hex
+    // characters — but never its signature: verifying an HMAC needs the
+    // signing key, which .htaccess has no way to hold or compute against.
+    // A rule that let a "well-formed" token straight through was therefore
+    // bypassable by anyone who noticed the shape it checked for, with no
+    // knowledge of the actual key at all — and Folio never even generates
+    // such a token for a bare direct video URL in the first place, so the
+    // same rule would refuse every legitimate request too, guard on
+    // breaking playback for everyone rather than protecting anyone. The
+    // only check .htaccess can safely make is refuse unconditionally: real
+    // verification happens in PHP, at ?action=raw, exactly like a
+    // restricted PDF already works. Slower than a direct webserver hit, but
+    // correct — and video is not large enough, most of the time, for that
+    // difference to be the thing that matters.
     $rule = $on
-        ? "\n<IfModule mod_rewrite.c>\n"
-            . "RewriteEngine On\n"
-            . "# Video files are served directly by the webserver (fast, with byte-range\n"
-            . "# seeking) ONLY when the request carries a Folio-issued signed token in the\n"
-            . "# query string. A request for a video without a token is refused, so the\n"
-            . "# file cannot be fetched by guessing its URL. Folio hands the signed URL\n"
-            . "# only to viewers it has authorised. (The webserver checks the token is\n"
-            . "# present and well-formed; Folio's HMAC is what makes it unforgeable.)\n"
-            . "RewriteCond %{QUERY_STRING} (^|&)token=[0-9a-f]{64}(&|\$) [NC]\n"
-            . "RewriteCond %{QUERY_STRING} (^|&)expires=[0-9]{8,} [NC]\n"
-            . "# A valid-format token: allow the webserver to serve the file directly.\n"
-            . "RewriteRule (?i)\\.(mp4|m4v|webm|ogv|mov)\$ - [L]\n"
-            . "# Any other video request (no token): refuse.\n"
-            . "RewriteRule (?i)\\.(mp4|m4v|webm|ogv|mov)\$ - [F,L]\n"
-            . "</IfModule>\n"
-            . "<IfModule !mod_rewrite.c>\n"
-            . "# No mod_rewrite: fall back to denying all direct video access. Playback\n"
-            . "# still works — Folio streams these through PHP instead — just slower.\n"
-            . "<FilesMatch \"(?i)\\.(mp4|m4v|webm|ogv|mov)\$\">\n"
+        ? "\n<FilesMatch \"(?i)\\.(mp4|m4v|webm|ogv|mov)\$\">\n"
             . "<IfModule mod_authz_core.c>\nRequire all denied\n</IfModule>\n"
             . "<IfModule !mod_authz_core.c>\nOrder allow,deny\nDeny from all\n</IfModule>\n"
             . "</FilesMatch>\n"
-            . "</IfModule>\n"
         : "\n";
     $pattern = '/' . preg_quote($begin, '/') . '.*?' . preg_quote($end, '/') . '/s';
     $replaced = preg_replace($pattern, $begin . $rule . $end, $current, 1);
@@ -1120,29 +1241,6 @@ function video_htaccess_block(bool $on): bool
         return false;
     }
     return atomic_replace_file($path, $replaced, 0644);
-}
-
-function video_guard_write(bool $on): bool
-{
-    $p = video_guard_path();
-    if ($on) {
-        // The webserver refusal is what actually protects the file, so write it
-        // first and refuse to enable if it cannot be written: never leave the
-        // guard flag set while direct access is still open.
-        if (!video_htaccess_block(true)) {
-            return false;
-        }
-        $dir = dirname($p);
-        if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
-            return false;
-        }
-        return @file_put_contents($p, "Video access control is on. Managed by Folio.\n") !== false;
-    }
-    // Clearing: drop the flag first (so nothing reads as enforced), then empty
-    // the block. Both are attempted; report success only if both land.
-    $flag_ok = !is_file($p) || @unlink($p);
-    $block_ok = video_htaccess_block(false);
-    return $flag_ok && $block_ok;
 }
 
 /** Normalise a stored video_access value, defaulting unknown/missing to public.
@@ -1199,10 +1297,22 @@ function url_raw_effective(string $rel, array $m): string
         // video at all: they get a notice, and the URL is simply not emitted.
         // (Protection is UI-level: an unguessable direct URL, by design.) An
         // admin always gets a working URL regardless of tier.
+        //
+        // If the .htaccess guard is switched on, a direct request for any
+        // video is refused unconditionally at the webserver — .htaccess
+        // cannot verify a signature, only Folio can — so every video is
+        // instead served through a short-lived signed URL, verified in PHP
+        // at ?action=raw, exactly like a restricted PDF already works. Who
+        // gets a URL at all is unchanged either way; only how it is
+        // delivered differs.
+        $guarded = video_guard_active();
         if ($admin) {
-            return url_raw($rel);
+            return $guarded ? video_signed_url($rel) : url_raw($rel);
         }
-        return video_access_of($m) === 'public' ? url_raw($rel) : '';
+        if (video_access_of($m) !== 'public') {
+            return '';
+        }
+        return $guarded ? video_signed_url($rel) : url_raw($rel);
     }
 
     return url_raw($rel);
@@ -1776,6 +1886,17 @@ function is_excluded(string $name, string $rel): bool
  * an item physically/editorially is, category describes its subject area.
  * Keys are what gets stored; values are the admin-facing labels.
  */
+/**
+ * Split a free-text list field — PUBLISHER_ALT_NAMES, _ALUMNI_OF,
+ * _AFFILIATION — into trimmed, non-empty items. Comma or newline only:
+ * unlike SITE_SAMEAS's URL list, an institution or a name can legitimately
+ * contain a space, so ordinary whitespace must never be a delimiter here.
+ */
+function parse_name_list(string $raw): array
+{
+    return array_values(array_filter(array_map('trim', preg_split('/[,\n]+/', $raw))));
+}
+
 function video_types(): array
 {
     return [
@@ -2583,6 +2704,9 @@ function image_can_derive(string $rel): bool
     if ($ext === 'svg') {
         return false;
     }
+    if (in_array($ext, folio_video_exts(), true)) {
+        return tool_have('ffmpeg');
+    }
     return in_array($ext, image_readable_formats(), true);
 }
 
@@ -2600,7 +2724,7 @@ function image_needs_conversion(string $rel): bool
  * over FTP invalidates its derivatives automatically without anything having
  * to notice the change or clean up after it.
  */
-function thumb_cache_path(string $rel, string $abs, int $width): string
+function thumb_cache_path(string $rel, string $abs, int $width, string $extra = ''): string
 {
     $key = hash('sha256', implode('|', [
         $rel,
@@ -2608,6 +2732,7 @@ function thumb_cache_path(string $rel, string $abs, int $width): string
         (string) @filesize($abs),
         (string) $width,
         (string) THUMB_QUALITY,
+        $extra,
     ]));
     return THUMB_DIR . '/' . substr($key, 0, 2) . '/' . $key . '.webp';
 }
@@ -2631,7 +2756,20 @@ function thumb_build(string $rel, string $abs, int $width): ?string
     if (!in_array($width, (array) THUMB_WIDTHS, true) || !image_can_derive($rel)) {
         return null;
     }
-    $cache = thumb_cache_path($rel, $abs, $width);
+    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+    $is_video = in_array($ext, folio_video_exts(), true);
+    // A video's cache key folds in its redaction state, so editing or
+    // clearing the hover-preview regions produces a fresh thumbnail rather
+    // than continuing to serve one built before the change — the same
+    // requirement redact_cache_path() already meets for PDF.
+    $video_regions = [];
+    $extra = '';
+    if ($is_video) {
+        $meta_thumb = meta_load();
+        $video_regions = video_redact_sanitise_regions($meta_thumb[$rel]['video_redact'] ?? []);
+        $extra = $video_regions ? hash('sha256', json_encode($video_regions)) : '';
+    }
+    $cache = thumb_cache_path($rel, $abs, $width, $extra);
     if (is_file($cache)) {
         return $cache;
     }
@@ -2643,11 +2781,29 @@ function thumb_build(string $rel, string $abs, int $width): ?string
         return null;
     }
 
-    $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
+    // A video's frame goes through the exact same resize/format/optimise code
+    // as an uploaded image below — the only difference is where the source
+    // pixels come from. $source_abs is what actually gets read; $abs (and the
+    // cache key computed above from it) stays the original video file.
+    $source_abs = $abs;
+    $frame_tmp = null;
+    if ($is_video) {
+        $frame_tmp = video_rasterise_frame($abs, max($width, 640), $video_regions);
+        if ($frame_tmp === null) {
+            return null;
+        }
+        $source_abs = $frame_tmp;
+        $ext = 'png';
+    }
+
     $tmp = $cache . '.' . bin2hex(random_bytes(6)) . '.tmp';
     $ok  = image_engine() === 'imagick'
-        ? thumb_build_imagick($abs, $ext, $width, $tmp)
-        : thumb_build_gd($abs, $ext, $width, $tmp);
+        ? thumb_build_imagick($source_abs, $ext, $width, $tmp)
+        : thumb_build_gd($source_abs, $ext, $width, $tmp);
+
+    if ($frame_tmp !== null) {
+        @unlink($frame_tmp);
+    }
 
     if (!$ok || !is_file($tmp)) {
         @unlink($tmp);
@@ -2705,6 +2861,206 @@ function pdf_rasterise_page(string $abs, int $width, ?string &$error = null): ?s
     $error = trim((string) strtok(trim($r['err']) ?: 'no output', "\n"));
     error_log('Folio: could not render page 1 of ' . $abs . ' — ' . $error);
     return null;
+}
+
+/**
+ * Build the ffmpeg -filter_complex graph for the video hover preview: scale
+ * to the given width, then, if any redaction regions are set, blur each one
+ * and overlay it back at the same position. Used identically by the single
+ * still frame and the moving clip — a filter graph runs per-frame either
+ * way, so one builder serves both.
+ *
+ * Regions are fractions of the scaled frame; ffmpeg computes the actual
+ * pixel box itself via iw/ih (crop's own input dimensions) and main_w/main_h
+ * (overlay's base-frame dimensions), so this never needs to know the
+ * decoded video's real resolution up front.
+ *
+ * Returns [filter_complex string, output label] — pass the label to -map.
+ */
+function video_redact_filter(array $regions, int $width): array
+{
+    $scaled = '[0:v]scale=' . (int) $width . ':-2[base0]';
+    if (!$regions) {
+        return [$scaled . ';[base0]null[outv]', '[outv]'];
+    }
+    $parts = [$scaled];
+    $n = count($regions);
+    $crop_labels = [];
+    for ($i = 0; $i < $n; $i++) {
+        $crop_labels[] = '[crop' . $i . ']';
+    }
+    // One tap of the scaled frame per region, plus the frame itself to
+    // overlay onto.
+    $parts[] = '[base0]split=' . ($n + 1) . '[base1]' . implode('', $crop_labels);
+    for ($i = 0; $i < $n; $i++) {
+        $r = $regions[$i];
+        $x = number_format((float) $r['x'], 5, '.', '');
+        $y = number_format((float) $r['y'], 5, '.', '');
+        $w = number_format((float) $r['w'], 5, '.', '');
+        $h = number_format((float) $r['h'], 5, '.', '');
+        // boxblur's chroma-plane radius has a hard ceiling that scales down
+        // with the crop's own pixel size — an 8px-tall crop tolerates a much
+        // smaller radius than a 150px one, confirmed empirically (a fixed
+        // radius of 10 rendered fine for one region and then failed outright
+        // for a second, smaller one). Height only exists as a fraction here
+        // (the frame is scaled by width with height computed by ffmpeg from
+        // the source's own aspect ratio, unknown to PHP), so width is used
+        // for both dimensions of the estimate — a conservative choice, since
+        // a real crop is never narrower than this estimate assumes, only
+        // possibly taller, and a too-small radius merely blurs a little less
+        // strongly rather than failing to render. /8 leaves a real margin
+        // below the observed failure point, and the range is capped to stay
+        // inside ffmpeg's absolute ceiling even for a very large box.
+        $min_px = max(1, (int) round($width * min((float) $r['w'], (float) $r['h'])));
+        $radius = max(1, min(15, intdiv($min_px, 8)));
+        $parts[] = '[crop' . $i . ']crop=iw*' . $w . ':ih*' . $h . ':iw*' . $x . ':ih*' . $y
+            . ',boxblur=luma_radius=' . $radius . ':luma_power=3:chroma_radius=' . $radius . ':chroma_power=3[blur' . $i . ']';
+    }
+    $prev = '[base1]';
+    for ($i = 0; $i < $n; $i++) {
+        $r = $regions[$i];
+        $x = number_format((float) $r['x'], 5, '.', '');
+        $y = number_format((float) $r['y'], 5, '.', '');
+        $out_label = ($i === $n - 1) ? '[outv]' : '[ov' . $i . ']';
+        $parts[] = $prev . '[blur' . $i . ']overlay=x=main_w*' . $x . ':y=main_h*' . $y . $out_label;
+        $prev = $out_label;
+    }
+    return [implode(';', $parts), '[outv]'];
+}
+
+/**
+ * Extract one representative frame from a video with ffmpeg, for use as a
+ * hover/listing thumbnail exactly like a PDF's page one or an image itself.
+ *
+ * Seeks to one second in, which skips the black or fading-in leader frame
+ * common at the very start of an encode; a video shorter than that falls
+ * back to the first frame instead. No ffprobe call is needed for either —
+ * ffmpeg simply produces no output when the seek point is past the end,
+ * which is the signal to retry at zero.
+ *
+ * $regions, if given, are burned in as the hover preview's redaction — see
+ * video_redact_filter(). Returns the path to a temporary PNG (caller must
+ * unlink), or null.
+ */
+function video_rasterise_frame(string $abs, int $width, array $regions = [], ?string &$error = null): ?string
+{
+    if (!tool_have('ffmpeg')) {
+        $error = 'ffmpeg not available';
+        return null;
+    }
+    $out = sys_get_temp_dir() . '/folio-video-' . bin2hex(random_bytes(8)) . '.png';
+    [$filter, $outLabel] = video_redact_filter($regions, $width);
+    $r = null;
+    foreach (['1', '0'] as $seek) {
+        @unlink($out);
+        // -ss before -i is fast (container-level) seeking. -frames:v 1 stops
+        // after the first decoded frame, so this costs about the same
+        // regardless of the video's length.
+        $args = ['-y', '-ss', $seek, '-i', $abs, '-frames:v', '1',
+                  '-filter_complex', $filter, '-map', $outLabel, $out];
+        $r = tool_run('ffmpeg', $args, 30);
+        if (is_file($out) && filesize($out) > 0) {
+            thumb_optimise($out);
+            return $out;
+        }
+    }
+    $error = trim((string) strtok(trim($r['err'] ?? '') ?: 'no output', "\n"));
+    error_log('Folio: could not extract a frame from ' . $abs . ' — ' . $error);
+    @unlink($out);
+    return null;
+}
+
+/** Where a video's moving preview clip is cached. Mirrors thumb_cache_path:
+ *  keyed on the source file's mtime and size, so replacing a video over FTP
+ *  invalidates its cached clip automatically. $extra folds in the
+ *  hover-preview redaction state, so editing or clearing it produces a
+ *  fresh clip rather than continuing to serve one built before the change. */
+function video_preview_cache_path(string $rel, string $abs, string $extra = ''): string
+{
+    $key = hash('sha256', implode('|', [
+        $rel,
+        (string) @filemtime($abs),
+        (string) @filesize($abs),
+        (string) VIDEO_PREVIEW_WIDTH,
+        (string) VIDEO_PREVIEW_SECONDS,
+        $extra,
+    ]));
+    return __DIR__ . '/data/video-previews/' . substr($key, 0, 2) . '/' . $key . '.mp4';
+}
+
+/**
+ * Build (or reuse a cached) short, silent, looping preview clip for a video —
+ * the moving equivalent of a PDF's rasterised first page. Muted on purpose:
+ * a video with sound cannot autoplay under any browser's policy without a
+ * user gesture, and audio starting from a hover would be unwelcome besides.
+ *
+ * A source over VIDEO_PREVIEW_MAX_SOURCE_MB is skipped outright — encoding a
+ * clip out of a large file is genuine CPU and wall-clock cost, and this runs
+ * inside one PHP request on hosts with a hard execution-time ceiling. Fails
+ * closed to null on any problem; the caller falls back to the static frame
+ * from video_rasterise_frame(), never to the original file.
+ *
+ * Encoded as H.264 in an MP4 container specifically: it is the one video
+ * codec every major browser decodes natively — Safari and iOS in particular
+ * have never reliably supported WebM/VP9 — so this is the safest single
+ * choice for a self-hosted library with an unknown visitor base. -movflags
+ * +faststart moves the moov atom to the front of the file so playback can
+ * begin before the whole clip has downloaded.
+ */
+function video_preview_build(string $abs, string $rel): ?string
+{
+    if (!VIDEO_PREVIEW_ENABLED || !tool_have('ffmpeg')) {
+        return null;
+    }
+    if ((int) @filesize($abs) > VIDEO_PREVIEW_MAX_SOURCE_MB * 1024 * 1024) {
+        return null;
+    }
+    $meta_vp = meta_load();
+    $regions_vp = video_redact_sanitise_regions($meta_vp[$rel]['video_redact'] ?? []);
+    $extra_vp = $regions_vp ? hash('sha256', json_encode($regions_vp)) : '';
+    $cache = video_preview_cache_path($rel, $abs, $extra_vp);
+    if (is_file($cache)) {
+        return $cache;
+    }
+    $dir = dirname($cache);
+    if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+        return null;
+    }
+    if (!is_writable($dir)) {
+        return null;
+    }
+
+    [$filter, $outLabel] = video_redact_filter($regions_vp, VIDEO_PREVIEW_WIDTH);
+    $tmp = $cache . '.' . bin2hex(random_bytes(6)) . '.tmp.mp4';
+    $ok  = false;
+    foreach (['1', '0'] as $seek) {
+        @unlink($tmp);
+        // Same seek-then-fallback-to-zero logic as video_rasterise_frame(),
+        // for the same reason: a clip shorter than the seek point produces no
+        // output at all, which is the signal to retry from the start.
+        $args = [
+            '-y', '-ss', $seek, '-i', $abs, '-t', (string) VIDEO_PREVIEW_SECONDS,
+            '-an', '-filter_complex', $filter, '-map', $outLabel,
+            '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '30',
+            '-pix_fmt', 'yuv420p', '-movflags', '+faststart', $tmp,
+        ];
+        tool_run('ffmpeg', $args, VIDEO_PREVIEW_TIME_LIMIT);
+        if (is_file($tmp) && filesize($tmp) > 0) {
+            $ok = true;
+            break;
+        }
+    }
+    if (!$ok) {
+        @unlink($tmp);
+        error_log('Folio: could not build a video preview clip for ' . $abs);
+        return null;
+    }
+    if (!@rename($tmp, $cache)) {
+        @unlink($tmp);
+        return null;
+    }
+    @chmod($cache, 0644);
+    return $cache;
 }
 
 /**
@@ -2873,6 +3229,19 @@ function url_thumb(string $rel, int $width = 320, array $m = []): string
     return BASE_URL . '?action=thumb&w=' . (int) $width . '&file=' . rawurlencode($rel);
 }
 
+/** URL of a video's short moving preview clip, or '' when one cannot apply
+ *  (not a video, ffmpeg unavailable, or the feature is off). The route
+ *  itself still fails gracefully (404) if the clip cannot actually be built
+ *  for this specific file — this only rules out the cases known in advance. */
+function url_video_preview(string $rel): string
+{
+    if (!VIDEO_PREVIEW_ENABLED || file_kind(strtolower(pathinfo($rel, PATHINFO_EXTENSION))) !== 'video'
+        || !tool_have('ffmpeg')) {
+        return '';
+    }
+    return BASE_URL . '?action=video_preview&file=' . rawurlencode($rel);
+}
+
 define('META_FILE', __DIR__ . '/data/metadata.json');
 define('META_LOCK_FILE', __DIR__ . '/data/metadata.lock');
 define('LEGACY_META_FILE', BASE_DIR . DIRECTORY_SEPARATOR . '.sfm-meta.json');
@@ -2979,7 +3348,7 @@ function reserved_slugs(): array
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
         'yaml', 'library.yaml', 'yaml_view', 'library.html', 'sitemap_html', 'sitemap.html',
         'identity', 'identity.json', 'vcard', 'vcard.vcf',
-        'raw', 'render', 'thumb', 'flipbook', 'ocr', 'meta', 'view', 'search',
+        'raw', 'render', 'thumb', 'video_preview', 'flipbook', 'ocr', 'meta', 'view', 'search',
         'feed', 'rss', 'atom', 'assets', 'lib', 'data', 'docs', 'uploads',
         'install', 'index', 'api', 'relink', 'reconcile',
     ];
@@ -4667,22 +5036,12 @@ function render_footer(): void
         </p>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>
-            <?php if (LLMS_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/llms.txt' : BASE_URL . '?action=llms') ?>">llms.txt</a>
-            <?php endif; ?>
-            <?php if (YAML_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(url_yaml()) ?>">YAML</a>
-                <a href="<?= e(url_sitemap_html()) ?>">HTML</a>
-            <?php endif; ?>
-            <?php if (IDENTITY_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(url_identity()) ?>">JSON</a>
-            <?php endif; ?>
-            <?php if (VCARD_ENABLED && IDENTITY_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(url_vcard()) ?>">vCard</a>
-            <?php endif; ?>
-            <?php if (SITEMAP_ENABLED && SITE_INDEXABLE): ?>
-                <a href="<?= e(PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap') ?>">XML</a>
-            <?php endif; ?>
+            <?php foreach (footer_link_keys() as $link_key):
+                $link = footer_link_render($link_key);
+                if ($link === null) { continue; }
+                ?>
+                <a href="<?= e($link['url']) ?>"><?= e($link['label']) ?></a>
+            <?php endforeach; ?>
             <?php if (!is_admin() && SHOW_ADMIN_LINK): ?>
                 <a href="<?= e(BASE_URL) ?>?action=login">Admin</a>
             <?php endif; ?>
@@ -4691,6 +5050,55 @@ function render_footer(): void
 </footer>
 <?= analytics_scripts() ?>
     <?php
+}
+
+/** Valid footer-link keys, in Folio's built-in default order. */
+function footer_link_default_order(): array
+{
+    return ['llms', 'yaml', 'vcard', 'json', 'html', 'xml'];
+}
+
+/**
+ * FOOTER_LINKS parsed into an ordered list of known keys: unknown tokens are
+ * dropped and duplicates collapsed to their first occurrence, so a malformed
+ * setting degrades to "show fewer links" rather than an error.
+ */
+function footer_link_keys(): array
+{
+    $valid = footer_link_default_order();
+    $keys = array_map('trim', explode(',', (string) FOOTER_LINKS));
+    $keys = array_values(array_unique(array_filter($keys, static fn($k) => in_array($k, $valid, true))));
+    return $keys;
+}
+
+/**
+ * The URL and label for one footer-link key, or null when its own toggle or
+ * SITE_INDEXABLE means it shouldn't show. Centralised here so the footer
+ * loop and the admin preview render the exact same set of active links.
+ */
+function footer_link_render(string $key): ?array
+{
+    if (!SITE_INDEXABLE) {
+        return null;
+    }
+    switch ($key) {
+        case 'llms':
+            return LLMS_ENABLED ? ['label' => 'llms.txt', 'url' => url_llms()] : null;
+        case 'yaml':
+            return YAML_ENABLED ? ['label' => 'YAML', 'url' => url_yaml()] : null;
+        case 'html':
+            return YAML_ENABLED ? ['label' => 'HTML', 'url' => url_sitemap_html()] : null;
+        case 'json':
+            return IDENTITY_ENABLED ? ['label' => 'JSON', 'url' => url_identity()] : null;
+        case 'vcard':
+            return (VCARD_ENABLED && IDENTITY_ENABLED) ? ['label' => 'vCard', 'url' => url_vcard()] : null;
+        case 'xml':
+            return SITEMAP_ENABLED
+                ? ['label' => 'XML', 'url' => PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap']
+                : null;
+        default:
+            return null;
+    }
 }
 
 /**
@@ -4965,6 +5373,47 @@ if (!defined('REDACT_PAGE_WIDTH')) {
 function redact_is_on(array $m): bool
 {
     return !empty($m['redact']) && is_array($m['redact']);
+}
+
+/** Whether a video has hover-preview redaction regions set. */
+function video_redact_is_on(array $m): bool
+{
+    return !empty($m['video_redact']) && is_array($m['video_redact']);
+}
+
+/** Normalise a raw region list for the video hover preview: {x,y,w,h}
+ *  fractions of the reference frame, no page number since there is only
+ *  ever one frame. Mirrors redact_sanitise_regions() otherwise. */
+function video_redact_sanitise_regions($raw): array
+{
+    if (!is_array($raw)) {
+        return [];
+    }
+    $out = [];
+    foreach ($raw as $r) {
+        if (!is_array($r)) {
+            continue;
+        }
+        $x = isset($r['x']) ? (float) $r['x'] : -1;
+        $y = isset($r['y']) ? (float) $r['y'] : -1;
+        $w = isset($r['w']) ? (float) $r['w'] : -1;
+        $h = isset($r['h']) ? (float) $r['h'] : -1;
+        if ($x < 0 || $y < 0 || $w <= 0 || $h <= 0
+            || $x > 1 || $y > 1 || $w > 1 || $h > 1
+            || $x + $w > 1.0001 || $y + $h > 1.0001) {
+            continue;
+        }
+        $out[] = [
+            'x' => round(min(1, max(0, $x)), 5),
+            'y' => round(min(1, max(0, $y)), 5),
+            'w' => round(min(1, max(0, $w)), 5),
+            'h' => round(min(1, max(0, $h)), 5),
+        ];
+        if (count($out) >= 20) {   // a face or two, not a canvas of boxes
+            break;
+        }
+    }
+    return $out;
 }
 
 /** Normalise and validate a raw region list (from POST or storage) into
@@ -5245,6 +5694,12 @@ function schema_type(string $ext): string
         case 'bmp':
             return 'ImageObject';
         default:
+            if (in_array($ext, folio_video_exts(), true)) {
+                return 'VideoObject';
+            }
+            if (in_array($ext, folio_audio_exts(), true)) {
+                return 'AudioObject';
+            }
             return 'MediaObject';
     }
 }
@@ -5256,7 +5711,7 @@ function schema_publisher(): array
     }
     $node = [
         '@type' => PUBLISHER_TYPE,
-        '@id' => BASE_URL . '#publisher',
+        '@id' => BASE_URL . '#person',
         'name' => PUBLISHER_NAME,
     ];
     if (PUBLISHER_URL !== '') {
@@ -5276,7 +5731,7 @@ function schema_website(): array
         'inLanguage' => SITE_LANGUAGE,
     ];
     if (trim((string) PUBLISHER_NAME) !== '') {
-        $node['publisher'] = ['@id' => BASE_URL . '#publisher'];
+        $node['publisher'] = ['@id' => BASE_URL . '#person'];
     }
     return $node;
 }
@@ -5376,7 +5831,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         $node['contentUrl'] = $raw;
     }
     if (trim((string) PUBLISHER_NAME) !== '') {
-        $node['publisher'] = ['@id' => BASE_URL . '#publisher'];
+        $node['publisher'] = ['@id' => BASE_URL . '#person'];
     }
     if (($m['desc'] ?? '') !== '') {
         $node['description'] = $m['desc'];
@@ -5415,25 +5870,9 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     }
     if ($type === 'VideoObject') {
         $video_type = (string) ($m['video_type'] ?? '');
-        $video_series = trim((string) ($m['video_series'] ?? ''));
-        $video_creator = trim((string) ($m['video_creator'] ?? ''));
-        $video_season = trim((string) ($m['video_season'] ?? ''));
-        $video_episode = trim((string) ($m['video_episode'] ?? ''));
         if ($video_type !== '') {
             $node['genre'] = video_types()[$video_type] ?? $video_type;
             $node['additionalType'] = 'Video ' . (video_types()[$video_type] ?? $video_type);
-        }
-        if ($video_creator !== '') {
-            $node['creator'] = ['@type' => 'Person', 'name' => $video_creator];
-        }
-        if ($video_series !== '') {
-            $node['isPartOf'] = ['@type' => 'CreativeWorkSeries', 'name' => $video_series];
-        }
-        if ($video_season !== '') {
-            $node['additionalProperty'][] = ['@type' => 'PropertyValue', 'name' => 'Season', 'value' => $video_season];
-        }
-        if ($video_episode !== '') {
-            $node['additionalProperty'][] = ['@type' => 'PropertyValue', 'name' => 'Episode', 'value' => $video_episode];
         }
     }
     if ($type === 'ImageObject') {
@@ -5447,7 +5886,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     }
     if ($type === 'Article') {
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $node['author'] = ['@id' => BASE_URL . '#publisher'];
+            $node['author'] = ['@id' => BASE_URL . '#person'];
         }
         $node['headline'] = $title;
     }
@@ -5573,10 +6012,6 @@ function index_all_files(array $mime_map): array
                 'seo_desc' => $m['seo_desc'] ?? '',
                 'language' => $m['language'] ?? '',
                 'video_type' => $m['video_type'] ?? '',
-                'video_series' => $m['video_series'] ?? '',
-                'video_creator' => $m['video_creator'] ?? '',
-                'video_season' => $m['video_season'] ?? '',
-                'video_episode' => $m['video_episode'] ?? '',
                 'pdf_access' => $pdf_access,
                 'redact' => (isset($m['redact']) && is_array($m['redact'])) ? $m['redact'] : [],
                 // Deliberately not the transcript text itself here — this
@@ -5960,15 +6395,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $notice = '';
     $error  = '';
 
-    // The video access model no longer uses a webserver block: every video is
-    // served directly (fast); restricted/hidden withhold the link and show a
-    // notice. A guard block left by an earlier version would keep forcing video
-    // through PHP and cause slow buffering, so clear it once when an admin opens
-    // this screen.
-    if (video_guard_active()) {
-        video_guard_write(false);
-    }
-
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_valid()) {
             $error = 'Security token expired. Reload the page and try again.';
@@ -6221,8 +6647,74 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 }
                 $error = 'Could not save. Check that data/ is writable.';
 
+            } elseif ($op === 'confirm_video_gate') {
+                if (FOLIO_URL_SIGNING_KEY === '') {
+                    $error = 'Set FOLIO_URL_SIGNING_KEY in config.php before confirming this.';
+                } elseif (!video_gate_ensure_probe_file()) {
+                    $error = 'Could not create the probe file. Check that ' . e(UPLOADS_DIRNAME) . '/ is writable.';
+                } elseif (!video_htaccess_block(true)) {
+                    $error = 'Could not write the video access rule. Check that '
+                        . e(UPLOADS_DIRNAME) . '/.htaccess is writable and still has the Folio-managed markers.';
+                } else {
+                    // The rule is now live on disk; verify a direct request to
+                    // the real probe file is actually refused before trusting
+                    // it, independently of the browser, the same reasoning
+                    // the PDF gate already uses for its own preflight.
+                    $status = video_gate_probe_status();
+                    $server_blocked = $status === 403;
+                    $client_probe_ok = (string) ($_POST['probe_result'] ?? '') === 'forbidden';
+
+                    if ($server_blocked && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed');
+                        exit;
+                    } elseif ($status === 0 && $client_probe_ok && settings_store(['VIDEO_GATE_CONFIRMED' => true])) {
+                        // Could not reach the server's own public URL outbound
+                        // — some hosts block this entirely, the same failure
+                        // mode the PDF gate and IndexNow submission already
+                        // handle. Fall back to the browser's own probe rather
+                        // than blocking the feature outright.
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&videogate=confirmed_unverified');
+                        exit;
+                    } else {
+                        // The rule did not demonstrably block the file: undo
+                        // it rather than leave Apache refusing every video
+                        // while PHP believes the guard is off and keeps
+                        // handing out bare, unsigned URLs — that combination
+                        // breaks playback for everyone, not just an attacker.
+                        video_htaccess_block(false);
+                        $error = 'Could not confirm that direct video requests are refused on this server ('
+                            . ($status > 0 ? 'got HTTP ' . $status : 'the probe could not be reached')
+                            . '). Check that AllowOverride permits .htaccess rules in '
+                            . e(UPLOADS_DIRNAME) . '/, and that mod_authz_core or mod_access_compat is active.';
+                    }
+                }
+
+            } elseif ($op === 'disable_video_gate') {
+                if (video_htaccess_block(false) && settings_store(['VIDEO_GATE_CONFIRMED' => false])) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
+                    exit;
+                }
+                $error = 'Could not disable video access control. Check that '
+                    . e(UPLOADS_DIRNAME) . '/.htaccess is writable and still has the Folio-managed markers.';
+
             } else {
                 $intro = trim((string) ($_POST['llms_intro'] ?? ''));
+                $default_order = footer_link_default_order();
+                // Each link is an include checkbox plus a 1-based position.
+                // Included keys are sorted by position (ties broken by
+                // Folio's default order) and joined into the stored setting;
+                // an unchecked key is simply absent from the result.
+                $footer_positions = [];
+                foreach ($default_order as $i => $key) {
+                    if (empty($_POST['footer_link_include'][$key])) {
+                        continue;
+                    }
+                    $pos = (int) ($_POST['footer_link_position'][$key] ?? ($i + 1));
+                    $footer_positions[$key] = $pos * 100 + $i;
+                }
+                asort($footer_positions);
+                $footer_links = implode(',', array_keys($footer_positions));
+
                 if (strlen($intro) > 1000) {
                     $error = 'The llms.txt introduction must be at most 1000 characters.';
                 } elseif (settings_store([
@@ -6233,6 +6725,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                     'VCARD_ENABLED' => !empty($_POST['vcard_enabled']),
                     'LLMS_INTRO' => $intro,
                     'SITE_INDEXABLE' => !empty($_POST['site_indexable']),
+                    'FOOTER_LINKS' => $footer_links,
                 ])) {
                     header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
                     exit;
@@ -6452,6 +6945,39 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         </label>
         <p class="field-note">A full YAML index of every public document — title, URL, category, tags, and date. There is no crawler convention for this; it is a clean export for YAML tooling. Currently at <a href="<?= e($yaml_url) ?>"><?= e($yaml_url) ?></a><?= YAML_ENABLED ? '' : ' (disabled, returns 404)' ?>.</p>
 
+        <label>Footer links</label>
+        <p class="field-note">Which of the discovery-file links appear in the site footer, and in what order. A link's own toggle above still governs whether it can be served at all — removing it here only hides the footer link.</p>
+        <table class="footer-links-table">
+            <thead><tr><th>Show</th><th>Link</th><th>Position</th></tr></thead>
+            <tbody>
+            <?php
+            $footer_labels = ['llms' => 'llms.txt', 'yaml' => 'YAML', 'vcard' => 'vCard', 'json' => 'JSON', 'html' => 'HTML', 'xml' => 'XML'];
+            $included_keys = footer_link_keys();
+            $current_order = $included_keys;
+            // Keys present but not in the saved order (e.g. after an upgrade
+            // adds a new one) are appended unchecked, so nothing is silently
+            // shown that wasn't explicitly kept, and nothing is dropped either.
+            foreach (array_keys($footer_labels) as $k) {
+                if (!in_array($k, $current_order, true)) {
+                    $current_order[] = $k;
+                }
+            }
+            foreach ($current_order as $i => $key): ?>
+                <tr>
+                    <td><input type="checkbox" name="footer_link_include[<?= e($key) ?>]" value="1" <?= in_array($key, $included_keys, true) ? 'checked' : '' ?>></td>
+                    <td><?= e($footer_labels[$key]) ?></td>
+                    <td>
+                        <select name="footer_link_position[<?= e($key) ?>]">
+                            <?php for ($p = 1; $p <= count($footer_labels); $p++): ?>
+                                <option value="<?= $p ?>" <?= ($i + 1) === $p ? 'selected' : '' ?>><?= $p ?></option>
+                            <?php endfor; ?>
+                        </select>
+                    </td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+
         <div><button type="submit" class="btn">Save</button></div>
     </form>
 
@@ -6535,16 +7061,44 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         page listed and indexable but shows a &ldquo;restricted&rdquo; notice in place of the player
         for the public; <strong>Hidden</strong> also removes the page from the folder listing while
         keeping it findable through search. A signed-in admin always sees and plays every video,
-        regardless of tier. Every video is served directly by the webserver, so playback is fast in
-        all cases &mdash; restricted and hidden simply withhold the link and show the notice rather
-        than routing bytes through Folio.
+        regardless of tier.
     </p>
     <p class="field-note">
-        Protection here is page-level: the public is never shown the file&rsquo;s address, but the
-        file is served directly, so a restricted or hidden video is not secret from someone who
-        already holds its direct URL. For a personal archive this is usually the right balance of
-        speed and privacy.
+        By default, protection here is page-level: the public is never shown a restricted or hidden
+        file's address, but the file is served directly by the webserver, so it is not secret from
+        someone who already holds its direct URL. For a personal archive this is usually the right
+        balance of speed and privacy. The preflight below moves restricted and hidden video to
+        enforcement at the webserver instead — a direct request is refused outright, and playback
+        routes through Folio, verified with a signed link, the same way a restricted PDF already
+        works.
     </p>
+    <?php if (FOLIO_URL_SIGNING_KEY === ''): ?>
+        <p class="msg msg-bad">
+            <code>FOLIO_URL_SIGNING_KEY</code> is not set in <code>config.php</code>, so video access
+            control cannot be enforced yet. See the key offered above, under PDF access control —
+            the same key setting covers both.
+        </p>
+    <?php elseif (VIDEO_GATE_CONFIRMED): ?>
+        <p class="field-note">Video access control is <strong>confirmed and enforced</strong>.</p>
+        <form method="post" class="stack-form">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="disable_video_gate">
+            <div><button type="submit" class="btn btn-ghost">Disable enforcement</button></div>
+        </form>
+        <p class="field-note">Disabling returns to the default page-level protection immediately, without touching any file's stored <code>video_access</code> value.</p>
+    <?php else: ?>
+        <p class="field-note">Click <strong>Test video routing</strong> to check, then confirm.</p>
+        <div id="video-gate-preflight" data-probe="<?= e(BASE_URL) ?>?action=video_gate_test">
+            <button type="button" class="btn" id="video-gate-test-btn">Test video routing</button>
+            <p class="field-note rewrite-result video-gate-result" id="video-gate-result"></p>
+            <form method="post" class="stack-form rewrite-enable-form video-gate-enable-form" id="video-gate-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="confirm_video_gate">
+                <input type="hidden" name="probe_result" value="">
+                <div><button type="submit" class="btn">Confirm and enforce</button></div>
+            </form>
+        </div>
+    <?php endif; ?>
 
     <h2 class="detail-title">Sitemap preview</h2>
     <p class="detail-desc">Folio publishes three sitemaps, and the <code>robots.txt</code> below announces all three.</p>
@@ -6573,18 +7127,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
     <h2 class="detail-title">Notify search engines</h2>
     <p class="detail-desc">
-        Anonymous sitemap &ldquo;ping&rdquo; endpoints no longer exist. Microsoft retired Bing's in
-        May 2022 (it now answers <code>410 Gone</code>) and Google retired its own in 2023. Folio
-        therefore offers no ping button: it would report success while doing nothing.
-    </p>
-    <p class="detail-desc">
-        The methods that do work are the sitemap reference in <code>robots.txt</code> below, which every
-        crawler reads; <a href="https://www.bing.com/webmasters/sitemaps" rel="noopener noreferrer" target="_blank">Bing
-        Webmaster Tools</a> and Google Search Console for one-off manual submission; and IndexNow below
-        for immediate push notification.
-    </p>
-
-        crawler reads; search-console tools for one-off manual submission; and the push APIs below.
+        Folio has no sitemap "ping" button — those endpoints no longer work. What does work: the sitemap
+        reference in <code>robots.txt</code> below, which every crawler reads; search-console tools for
+        one-off manual submission; and IndexNow below for immediate push notification.
     </p>
 
     <h2 class="detail-title">Google Indexing API</h2>
@@ -6612,12 +7157,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             </p>
         <?php endif; ?>
 
-        <div class="detail-desc" style="background:var(--leaf);border:1px solid var(--rule);border-radius:var(--radius);padding:0.7rem 1rem;font-family:var(--sans);font-size:0.82rem;margin:0.5rem 0 1rem">
-            <strong style="display:block;margin-bottom:0.4rem">Google Indexing API &mdash; Remaining Quota</strong>
-            <code>PublishRequestsPerDayPerProject = <strong><?= (int) $gi_remaining_daily ?></strong> / <?= (int) $gi_limit_daily ?></code><br>
-            <code>RequestsPerMinutePerProject = <strong><?= (int) $gi_remaining_permin ?></strong> / <?= (int) $gi_limit_permin ?></code>
-            <p style="margin:0.4rem 0 0;color:var(--quiet)">Calculated from local submission timestamps. Quota resets daily at midnight Pacific. To increase limits, visit <a href="https://console.cloud.google.com/apis/api/indexing.googleapis.com/quotas" target="_blank" rel="noopener">Google Cloud Console</a>.</p>
-        </div>
+        <table class="diag-table" style="margin:0.8rem 0 1rem">
+            <tr><td>Daily quota remaining</td><td><strong><?= (int) $gi_remaining_daily ?></strong> / <?= (int) $gi_limit_daily ?></td></tr>
+            <tr><td>Per-minute quota remaining</td><td><strong><?= (int) $gi_remaining_permin ?></strong> / <?= (int) $gi_limit_permin ?></td></tr>
+        </table>
+        <p class="field-note">Calculated from local submission timestamps. Quota resets daily at midnight Pacific. To increase limits, visit <a href="https://console.cloud.google.com/apis/api/indexing.googleapis.com/quotas" target="_blank" rel="noopener">Google Cloud Console</a>.</p>
 
         <?php if ($google_indexing_pending_count > 0): ?>
             <?php $gi_safe_cap = min($google_indexing_pending_count, $gi_remaining_daily, 100); ?>
@@ -8121,6 +8665,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         'pdfinfo'    => 'page counts and PDF facts',
         'pdftocairo' => 'rendering PDF pages for previews',
         'pdftoppm'   => 'PDF page previews (fallback)',
+        'ffmpeg'     => 'moving hover/listing preview clips for video',
         'qpdf'       => 'PDF structure checks',
         'pngquant'   => 'shrinking rendered PDF pages before they become thumbnails',
         'exiftool'   => 'reading a document\'s own creation date',
@@ -8366,6 +8911,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
                         : '')),
     ];
 
+    // Same shape as the PDF check above: video's default model is page-level
+    // (an unlisted but still-direct URL) regardless of this flag, so "not
+    // enforced" here is not itself a problem — it only matters for a site
+    // that specifically wants webserver-level enforcement and has not yet
+    // confirmed the preflight for it.
+    $video_guard_live = video_guard_active();
+    $video_restricted_unenforced = [];
+    if (!$video_guard_live) {
+        foreach (meta_load() as $meta_rel => $meta_row) {
+            if (video_access_of((array) $meta_row) !== 'public') {
+                $video_restricted_unenforced[] = $meta_rel;
+            }
+        }
+    }
+    $cfg_checks[] = [
+        'label'  => 'Video access control',
+        'status' => $video_guard_live ? 'ok' : ($video_restricted_unenforced ? 'warn' : 'ok'),
+        'note'   => $video_guard_live
+            ? 'Confirmed and enforced.'
+            : (!$pdf_signing_key_set && !empty(VIDEO_GATE_CONFIRMED)
+                ? 'Was confirmed, but FOLIO_URL_SIGNING_KEY is no longer set — enforcement has stopped until it is restored'
+                : ($video_restricted_unenforced
+                    ? 'Using the default page-level model, which is fine unless webserver-level enforcement is'
+                        . ' specifically wanted — ' . count($video_restricted_unenforced) . ' file(s) currently set to'
+                        . ' restricted/hidden rely on it: '
+                        . implode(', ', array_slice($video_restricted_unenforced, 0, 5))
+                        . (count($video_restricted_unenforced) > 5 ? ', …' : '')
+                    : 'Using the default page-level model. No restricted or hidden video yet.')),
+    ];
+
     $imagick_ok = extension_loaded('imagick') && class_exists('Imagick');
     $ghostscript_ok = false;
     if ($imagick_ok) {
@@ -8608,12 +9183,43 @@ if (isset($_GET['action']) && $_GET['action'] === 'thumb') {
         exit('Not found');
     }
 
+    // A redacted PDF's thumbnail must come from the redacted derivative, not
+    // the original — page one is exactly where a redaction is most likely to
+    // land, and rasterising the original here would hand the hover/listing
+    // preview a second, unguarded route to the very text the admin blacked
+    // out. Fails closed: if the redacted derivative cannot be built, this
+    // returns no preview at all rather than ever falling back to the source.
+    if (strtolower(pathinfo($rel_thumb, PATHINFO_EXTENSION)) === 'pdf') {
+        $meta_thumb = meta_load();
+        $m_thumb = $meta_thumb[$rel_thumb] ?? [];
+        if (redact_is_on($m_thumb)) {
+            $regions_thumb = redact_sanitise_regions($m_thumb['redact']);
+            $redacted_abs = $regions_thumb ? redact_build($abs, $rel_thumb, $regions_thumb) : null;
+            if ($redacted_abs === null) {
+                http_response_code(404);
+                header('Content-Type: text/plain; charset=UTF-8');
+                exit('No preview available');
+            }
+            $abs = $redacted_abs;
+        }
+    }
+
     $raw_w = (string) ($_GET['w'] ?? '');
     if (!preg_match('/^[0-9]+$/', $raw_w) || !in_array((int) $raw_w, (array) THUMB_WIDTHS, true)) {
         http_response_code(404);
         exit('Not found');
     }
     $width = (int) $raw_w;
+
+    // Every access check above is already decided. Rasterising and streaming
+    // a thumbnail is real work — Imagick/GD decoding, or an ffmpeg frame
+    // extraction for video — and holding the session's file lock through it
+    // blocks every other request from the same browser for no further
+    // benefit, including the several thumbnails a listing page fetches at
+    // once for a logged-in visitor.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
 
     $cache = thumb_build($rel_thumb, $abs, $width);
     if ($cache === null) {
@@ -8645,6 +9251,49 @@ if (isset($_GET['action']) && $_GET['action'] === 'thumb') {
         exit;
     }
     readfile($cache);
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
+/* Short, silent, looping preview clip for a public video — the moving  */
+/* equivalent of the thumb route's rasterised PDF page one. Never the   */
+/* original file: only the derivative video_preview_build() produced.   */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'video_preview') {
+    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    if ($abs === null || !is_file($abs)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel_vp = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if (is_excluded(basename($rel_vp), $rel_vp)
+        || file_kind(strtolower(pathinfo($rel_vp, PATHINFO_EXTENSION))) !== 'video') {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    // Encoding a clip with ffmpeg is real, sometimes multi-second work; see
+    // the same reasoning at the thumb route above for why the session lock
+    // is released before it rather than held through it.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+
+    $cache = video_preview_build($abs, $rel_vp);
+    if ($cache === null) {
+        // No ffmpeg, source too large, or the encode itself failed. The
+        // caller (the hover card's <video> element) falls back to its poster
+        // frame — the static thumbnail from video_rasterise_frame() — rather
+        // than showing a broken player.
+        http_response_code(404);
+        header('Content-Type: text/plain; charset=UTF-8');
+        exit('No preview available');
+    }
+    // Content-addressed by the source file's own mtime/size (see
+    // video_preview_cache_path()), so this can be cached hard: a changed
+    // video produces a different cache file, never a stale one at this URL.
+    header('Cache-Control: public, max-age=31536000, immutable');
+    stream_file_bytes($cache, 'video/mp4', 'inline');
     exit;
 }
 
@@ -8896,6 +9545,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
         exit('Not found');
     }
 
+    // video_access gate, active only while the .htaccess guard is on: with
+    // it off, video keeps its existing direct-URL, delisting-only model
+    // unchanged, and this block is never reached because url_raw_effective()
+    // never routes here in the first place. With it on, this is the single
+    // enforcement point every video URL is built to route through, the same
+    // shape as the pdf_access gate just above. An admin bypasses the token
+    // requirement — they already see everything regardless of tier — the
+    // same way the redaction gate below already treats them differently
+    // from everyone else.
+    if (file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) === 'video' && video_guard_active()) {
+        $vmeta   = meta_load()[$rel] ?? [];
+        $vaccess = video_access_of($vmeta);
+        if ($vaccess === 'hidden' && !is_admin()) {
+            http_response_code(404);
+            exit('Not found');
+        }
+        if ($vaccess === 'restricted' && !is_admin()) {
+            $expires = (int) ($_GET['expires'] ?? 0);
+            $token   = (string) ($_GET['token'] ?? '');
+            if ($token === '' || !video_signed_url_valid($rel, $expires, $token)) {
+                http_response_code(404);
+                exit('Not found');
+            }
+        }
+        // Public tier needs no token: anyone requesting it is already
+        // entitled to it, the same as a public PDF served through this same
+        // route needs none either.
+    }
+
     // pdf_access gate. This is the single enforcement point: every other
     // path to a PDF's bytes (preview, flip view, print, direct link) is
     // built to route through here rather than duplicate this check.
@@ -8939,6 +9617,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
             header('X-Robots-Tag: noindex, nofollow');
             header('Content-Disposition: inline; filename="'
                 . str_replace(['"', "\r", "\n"], '', basename($rel)) . '"');
+            // Every access check above is already decided; holding the session's
+            // file lock through the read below serves no purpose but blocks any
+            // other request from the same browser — including, for video, the
+            // handful of concurrent Range requests a player fires while
+            // buffering — until this one finishes streaming.
+            if (session_status() === PHP_SESSION_ACTIVE) {
+                session_write_close();
+            }
             readfile($derived);
             exit;
         }
@@ -8968,6 +9654,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
         }
         if ($ext === 'svg') {
             header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
+        }
+        // Every access check that needed the session is already decided by
+        // this point; holding its file lock through the read below only
+        // blocks other requests from the same browser for no further
+        // benefit — for video in particular, the several concurrent Range
+        // requests a player fires while buffering, which would otherwise
+        // queue behind each other one at a time instead of running in
+        // parallel the way they do for a visitor with no session at all.
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close();
         }
         // Audio and video, when they reach this fallback, are streamed with
         // range support so a client can seek and start before the whole file
@@ -9000,6 +9696,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
         http_response_code(404);
         exit('Not found');
     }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     if (!pdf_blur_generate($abs, $rel)) {
         http_response_code(404);
         exit('Not found');
@@ -9011,6 +9710,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
     header('Cache-Control: public, max-age=86400');
     readfile($cache);
     exit;
+}
+
+/* ------------------------------------------------------------------ */
+/* Video access-control preflight, a true dry run: write the deny rule, */
+/* check whether it actually blocks a direct request on this server,   */
+/* then always undo the write before responding — regardless of the    */
+/* outcome. Testing video's rule inherently requires writing it first,  */
+/* unlike the PDF gate's read-only preflight (there is nothing to       */
+/* observe about a rule that was never written), so this exists         */
+/* specifically to make that safe: this endpoint must never be the      */
+/* thing that leaves Apache refusing every video while PHP still        */
+/* believes the guard is off. Only confirm_video_gate, in the Crawlers  */
+/* screen's own POST handler, makes a persistent change. Admin-only.    */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'video_gate_test') {
+    if (!is_admin()) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    header('Content-Type: application/json');
+    if (FOLIO_URL_SIGNING_KEY === '' || !video_gate_ensure_probe_file() || !video_htaccess_block(true)) {
+        video_htaccess_block(false);
+        exit(json_encode(['blocked' => false, 'status' => 0]));
+    }
+    $status = video_gate_probe_status();
+    video_htaccess_block(false);
+    exit(json_encode(['blocked' => $status === 403, 'status' => $status]));
 }
 
 /* ------------------------------------------------------------------ */
@@ -9032,6 +9758,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'redact_page') {
     if (is_excluded(basename($rel), $rel)) {
         http_response_code(404);
         exit('Not found');
+    }
+    // The only check above that needed the session was is_admin(), already
+    // decided. Rendering a page — pdftocairo/pdftoppm, or Imagick, with up to
+    // a 60-second budget — is real work, and the redaction editor fetches one
+    // of these per page as the admin steps through a document; holding the
+    // session lock through each would serialise them one at a time instead of
+    // letting the browser fetch several pages in parallel.
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
     }
     // 'meta' returns the page count as JSON; 'page' returns one page image.
     if (($_GET['meta'] ?? '') === '1') {
@@ -9522,17 +10257,70 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     if (PUBLISHER_URL !== '') {
         $subject['url'] = PUBLISHER_URL;
     }
-    if (SITE_DESCRIPTION !== '') {
-        $subject['description'] = SITE_DESCRIPTION;
+    // The person's own record, not the site's: PUBLISHER_BIO describes who
+    // they are, distinct from SITE_DESCRIPTION describing what the library
+    // contains. Without a dedicated bio, this fell back to the library's own
+    // description — the one sentence identity.json had to say about the
+    // person it's nominally about ended up describing the collection
+    // instead, which is exactly backwards for a document meant to answer
+    // "who is this."
+    $personBio = PUBLISHER_BIO !== '' ? PUBLISHER_BIO : SITE_DESCRIPTION;
+    if ($personBio !== '') {
+        $subject['description'] = $personBio;
+    }
+    if (PUBLISHER_OCCUPATION !== '') {
+        $subject['jobTitle'] = PUBLISHER_OCCUPATION;
+    }
+    $altNames = parse_name_list((string) PUBLISHER_ALT_NAMES);
+    if ($altNames) {
+        $subject['alternateName'] = count($altNames) === 1 ? $altNames[0] : $altNames;
+    }
+    if (PUBLISHER_NATIONALITY !== '') {
+        $subject['nationality'] = PUBLISHER_NATIONALITY;
+    }
+    $alumniOf = parse_name_list((string) PUBLISHER_ALUMNI_OF);
+    if ($alumniOf) {
+        $subject['alumniOf'] = $alumniOf;
+    }
+    $affiliation = parse_name_list((string) PUBLISHER_AFFILIATION);
+    if ($affiliation) {
+        $subject['affiliation'] = $affiliation;
     }
     // sameAs is deliberately omitted unless real verified profiles exist: an
     // absent sameAs is safer than an unverifiable one. SITE_SAMEAS, when set,
-    // is a comma- or newline-separated list of canonical profile URLs.
+    // is a comma- or newline-separated list of canonical profile URLs — the
+    // right place for social profiles, an official author page elsewhere,
+    // and independent authority records (ORCID, Wikidata, VIAF, ISNI and
+    // the like), each reinforcing that the same person is meant across
+    // every one of them.
     $sameAs = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
     $sameAs = array_values(array_filter($sameAs, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
     if ($sameAs) {
         $subject['sameAs'] = $sameAs;
     }
+    // A second site about the same person, named rather than left as one
+    // more unlabelled sameAs entry indistinguishable from a social profile —
+    // this library and a blog living at two different domains both need a
+    // reader (human or otherwise) to be told, not left to infer, that they
+    // describe the same author.
+    if (PUBLISHER_RELATED_SITE_URL !== '') {
+        $subject['additionalProperty'][] = [
+            '@type' => 'PropertyValue',
+            'name'  => PUBLISHER_RELATED_SITE_LABEL !== '' ? PUBLISHER_RELATED_SITE_LABEL : 'Related site',
+            'value' => PUBLISHER_RELATED_SITE_URL,
+        ];
+    }
+    // This library's own relationship to its subject, stated plainly rather
+    // than left implicit in the fact that WebSite.about already points here:
+    // a document-index tool cannot assume a reader already knows what kind
+    // of "about" this is.
+    $subject['additionalProperty'][] = [
+        '@type' => 'PropertyValue',
+        'name'  => 'Relationship to this site',
+        'value' => trim((string) PUBLISHER_NAME) !== ''
+            ? PUBLISHER_NAME . ' is the subject of this document library, ' . SITE_NAME . '.'
+            : 'This document library is about the subject named above.',
+    ];
 
     $website = [
         '@type'   => 'WebSite',
@@ -9585,7 +10373,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
 /* ------------------------------------------------------------------ */
 
 /**
- * Escape a value for a vCard text property per RFC 6350 §3.4: backslash,
+ * Escape a value for a vCard text property per RFC 2426 §5.8.4: backslash,
  * comma, and semicolon are structural and must be escaped, and a literal
  * newline becomes the two-character sequence backslash-n.
  */
@@ -9599,7 +10387,7 @@ function vcard_escape(string $v): string
 }
 
 /**
- * Fold one logical vCard line to RFC 6350 §3.2: no line may exceed 75 octets
+ * Fold one logical vCard line to RFC 2426 §2.6: no line may exceed 75 octets
  * (including the trailing CRLF is excluded from the count, but each folded
  * continuation starts with a space). Folding is byte-based, so a multibyte
  * UTF-8 character is never split across the boundary.
@@ -9664,10 +10452,12 @@ function vcard_social_label(string $url): string
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
-    // A vCard 4.0 (RFC 6350) download for the same subject identity.json
-    // describes. Built from the same fields — PUBLISHER_NAME, PUBLISHER_TYPE,
-    // PUBLISHER_URL, SITE_DESCRIPTION, SITE_ICON, SITE_SAMEAS — so the two
-    // never disagree, and shares identity.json's gating plus its own toggle.
+    // A vCard 3.0 (RFC 2426) download for the same subject identity.json
+    // describes. Name, URL, description, icon (embedded), and same-as
+    // profiles come from the same fields identity.json already uses, so the
+    // two never disagree; nickname, email, phone, and country are optional
+    // fields that exist only for this route. Shares identity.json's gating
+    // plus its own toggle.
     if (!VCARD_ENABLED || !IDENTITY_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
         exit('Not found');
@@ -9775,7 +10565,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
         http_response_code(404);
         exit('Not found');
     }
-    header('Content-Type: application/yaml; charset=UTF-8');
+    // text/plain rather than application/yaml: no browser has a native
+    // handler for the latter, so it triggers a download prompt instead of
+    // rendering. text/plain is what every browser already displays inline
+    // for llms.txt and robots.txt, and changes nothing about the bytes, the
+    // .yaml extension, or the URL — only how the browser chooses to show it.
+    header('Content-Type: text/plain; charset=UTF-8');
     send_public_cache_headers(900);
 
     /**
@@ -9964,8 +10759,38 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         $out .= LLMS_INTRO . "\n\n";
     }
     if (PUBLISHER_NAME !== '') {
+        // A briefing on who this is, not just what the library contains —
+        // the identity.json graph carries the same facts structured for a
+        // machine; this is the same information read as plain prose, for
+        // whatever reads llms.txt first and never gets to the JSON-LD.
         $out .= 'Published by ' . PUBLISHER_NAME
-              . (PUBLISHER_URL !== '' ? ' (' . PUBLISHER_URL . ')' : '') . ".\n\n";
+              . (PUBLISHER_URL !== '' ? ' (' . PUBLISHER_URL . ')' : '') . '.';
+        if (PUBLISHER_OCCUPATION !== '') {
+            $out .= ' ' . PUBLISHER_NAME . ' is ' . (preg_match('/^[aeiou]/i', PUBLISHER_OCCUPATION) ? 'an ' : 'a ') . PUBLISHER_OCCUPATION . '.';
+        }
+        $out .= "\n\n";
+        if (PUBLISHER_BIO !== '') {
+            $out .= PUBLISHER_BIO . "\n\n";
+        }
+        $altNames_llms = parse_name_list((string) PUBLISHER_ALT_NAMES);
+        if ($altNames_llms) {
+            $out .= 'Also known as: ' . implode(', ', $altNames_llms) . ".\n";
+        }
+        $alumniOf_llms = parse_name_list((string) PUBLISHER_ALUMNI_OF);
+        if ($alumniOf_llms) {
+            $out .= 'Education: ' . implode(', ', $alumniOf_llms) . ".\n";
+        }
+        $affiliation_llms = parse_name_list((string) PUBLISHER_AFFILIATION);
+        if ($affiliation_llms) {
+            $out .= 'Affiliated with: ' . implode(', ', $affiliation_llms) . ".\n";
+        }
+        if (PUBLISHER_RELATED_SITE_URL !== '') {
+            $out .= (PUBLISHER_RELATED_SITE_LABEL !== '' ? PUBLISHER_RELATED_SITE_LABEL : 'Also see')
+                  . ': ' . PUBLISHER_RELATED_SITE_URL . ".\n";
+        }
+        if ($altNames_llms || $alumniOf_llms || $affiliation_llms || PUBLISHER_RELATED_SITE_URL !== '') {
+            $out .= "\n";
+        }
     }
     $by_cat = [];
     foreach ($all as $f) {
@@ -10197,6 +11022,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'compressed') {
         http_response_code(404);
         exit('No compressed copy has been prepared for this document.');
     }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
     header('Content-Type: application/pdf');
     header('Content-Length: ' . (string) filesize($copy));
     header('Content-Disposition: attachment; filename="' . basename($rel_d) . '"');
@@ -10314,23 +11142,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     $doc_date   = str_clip(trim((string) ($_POST['doc_date'] ?? '')), 60);
     $kind       = file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION)));
 
-    // Video-only descriptive metadata. These fields are deliberately ignored
-    // for every other media kind so an altered POST cannot attach video
-    // semantics to audio, images, PDFs, or documents.
+    // Video-only descriptive metadata. Deliberately ignored for every other
+    // media kind so an altered POST cannot attach video semantics to audio,
+    // images, PDFs, or documents.
     $video_type = '';
-    $video_series = '';
-    $video_creator = '';
-    $video_season = '';
-    $video_episode = '';
     if ($kind === 'video') {
         $video_type = strtolower(trim((string) ($_POST['video_type'] ?? '')));
         if (!array_key_exists($video_type, video_types())) {
             $video_type = '';
         }
-        $video_series  = str_clip(trim((string) ($_POST['video_series'] ?? '')), 120);
-        $video_creator = str_clip(trim((string) ($_POST['video_creator'] ?? '')), 120);
-        $video_season  = str_clip(trim((string) ($_POST['video_season'] ?? '')), 20);
-        $video_episode = str_clip(trim((string) ($_POST['video_episode'] ?? '')), 20);
     }
     /* Title is the SEO title (60 chars). Short description is the SEO meta
        description (120 chars). Long description is for page display only
@@ -10406,10 +11226,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         $redact_raw = json_decode((string) ($_POST['redact_regions'] ?? '[]'), true);
         $redact_regions = redact_sanitise_regions($redact_raw);
     }
+    // Video hover-preview redaction. Same shape as PDF's, minus the page
+    // number: there is only one reference frame to draw on.
+    $video_redact_regions = [];
+    if ($kind === 'video') {
+        $video_redact_raw = json_decode((string) ($_POST['video_redact_regions'] ?? '[]'), true);
+        $video_redact_regions = video_redact_sanitise_regions($video_redact_raw);
+    }
 
     $updated = meta_update(static function (array $meta) use (
         $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
-        $seo_title, $seo_desc, $video_type, $video_series, $video_creator, $video_season, $video_episode, $redact_regions
+        $seo_title, $seo_desc, $video_type, $redact_regions, $video_redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
         // administrator has genuinely emptied all of them. Omitting one would
@@ -10419,9 +11246,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
             && $document_type === '' && $doc_date === '' && $transcript === ''
             && $pdf_access === 'public' && $video_access === 'public' && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
-            && $video_type === '' && $video_series === '' && $video_creator === ''
-            && $video_season === '' && $video_episode === ''
-            && !$redact_regions
+            && $video_type === ''
+            && !$redact_regions && !$video_redact_regions
         ) {
             $meta = meta_put_record($meta, $rel, null);
         } else {
@@ -10443,11 +11269,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'language' => $language,
                 'placeholder_image' => $placeholder_image,
                 'video_type' => $video_type,
-                'video_series' => $video_series,
-                'video_creator' => $video_creator,
-                'video_season' => $video_season,
-                'video_episode' => $video_episode,
                 'redact' => $redact_regions,
+                'video_redact' => $video_redact_regions,
                 'updated_at' => time(),
             ]);
         }
@@ -10718,6 +11541,7 @@ if (isset($_GET['view'])) {
         header('Content-Type: text/html; charset=UTF-8');
         send_security_headers();
         exit('<!DOCTYPE html><html lang="' . e(SITE_LANGUAGE) . '"><head><meta charset="utf-8">'
+            . '<meta name="viewport" content="width=device-width, initial-scale=1">'
             . '<title>Not found &ndash; ' . e(SITE_NAME) . '</title>'
             . '<meta name="robots" content="noindex">'
             . site_icon_tags()
@@ -10745,6 +11569,9 @@ if (isset($_GET['view'])) {
     $tags  = $m['tags'] ?? [];
     $document_type = (string) ($m['document_type'] ?? '');
     $document_type_label = document_types()[$document_type] ?? '';
+    $video_type = (string) ($m['video_type'] ?? '');
+    $video_type_label = video_types()[$video_type] ?? '';
+    $language = trim((string) ($m['language'] ?? ''));
     $transcript = trim((string) ($m['transcript'] ?? ''));
     $mtime = (int) filemtime($abs);
     $size  = human_size((int) filesize($abs));
@@ -10861,20 +11688,26 @@ if (isset($_GET['view'])) {
         </p>
         <?php endif; ?>
         <?php
-        /* One line of facts, above the document rather than stranded between
-           it and the buttons. The document's own date is shown when it has
-           one: for an archive the file's modification time says when the scan
-           was made, which is rarely what the reader wants to know. */
+        /* The document's own date is shown when it has one: for an archive
+           the file's modification time says when the scan was made, which
+           is rarely what the reader wants to know. document_type and
+           video_type never both apply to the same file — a PDF has one, a
+           video the other — so they share a single slot at the front of the
+           line. language has no visible home elsewhere on the page despite
+           already feeding structured data (inLanguage below), so it is
+           shown here too, in the same short, uppercased style as the file
+           extension right next to it. */
         $doc_date  = document_date_parse((string) ($m['doc_date'] ?? ''));
+        $type_label = $document_type_label !== '' ? $document_type_label : $video_type_label;
         $facts     = [];
-        if ($document_type_label !== '') { $facts[] = e($document_type_label); }
+        if ($type_label !== '') { $facts[] = e($type_label); }
         $facts[]   = e(strtoupper($ext));
+        if ($language !== '') { $facts[] = e(strtoupper($language)); }
         $facts[]   = e($size);
         $facts[]   = $doc_date['display'] !== ''
             ? e($doc_date['display'])
             : 'Updated ' . e(date('j F Y', $mtime));
         ?>
-        <p class="detail-facts detail-facts-lead"><?= implode(' <span class="sep">&middot;</span> ', $facts) ?></p>
         <figure class="detail-media<?= $kind === 'video' && !$video_restricted ? ' detail-media-stage' : '' ?>">
             <?php if ($pdf_is_hidden): ?>
                 <?php if ($hidden_preview_url !== ''): ?>
@@ -10922,6 +11755,7 @@ if (isset($_GET['view'])) {
                 <p><a class="btn" href="<?= e($raw) ?>">Download file</a></p>
             <?php endif; ?>
         </figure>
+        <p class="detail-facts detail-facts-lead"><?= implode(' <span class="sep">&middot;</span> ', $facts) ?></p>
         <p class="detail-actions">
             <?php if ($kind === 'pdf' && !$pdf_is_hidden): ?><a class="btn" href="<?= e(url_flipbook($rel)) ?>">Flip view</a><?php endif; ?>
             <?php if (in_array($kind, ['pdf', 'image', 'md'], true) && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
@@ -10958,6 +11792,7 @@ if ($abs_dir === null || !is_dir($abs_dir)) {
     header('Content-Type: text/html; charset=UTF-8');
     send_security_headers();
     exit('<!DOCTYPE html><html lang="' . e(SITE_LANGUAGE) . '"><head><meta charset="utf-8">'
+        . '<meta name="viewport" content="width=device-width, initial-scale=1">'
         . '<meta name="robots" content="noindex"><title>Folder not found &ndash; ' . e(SITE_NAME) . '</title>'
         . '<link rel="stylesheet" href="' . e(asset_url('assets/css/style.css')) . '"></head><body>'
         . '<main class="detail"><h2 class="detail-title">Folder not found</h2>'
@@ -11032,10 +11867,6 @@ foreach (scandir($abs_dir) as $entry) {
             'video_access' => video_access_of($m),
             'language' => $m['language'] ?? '',
             'video_type' => $m['video_type'] ?? '',
-            'video_series' => $m['video_series'] ?? '',
-            'video_creator' => $m['video_creator'] ?? '',
-            'video_season' => $m['video_season'] ?? '',
-            'video_episode' => $m['video_episode'] ?? '',
             'placeholder_image' => $m['placeholder_image'] ?? '',
             'full_access' => $full_access,
             'hotlink' => $previewable ? url_raw_effective($rel_entry, $m) : '',
@@ -11046,7 +11877,38 @@ foreach (scandir($abs_dir) as $entry) {
 }
 
 $crumbs = [];
-$cat_register = category_register(index_all_files($mime_map));
+$all_indexed_files = index_all_files($mime_map);
+$cat_register = category_register($all_indexed_files);
+
+// For every subfolder shown on this page, the set of categories and tags
+// found among its files at any depth below it. The category/tag chips above
+// otherwise only ever affect the row-file rows directly in this listing —
+// at a folder-only level (a fresh install's top level, most of the time)
+// clicking one visibly does nothing, since there is nothing here for it to
+// filter. This lets a folder itself be shown or hidden by the same click,
+// so filtering actually does something at any depth, not only inside a
+// folder that happens to mix files in with its subfolders.
+$dir_cats = [];
+$dir_tags = [];
+foreach ($dirs as $d) {
+    $prefix = $d['rel'] . '/';
+    $cats = [];
+    $tags = [];
+    foreach ($all_indexed_files as $f) {
+        if (strpos($f['rel'], $prefix) !== 0) {
+            continue;
+        }
+        if (($f['category'] ?? '') !== '') {
+            $cats[$f['category']] = true;
+        }
+        foreach ((array) ($f['tags'] ?? []) as $t) {
+            $tags[$t] = true;
+        }
+    }
+    $dir_cats[$d['rel']] = implode('|', array_keys($cats));
+    $dir_tags[$d['rel']] = implode('|', array_keys($tags));
+}
+
 $all_categories = [];
 foreach ($files as $f) {
     if ($f['category'] !== '' && !in_array($f['category'], $all_categories, true)) {
@@ -11360,7 +12222,7 @@ $listing_ld = [
                 </tr>
             <?php endif; ?>
             <?php foreach ($dirs as $d): ?>
-                <tr class="row-dir" data-folder="<?= e($d['rel']) ?>">
+                <tr class="row-dir" data-folder="<?= e($d['rel']) ?>" data-dir-cats="<?= e($dir_cats[$d['rel']] ?? '') ?>" data-dir-tags="<?= e($dir_tags[$d['rel']] ?? '') ?>">
                     <td colspan="<?= (int) $listing_cols ?>">
                         <div class="dir-row">
                             <a class="dir-link" href="<?= e(root_relative(url_dir($d['rel']))) ?>">&#128193; <?= e($d['name']) ?></a>
@@ -11387,12 +12249,29 @@ $listing_ld = [
                 </tr>
             <?php endforeach; ?>
             <?php foreach ($page_files as $f): ?>
-                <?php $label = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME); ?>
-                <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($f['kind'] === 'image'
-                        ? url_thumb($f['rel'], 320)
-                        : ($f['kind'] === 'pdf'
-                            ? (image_can_derive($f['rel']) ? url_thumb($f['rel'], 320) : $f['hotlink'])
-                            : '')) ?>" data-hover-thumb="<?= ($f['kind'] === 'pdf' && image_can_derive($f['rel'])) ? '1' : '' ?>" data-hover-title="<?= e($label) ?>">
+                <?php
+                $label = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
+                // A hover/listing thumbnail is offered for images always, for
+                // PDFs and public video when a derivative can be built, and
+                // for restricted/hidden video only to an admin — the same
+                // viewer who already gets a full working player via Preview
+                // for that exact file, regardless of tier. For anyone else,
+                // that tier shows a notice in place of the file, and a
+                // preview would undercut it despite the notice.
+                $hover_served = ($f['kind'] === 'pdf' || $f['kind'] === 'video') && image_can_derive($f['rel']);
+                if ($f['kind'] === 'video' && $f['video_access'] !== 'public' && !is_admin()) {
+                    $hover_served = false;
+                }
+                $hover_url = $f['kind'] === 'image'
+                    ? url_thumb($f['rel'], 320)
+                    : ($hover_served ? url_thumb($f['rel'], 320)
+                        : ($f['kind'] === 'pdf' ? $f['hotlink'] : ''));
+                // The moving clip is public video only, same gate as the
+                // static frame above — it is the poster's upgrade, offered
+                // only where the poster itself is.
+                $hover_preview = ($f['kind'] === 'video' && $hover_served) ? url_video_preview($f['rel']) : '';
+                ?>
+                <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($hover_url) ?>" data-hover-thumb="<?= $hover_served ? '1' : '' ?>" data-hover-preview="<?= e($hover_preview) ?>" data-hover-title="<?= e($label) ?>">
                     <td data-sort-name="<?= e(function_exists('mb_strtolower') ? mb_strtolower($label) : strtolower($label)) ?>">
                         <div class="file-meta">
                             <a class="file-title" href="<?= e(root_relative($f['view'])) ?>"><?= e($label) ?></a>
@@ -11450,21 +12329,14 @@ $listing_ld = [
                             </label>
                             <?php endif; ?>
                             <?php if ($f['kind'] === 'video'): ?>
-                            <fieldset class="meta-video-fields">
-                                <legend>Video metadata</legend>
-                                <label class="meta-form-label">Video type
-                                    <select name="video_type">
-                                        <option value="">Select type</option>
-                                        <?php foreach (video_types() as $vt_value => $vt_label): ?>
-                                            <option value="<?= e($vt_value) ?>" <?= $f['video_type'] === $vt_value ? 'selected' : '' ?>><?= e($vt_label) ?></option>
-                                        <?php endforeach; ?>
-                                    </select>
-                                </label>
-                                <input type="text" name="video_creator" maxlength="120" placeholder="Creator / presenter" value="<?= e($f['video_creator']) ?>">
-                                <input type="text" name="video_series" maxlength="120" placeholder="Series / programme" value="<?= e($f['video_series']) ?>">
-                                <input type="text" name="video_season" maxlength="20" placeholder="Season" value="<?= e($f['video_season']) ?>">
-                                <input type="text" name="video_episode" maxlength="20" placeholder="Episode" value="<?= e($f['video_episode']) ?>">
-                            </fieldset>
+                            <label class="meta-form-label">Video type
+                                <select name="video_type">
+                                    <option value="">Select type</option>
+                                    <?php foreach (video_types() as $vt_value => $vt_label): ?>
+                                        <option value="<?= e($vt_value) ?>" <?= $f['video_type'] === $vt_value ? 'selected' : '' ?>><?= e($vt_label) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </label>
                             <?php endif; ?>
                             <input type="text" name="language" maxlength="35" placeholder="Language (e.g. en, ms, ar)" value="<?= e($f['language']) ?>">
                             <?php $av = in_array($f['kind'], ['audio', 'video'], true); ?>
@@ -11537,6 +12409,28 @@ $listing_ld = [
                                     <option value="hidden" <?= video_access_of($f) === 'hidden' ? 'selected' : '' ?>>Hidden — removed from the folder listing, page still findable via search</option>
                                 </select>
                             </label>
+                            <?php
+                            $video_redact_regions_json = json_encode(
+                                (isset($f['video_redact']) && is_array($f['video_redact'])) ? $f['video_redact'] : [],
+                                JSON_UNESCAPED_SLASHES
+                            );
+                            $video_redact_count = (isset($f['video_redact']) && is_array($f['video_redact'])) ? count($f['video_redact']) : 0;
+                            ?>
+                            <fieldset class="meta-redact-fields meta-video-redact-fields"
+                                data-video-redact-file="<?= e($f['rel']) ?>"
+                                data-video-redact-frame="<?= e(root_relative(url_thumb($f['rel'], 640, $f))) ?>">
+                                <legend>Hover preview redaction</legend>
+                                <p class="field-note">Draw a box over a face or other detail to blur it. This affects only the hover/listing preview — the small poster frame and the short moving clip — not the full video played from the document page. The box stays fixed at this position for the whole preview clip; if the subject moves a great deal within the first few seconds, part of the frame may not stay covered.</p>
+                                <input type="hidden" name="video_redact_regions" class="video-redact-regions-input" value="<?= e($video_redact_regions_json) ?>">
+                                <div class="meta-form-actions">
+                                    <button type="button" class="btn-small btn-ghost video-redact-open">Edit redactions</button>
+                                    <button type="button" class="btn-small btn-ghost video-redact-clear">Clear all</button>
+                                    <span class="video-redact-count" aria-live="polite"><?= (int) $video_redact_count ?> region<?= $video_redact_count === 1 ? '' : 's' ?></span>
+                                </div>
+                                <?php if ($video_redact_count > 0 && !tool_have('ffmpeg')): ?>
+                                <p class="field-note field-warn">This document has hover-preview redactions, but this server has no ffmpeg, so neither the redacted preview nor an unredacted one can be built — the hover preview is skipped entirely rather than risk showing the original.</p>
+                                <?php endif; ?>
+                            </fieldset>
                             <?php endif; ?>
                             <textarea name="transcript" maxlength="100000" placeholder="<?= $av ? 'Transcript of the recording' : 'Document transcription (corrected OCR or manual transcript)' ?>" rows="4"><?= e($f['transcript']) ?></textarea>
                             <div class="meta-form-actions">

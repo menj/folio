@@ -63,6 +63,31 @@ define('PUBLISHER_EMAIL', '');
 define('PUBLISHER_PHONE', '');
 define('PUBLISHER_COUNTRY', '');
 
+/**
+ * Optional, used only by identity.json and llms.txt — the record of the
+ * person, not of the site. SITE_DESCRIPTION describes the library;
+ * PUBLISHER_BIO, if set, is what actually describes them, and takes over as
+ * the Person's own description instead of falling back to the library's.
+ * Each renders only when set, the same pattern as everything above.
+ * PUBLISHER_ALT_NAMES, _ALUMNI_OF, and _AFFILIATION each take a
+ * comma-or-newline-separated list, e.g. "University A, University B".
+ */
+define('PUBLISHER_BIO', '');
+define('PUBLISHER_OCCUPATION', '');
+define('PUBLISHER_ALT_NAMES', '');
+define('PUBLISHER_NATIONALITY', '');
+define('PUBLISHER_ALUMNI_OF', '');
+define('PUBLISHER_AFFILIATION', '');
+
+/**
+ * A second site about the same person — a personal blog alongside this
+ * library, say — named explicitly rather than left for a reader to infer
+ * from an unlabelled sameAs entry. The label is optional; a set URL alone
+ * is enough to appear, labelled generically as "Related site".
+ */
+define('PUBLISHER_RELATED_SITE_URL', '');
+define('PUBLISHER_RELATED_SITE_LABEL', '');
+
 /** Library language as a BCP 47 tag, for example en or ms. */
 define('SITE_LANGUAGE', 'en');
 
