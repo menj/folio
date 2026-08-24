@@ -716,222 +716,163 @@ today.
 - **In-page search covers the page, not the folder, once a folder is
   paginated.** The field says so — it reads *Search this page* rather than
   *Search this folder* — but a reader with two thousand documents wants to
-  search all of them. A folder-scoped server search would fix it, and is the
-  smaller half of the global search listed under Medium term.
+  search all of them. Folded into Phase 4 below as the smaller half of global
+  search, rather than tracked separately from it.
 
-- **`index.php` is past the size the single-file design serves well.** At
-  9,311 lines and 170 functions it has grown by roughly 350 lines since this
-  was first noted, and the admin screens are the bulk of it. Moving them into
-  `admin/` includes would roughly halve the main file while keeping the
-  copy-a-folder deployment intact. This is maintainability, not behaviour:
-  nothing a reader sees would change. The figures here are re-measured each
-  time the list is reviewed, because a number that quietly goes stale is worse
-  than no number.
+- **`index.php` is past the size the single-file design serves well, and has
+  grown rather than shrunk.** 12,684 lines and 229 functions now, up from
+  9,311 and 170 when this was first noted — every feature shipped since has
+  added to one file rather than being weighed against it. Moving the admin
+  screens into `admin/` includes would cut the main file roughly in half
+  while keeping the copy-a-folder deployment intact. This is maintainability,
+  not behaviour: nothing a reader sees would change. Tracked as Phase 5,
+  deliberately last — it touches the largest share of the file of anything
+  here, which makes it the most expensive place for a mistake to hide,
+  regardless of how little judgement the work itself calls for.
 
 - **The catalogue cannot be exported from the admin.** `data/metadata.json`
-  holds every title, description, category, tag, and date entered by hand, and
-  is the one asset that cannot be regenerated from the files. Backing it up
-  currently requires FTP. A download button on the Catalogue screen would be
-  small and would protect the thing most worth protecting.
+  holds every title, description, category, tag, and date entered by hand,
+  and is the one asset that cannot be regenerated from the files. Backing it
+  up currently requires FTP. Tracked as Phase 1 below.
 
-### The archive: a phased plan
+- **A restricted or hidden video's own direct URL is still exposed in one
+  place: the admin's own "Preview" button.** Its hover-preview thumbnail and
+  moving clip no longer carry the file's plain path — obscured in this
+  release — but the button that opens the actual file still does, because it
+  points straight at a file Apache serves directly, never through PHP, and
+  there is no route there to decode an obscured reference against. Genuinely
+  closing it would mean routing a gated video through PHP for the admin too,
+  always, not only when the opt-in webserver guard is on — a bigger change to
+  the default model than this release makes on its own. Tracked as Phase 3.
 
-menj.bio is a documentary biographical archive: its records are primary
-documents, and the work here strengthens the archive as an archive rather than
-turning it into a personal site. The features are general, so any Folio library
-used as an archive gains from them.
+### A phased plan
 
-Two foundations already exist and the plan builds on them. `doc_date` is free
-text that `document_date_parse()` reads as a bare year, "Oktober 1998",
-"c. 1985", day-first numeric, and Malay month names, returning an ISO value, a
-year, and a precision. And every record carries a stable `document_id` apart
-from its slug, so a link or a timeline entry survives a rename. Every phase
-obeys the principles above: files on disk are never touched, no database
-appears, adding a field stays backward compatible, and new links reference
-`document_id` and render through the current slug.
+Ordered by what each phase costs to implement, cheapest first, not by which
+would be most valuable — a library gets more from four small, shipped things
+than from one large, half-finished one. A phase's items are independent of
+each other unless stated; a later phase may depend on an earlier one.
 
-The order runs foundations first. The timeline is the centrepiece and the most
-dependent piece, since it is only as good as its date coverage and an event
-holding several documents is the related-records feature seen from another
-angle. So dates and description come before relationships, and the timeline
-comes last.
+**Phase 1 — small, standalone, no new data model.**
 
-- **Phase A, dates.** Keep the date a document was created apart from the date
-  it was digitised and the date it entered the archive. Relabels `doc_date` as
-  the document date, keeping the stored key so no record churns; adds
-  `digitised_date` and `added_at`; and makes the default listing sort the
-  document date. See decision 1 for undated records.
+- **Catalogue export.** A download button on the Catalogue screen for
+  `data/metadata.json` as-is. The one asset that cannot be regenerated from
+  the files currently has no way to be backed up except FTP.
+- **A slug history view.** Previous addresses are already stored and already
+  redirect correctly; there is simply no screen showing them or allowing one
+  to be retired deliberately. Read-only over an existing data structure.
+- **Caption files for audio and video.** The transcript half of this is
+  already done — the transcript field already renders under the player for
+  any document kind, not only text. What remains is a `<track>` element for
+  a caption file (VTT) placed beside a media file. Additive, no new
+  dependency, and does not touch the transcript rendering already shipped.
 
-- **Phase B, standardised metadata.** Describe every record the same way. Adds
-  issuing organisation, place, provenance, archive identifier, and a Collection
-  axis beside category, the last with its own archive page reusing the
-  category-archive pattern. The new fields map onto the schema.org and Dublin
-  Core graph Folio already emits: issuing organisation to `sourceOrganization`,
-  place to `contentLocation`, provenance to `dcterms:provenance`, archive
-  identifier to `identifier`, and Collection to `isPartOf`.
+**Phase 2 — self-contained, moderate scope, one feature each.**
 
-- **Phase C, related records.** Connect documents that belong to the same
-  event, qualification, or publication. Each link is stored once against a
-  `document_id` with its inverse computed at read time, so the two sides cannot
-  drift, and a disposable index under `data/` caches the reverse lookup only if
-  a library grows large enough to need it. The connection type is separate from
-  what a document is, which stays in the document type field. The types and
-  their inverses are `part_of` and `has_part`, `supersedes` and
-  `superseded_by`, `references` and `referenced_by`, and a symmetric
-  `related_to`. See decision 3.
-
-- **Phase D, timeline.** Present the records as a life history. A timeline view
-  buckets records by the year of their document date, links each entry to its
-  record, and folds an event's related documents in beneath the principal one.
-  An event is modelled with the Phase C relationships, so no separate event
-  type is introduced. Named periods layer on top of the year buckets later, and
-  undated records are listed together at the end so nothing disappears. This is
-  the Chronological browsing goal, now given a shape.
-
-Four decisions gate the work, each with a proposed answer, settled before the
-phase it gates.
-
-1. **Default sort.** Moving the default from name to document date changes a
-   shipped default, which is a minor. Proposed: dated records in date order,
-   then undated records after them by name.
-2. **`added_at` cannot be backfilled.** Existing records were never stamped.
-   Proposed: leave older records blank rather than inventing a date. The
-   alternative is to read the file modification time as the added date and
-   label it a guess.
-3. **Relationship type versus document type.** The source examples mix a
-   connection (`parent_record`, `supporting_document`) with what a document is
-   (certificate, transcript, results slip). Proposed: the small type set above,
-   with the role kept in the document type field.
-4. **Where the richer form lives.** The full field set is too tall for the
-   inline row editor. Proposed: a dedicated per-document edit screen grouped
-   into identity, dates, provenance, and relationships.
-
-### Redaction: a phased plan
-
-**Status (1.30.0): PDFs shipped; images still planned.** PDF redaction now
-exists and follows the model below exactly — fractional rectangles marked in a
-dashboard editor, an image-only rendered copy served to the public with the
-boxes burned in, the original gated, and fail-closed behaviour when the render
-engine is missing. In terms of the phases below, that is R2 (render and cache),
-R4 (the marking tool), and the PDF portion of R3 (every PDF serve path —
-detail, preview, flip reader, hover, thumbnails, structured-data image — routes
-through the derivative). What remains is the **image** side: R1 (extending the
-access gate to image files) and redaction of images rather than PDFs. The
-design record below is kept because the image work still follows it; read the
-PDF feature as the first, proven instance of it. The settled decision from the
-open questions: redaction is its own flag beside `pdf_access`, not a fourth
-state of it, and a document can be partially public — the redacted copy public
-while the original is gated, which is the passport case the feature exists for.
-
-An archive of real documents needs to publish a passport or an identity card
-while hiding the number, the address, and the photograph. This is planned, and
-there is exactly one honest way to build it. The obvious way is a fake, so the
-constraint is written down first.
-
-**Client-side boxes are not redaction.** Drawing black rectangles over the
-image with CSS or canvas leaves the original bytes one right-click, one
-network-tab look, or one devtools deletion away. Folio serves image bytes
-directly from the web server, so anything painted in the browser hides nothing.
-Folio will not ship that and call it redaction.
-
-**The real model is gate the original, publish a rendered copy.** The censored
-regions are burned into the pixels on the server, and the original stops being
-publicly reachable. Everything below follows from that.
-
-- The admin marks rectangles on the document from the dashboard. They are
-  stored as fractions of the page, so they hold at any resolution and survive
-  a re-render.
-- Folio renders a redacted copy: rasterise the image or the PDF page, paint
-  solid opaque boxes over the marked regions, strip embedded metadata, and
-  cache the result under `data/` as a disposable derivative.
-- Every public path serves only the redacted copy: the detail view, the
-  preview pane, the hover and listing thumbnails, the sitemap image, the
-  structured-data image, and the direct link. The original becomes
-  access-controlled the way a hidden PDF already is, so it is never served
-  whole to the public.
-
-That last point is the whole feature. Redaction is only as strong as the
-weakest route that serves original bytes, so this is really "extend the
-`pdf_access` gate to images and route every serve path through the rendered
-copy," with a marking tool on top. It is the concrete form of the "per-document
-access beyond PDFs" item below.
-
-**Two rules that cannot bend.**
-
-- **It fails closed.** Redaction depends on an image engine (Imagick or GD,
-  both already used for thumbnails) and, for PDFs, on Poppler. When the engine
-  is missing or a render fails, the safe behaviour is to refuse to show the
-  document, never to fall back to the unredacted original.
-- **A redacted PDF is shown as page images, not the embedded file.** Painting
-  over a PDF page leaves the text underneath extractable, which is the exact
-  way "redacted" government files have leaked. So a redacted PDF is served as
-  rendered page images, the embedded viewer and flip reader are off for it, and
-  the original PDF stays gated. Selectable text is lost on redacted documents.
-  That is the price of the boxes being real.
-
-The phases build the safe core before the convenience.
-
-- **Phase R1, gate images.** Extend the `pdf_access` states (public, restricted,
-  hidden) to image files, so an original can be marked non-public and served
-  only through the signed, access-controlled path. No redaction yet; this is
-  the gate the rest stands on, and it fails closed when signing is not
-  configured, exactly as PDF gating already does.
-
-- **Phase R2, render and cache.** Given a file and a set of rectangles,
-  produce the redacted derivative: rasterise, paint opaque boxes, strip
-  metadata, cache under `data/`. Invalidate the cache when the rectangles or
-  the source change. Refuse when the engine is absent.
-
-- **Phase R3, route every serve path.** Point the detail view, preview,
-  thumbnails, hover, sitemap image, and structured-data image at the
-  derivative for a redacted record, and gate the original behind the R1
-  access control. Audit each path so none serves the source.
-
-- **Phase R4, the marking tool.** A dashboard editor to draw, move, and delete
-  rectangles on the document, stored as page fractions. This comes last on
-  purpose: the serving and gating must be proven safe before a tool makes it
-  easy to rely on them.
-
-Decisions to settle before R1: whether redaction reuses the `pdf_access`
-field and its three states directly or gets its own flag beside it; and
-whether a document can be partially public, meaning the redacted copy is
-public while the original is gated, which is the passport case and the reason
-the feature exists.
-
-### Near term
-
-Work that is scoped and would not change existing behaviour.
-
+- **Bulk metadata editing.** Applying a category or tag across a selection,
+  rather than one row at a time. Needs a multi-select UI and a batch-apply
+  path through the existing single-record save function; no new storage
+  shape.
+- **A read-only account role.** Every account currently has full authority.
+  A role that can edit metadata but not manage accounts or settings suits a
+  library with more than one cataloguer. Needs a role field per account and
+  a permission check at each admin action that changes something beyond
+  metadata — touches several places, but each check is small and the same
+  shape as the ones already guarding admin actions.
 - **Batch OCR.** Today OCR runs one document at a time from the listing. A
   queue that works through everything unprocessed, resumable and bounded, is
-  the obvious next step for a large scanned archive.
-- **Bulk metadata editing.** Applying a category or tag across a selection,
-  rather than one row at a time.
-- **A slug history view.** Previous addresses are stored and redirect
-  correctly, but there is no screen showing them or allowing one to be
-  retired deliberately.
-- **Captions and a transcript for audio and video.** The in-page player
-  (1.24.0) plays media but shows no text alongside it, while the archive
-  already keeps a transcript field for documents. A `<track>` for caption
-  files placed beside a media file, and the existing transcript rendered under
-  the player, would make spoken records as crawlable and accessible as the
-  scanned ones — the same transcript-first posture the PDF access model takes,
-  applied to media. Additive, no new dependency.
+  the obvious next step for a large scanned archive. Needs persisted queue
+  state and a resumable run loop; the OCR call itself is unchanged.
+- **Archive Phase A — dates.** Keep the date a document was created apart
+  from the date it was digitised and the date it entered the archive.
+  Relabels `doc_date` as the document date, keeping the stored key so no
+  record churns; adds `digitised_date` and `added_at`; makes the default
+  listing sort the document date instead of name. Two decisions settle this
+  before it starts: existing records cannot be backfilled with an
+  `added_at` they were never stamped with — leave them blank rather than
+  inventing one — and moving the default sort is a shipped-default change,
+  which counts as a minor version under this project's own versioning rule.
 
-### Medium term
+**Phase 3 — a new access-control surface, mirroring one that already exists.**
 
-Larger pieces that need design work before they are safe to start.
+- **Image access control.** Extend the `pdf_access`/`video_access` shape —
+  public, restricted, hidden, signed delivery through the same
+  `FOLIO_URL_SIGNING_KEY` — to image files. This is the gate the image half
+  of redaction (below) stands on, and closes the admin-preview direct-link
+  exposure noted under Known issues for images the same way it would need
+  to for video: once a file's delivery is already routed and signed rather
+  than a bare static path, obscuring the reference is straightforward,
+  because there is finally a PHP route in the path to decode it against.
+  Extending that same treatment to video's own admin-preview link is the
+  natural companion piece, once this exists to copy.
+- **Image redaction.** Depends on the access control above. Follows the PDF
+  redaction model exactly, since that model is already proven: fractional
+  rectangles marked in the dashboard editor, an image-only rendered copy
+  with the boxes burned into the pixels served to the public, the original
+  gated behind the access control above, fail-closed if the render engine
+  is unavailable. Every serve path — detail view, hover and listing
+  thumbnails, sitemap image, structured-data image — routes through the
+  redacted derivative, audited the same way the PDF paths already were.
 
-- **Global search.** Current search filters the folder you are looking at, in
-  the browser. With OCR text now cached in `data/text/`, a real search across
-  every document's contents becomes possible. It needs an index that stays
-  cheap to build and cannot leak excluded or access-restricted documents.
-- **Per-document access beyond PDFs.** `pdf_access` covers PDFs. The same
-  gating could reasonably extend to images and other formats, using the
-  signing mechanism that already exists.
-- **A read-only account role.** Every account currently has full authority.
-  A role that can edit metadata but not manage accounts or settings would
-  suit a library with more than one cataloguer.
+**Phase 4 — needs design work before it's safe to start.**
+
+- **Global search, including the paginated-folder case above.** Current
+  search filters the folder being looked at, client-side. OCR text is
+  already cached under `data/text/`, which is what makes a real search
+  across every document's contents possible without a database — but the
+  index has to stay cheap to build and must not be able to leak an excluded
+  or access-restricted document through its results, which is the design
+  question this phase exists to settle before any code gets written.
+
+**Phase 5 — structural, no behaviour change, largest surface area to get wrong.**
+
+- **Split `index.php`.** Move the admin screens into `admin/` includes,
+  roughly halving the main file, while keeping the copy-a-folder deployment
+  intact. Ordered last deliberately: every other phase above adds a
+  bounded, reviewable piece of new behaviour, while this one touches the
+  largest share of an already-large file for zero user-visible change,
+  which makes a mistake here both easy to introduce and easy to miss.
+
+**Phase 6 — the archive's remaining phases, each depending on the one before.**
+
+Two foundations already exist and every phase below builds on them without
+needing Phase A first, except where noted: `doc_date` is free text that
+`document_date_parse()` reads as a bare year, "Oktober 1998", "c. 1985",
+day-first numeric, and Malay month names; and every record carries a stable
+`document_id` apart from its slug, so a link or a timeline entry survives a
+rename. Every phase obeys the same principles as the rest of this document:
+files on disk are never touched, no database appears, adding a field stays
+backward compatible, and new links reference `document_id` and render
+through the current slug.
+
+- **Phase B, standardised metadata.** Depends on Phase A. Describe every
+  record the same way: issuing organisation, place, provenance, archive
+  identifier, and a Collection axis beside category, the last with its own
+  archive page reusing the category-archive pattern. Maps onto the
+  schema.org and Dublin Core graph Folio already emits — issuing
+  organisation to `sourceOrganization`, place to `contentLocation`,
+  provenance to `dcterms:provenance`, archive identifier to `identifier`,
+  Collection to `isPartOf`.
+- **Phase C, related records.** Depends on Phase B. Connect documents that
+  belong to the same event, qualification, or publication. Each link is
+  stored once against a `document_id` with its inverse computed at read
+  time, so the two sides cannot drift; a disposable index under `data/`
+  caches the reverse lookup only if a library grows large enough to need
+  it. The connection type is separate from what a document is, which stays
+  in the document type field: `part_of`/`has_part`,
+  `supersedes`/`superseded_by`, `references`/`referenced_by`, and a
+  symmetric `related_to`. Settled: the small type set above, with the role
+  itself kept in the document type field rather than mixed into the
+  relationship, which the source examples for this phase originally did.
+- **Phase D, timeline.** Depends on Phase C. Present the records as a life
+  history: buckets records by the year of their document date, links each
+  entry to its record, folds an event's related documents in beneath the
+  principal one. An event is modelled with Phase C's relationships, so no
+  separate event type is introduced. Named periods layer on top of the year
+  buckets later; undated records are listed together at the end so nothing
+  disappears. The full field set Phases B and C add is too tall for the
+  inline row editor — settled as a dedicated per-document edit screen,
+  grouped into identity, dates, provenance, and relationships, rather than
+  an ever-taller version of the current one.
 
 ### Under consideration
 

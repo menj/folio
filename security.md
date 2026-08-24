@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.48.0**.
+The current supported release is **1.48.2**.
 
 ## Security controls
 
@@ -254,6 +254,38 @@ trusted, so it cannot be used to poison a cached page or a structured-data
 identifier. `X-Forwarded-Proto` is honoured only when `TRUST_PROXY_HEADERS`
 is explicitly enabled, which should only be done behind a proxy that
 overwrites that header.
+
+### Hover-preview path obscuring
+
+A restricted or hidden video's hover-preview thumbnail and moving clip are
+only ever shown to an admin — but the URL for them still ends up written
+into the page's own HTML, and under the default delisting-only model
+(guard off, the common case), that URL is the file's own literal,
+permanently-guessable direct path. If that HTML were ever exposed —
+screenshotted, cached, scraped by a browser extension — the path itself
+would be exposed with it, regardless of anything the video access-control
+guard does.
+
+`video_obscure_path()`/`video_unobscure_path()` close this specifically:
+AES-256-GCM, authenticated so a tampered token fails outright rather than
+decrypting to a different, wrong path, under a dedicated key
+(`data/.obscure-key`) generated once on first use and never requiring
+manual setup — unlike `FOLIO_URL_SIGNING_KEY`, this protects every install
+by default, not only ones that have opted into the PDF or video gate.
+`?action=thumb` and `?action=video_preview` try to decode the `file`
+parameter as an obscured token first, falling back to treating it as a
+plain path if that fails — so an ordinary link (public content, or any
+install from before this existed) keeps working unchanged, and a public
+video's own hover preview stays a plain, cacheable URL, since there is no
+secrecy benefit to obscuring a path anyone can already see linked. Verified
+with a real forged/tampered token (rejected) and a real round trip through
+the live routes (an obscured token correctly still resolves to and serves
+the right file).
+
+Not fixed by this: the admin's own "Preview" button still links to the
+file's bare direct URL, because it points at a file Apache serves directly,
+with no PHP route in the path to decode an obscured reference against.
+Tracked in `docs/upgrading.md`'s roadmap, Phase 3.
 
 ### Video access control
 

@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.48.0. Update this file in the same commit as any change it describes.
+Version 1.48.2. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.48.0');` |
-| `changelog.md` | `## 1.48.0 — 23 August 2026` |
-| `readme.txt` | `Stable tag: 1.48.0` |
-| `readme.md` | `1.48.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.48.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.48.2');` |
+| `changelog.md` | `## 1.48.2 — 23 August 2026` |
+| `readme.txt` | `Stable tag: 1.48.2` |
+| `readme.md` | `1.48.2.` under `## Version` |
+| `security.md` | `The current supported release is **1.48.2**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -129,14 +129,20 @@ data/folder-descriptions.json  folder descriptions, keyed by folder path
 data/pages.json           standalone page content
 data/aspect.json          cached PDF page shapes; safe to delete
 data/previews/            generated, cached blurred previews for hidden PDFs
+data/.obscure-key         key for obscuring a gated video's path in hover-preview
+                          URLs; regenerating invalidates only URLs already loaded
+                          in an open page, nothing stored
 uploads/                  documents
 uploads/.folio-pdf-probe.pdf  generated dummy file for the PDF-routing preflight
+uploads/.folio-video-probe.mp4  generated dummy file for the video-routing preflight
 uploads/.sfm-meta.json    legacy metadata, read once for migration
 ```
 
 ## Requirements
 
-- PHP 8.4 or newer, with JSON, password, random, and mbstring
+- PHP 8.4 or newer, with JSON, password, and random — mbstring is optional
+  (Markdown rendering only; every other feature, breadcrumb capitalisation
+  included, degrades gracefully without it rather than failing)
 - Apache or LiteSpeed
 - Write access to `data/`; read access to `uploads/`
 - No database

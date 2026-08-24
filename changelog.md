@@ -3,6 +3,100 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.48.2 — 23 August 2026
+
+### Fixed
+
+- **A folder's own name showed lowercase in the breadcrumb trail** —
+  "media / video / private" rather than "Media / Video / Private" — while
+  every other label on the page (admin section headers, category names)
+  was already properly cased. Traced to three genuinely separate places
+  that each turn a raw path segment into visible text: the folder
+  listing's own breadcrumb, a document's (a completely different, inline
+  loop, not sharing the folder listing's code at all — exactly why the
+  casing could drift between the two), and the same trail again in
+  Schema.org structured data. A fourth, related spot — the compact
+  location label in the topbar — showed the same raw, lowercase path.
+  A single shared function now capitalises just the first character of
+  each segment, never Title Case on every word, which would have mangled
+  a hyphenated or multi-word folder name no one asked to have rewritten,
+  and is used at all four sites, so what the page shows, what a document's
+  own breadcrumb shows, and what a search result's breadcrumb shows can no
+  longer disagree with each other.
+
+  Caught and fixed before release: the first version of this used
+  `mb_strtoupper()`/`mb_substr()` unconditionally, which is exactly the
+  kind of hard dependency this project's own stated principles rule out
+  — "every added dependency is optional... a missing utility costs a
+  capability, never the site" — and would have taken down every single
+  page with a fatal error on a host without the `mbstring` extension,
+  which `readme.md` already correctly documents as optional, degrading
+  only Markdown rendering. Rewritten to degrade the same way: a correct,
+  Unicode-aware capitalisation when `mbstring` is available, a plain
+  ASCII one when it isn't, never a crash either way. `docs/ssot.md`'s own
+  requirements list had mbstring listed as though it were on the same tier
+  as the genuinely required extensions, at odds with `readme.md`'s already
+  -correct framing; corrected to match.
+
+## 1.48.1 — 23 August 2026
+
+### Fixed
+
+- **A restricted or hidden video's hover-preview URLs carried its plain,
+  permanently-guessable direct path** — `?action=thumb&file=media%2Fvideo%2F
+  private%2Felis.mp4`, readable straight out of the page's own HTML, the one
+  place a gated file's real address was written down even though only an
+  admin ever sees it. Obscured with a reversible, authenticated encryption
+  (AES-256-GCM) under a dedicated key generated automatically on first use —
+  no manual setup, unlike `FOLIO_URL_SIGNING_KEY`, so this protects every
+  install by default. `?action=thumb` and `?action=video_preview` try to
+  decode the file parameter as an obscured token first, falling back to a
+  plain path if that fails, so nothing else changes: public video keeps a
+  plain, cacheable URL, and an ordinary link from before this existed still
+  works. A second, unused attribute leaking the same path
+  (`data-video-redact-file`, referenced by nothing in the JS) was removed
+  outright rather than obscured. Verified against a real running instance:
+  a tampered token correctly fails, and a genuine obscured token correctly
+  still resolves to and serves the right file.
+
+  Not closed by this: the admin's own "Preview" button still links to a
+  gated video's bare direct URL, since it points at a file Apache serves
+  directly with no PHP route in the path to decode an obscured reference
+  against. Tracked in `docs/upgrading.md`'s roadmap, Phase 3.
+
+### Changed
+
+- **`docs/upgrading.md`'s Roadmap audited against the actual codebase and
+  rewritten.** Every item checked against the code rather than trusted at
+  face value: PDF redaction confirmed complete (already correctly recorded
+  in changelog.md at 1.29.0, not 1.30.0 as the roadmap itself had claimed),
+  video access control confirmed complete, closing half of "per-document
+  access beyond PDFs" — video done, images still open. Transcript-under-
+  player rendering confirmed already generic, not kind-gated, closing half
+  of "captions and a transcript for audio and video" — only the caption
+  `<track>` file half remains. Everything else in the roadmap — archive
+  dates/metadata/relationships/timeline, image access control and
+  redaction, batch OCR, bulk metadata editing, a slug history view,
+  catalogue export, global search, a read-only account role — confirmed
+  genuinely absent from the code, zero matches. `index.php`'s own size
+  figure was stale and actually backwards: grown from 9,311 to 12,684
+  lines and 170 to 229 functions since it was first noted, not shrunk.
+
+  Restructured into six phases ordered by implementation cost rather than
+  by category: small, standalone, no-new-data-model work first (catalogue
+  export, a slug history view, caption files); self-contained
+  moderate-scope features next (bulk editing, a read-only role, batch OCR,
+  the archive's date phase); a new image access-control surface mirroring
+  the one PDF and video already have, which the image half of redaction
+  and closing the admin-preview leak above both depend on; global search,
+  which needs design work before it is safe to start; splitting
+  `index.php`, deliberately last despite being zero behaviour change,
+  since it touches the largest share of the file of anything here; and the
+  archive's remaining phases at the end, each depending on the one before
+  it. `changelog.md` needed no new entries — the completed items were
+  already properly recorded when they shipped; only the roadmap's own
+  references to them were stale.
+
 ## 1.48.0 — 23 August 2026
 
 ### Added

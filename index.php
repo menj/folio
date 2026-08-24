@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.48.0');
+define('FOLIO_VERSION', '1.48.2');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -1060,6 +1060,85 @@ function video_gate_probe_status(): int
     return 0;
 }
 
+/**
+ * A dedicated, auto-provisioned secret for reversibly obscuring a
+ * restricted or hidden video's relative path in a hover-preview URL.
+ * Generated once, on first use, and persisted to a file only Folio reads —
+ * unlike FOLIO_URL_SIGNING_KEY, this needs no manual setup, so it protects
+ * every install by default, not only ones that have opted into the PDF or
+ * video access-control gate.
+ */
+function video_obscure_key(): string
+{
+    static $key = null;
+    if ($key !== null) {
+        return $key;
+    }
+    $path = dirname(SETTINGS_FILE) . DIRECTORY_SEPARATOR . '.obscure-key';
+    $existing = @file_get_contents($path);
+    if ($existing !== false && strlen(trim($existing)) === 64 && ctype_xdigit(trim($existing))) {
+        return $key = trim($existing);
+    }
+    $fresh = bin2hex(random_bytes(32));
+    $dir = dirname($path);
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0750, true);
+    }
+    if (@file_put_contents($path, $fresh) !== false) {
+        @chmod($path, 0600);
+    }
+    return $key = $fresh;
+}
+
+/**
+ * Reversibly obscure a relative path so it cannot be read directly out of a
+ * URL or a page's HTML — used only for a restricted or hidden video's
+ * hover-preview links, otherwise the one place a gated file's literal,
+ * permanently-guessable direct path is written into a page an admin loads.
+ * AES-256-GCM: authenticated, so a tampered token fails outright rather
+ * than decrypting into a different, wrong path. Falls back to the plain
+ * path, unobscured, only if this PHP build lacks openssl entirely — the
+ * hover preview still works, just without this specific hardening, rather
+ * than breaking.
+ */
+function video_obscure_path(string $rel): string
+{
+    if (!function_exists('openssl_encrypt')) {
+        return $rel;
+    }
+    $key = hex2bin(video_obscure_key());
+    $iv = random_bytes(12);
+    $tag = '';
+    $cipher = openssl_encrypt($rel, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    if ($cipher === false || strlen($tag) !== 16) {
+        return $rel;
+    }
+    return 'x-' . rtrim(strtr(base64_encode($iv . $tag . $cipher), '+/', '-_'), '=');
+}
+
+/** Reverse video_obscure_path(). Returns null on anything that isn't a
+ *  genuine, untampered token from this same install — wrong key, tampering,
+ *  malformed input, or simply a plain filename that happens to start with
+ *  "x-" — never a best guess at what it might have meant. */
+function video_unobscure_path(string $token): ?string
+{
+    if (strpos($token, 'x-') !== 0 || !function_exists('openssl_encrypt')) {
+        return null;
+    }
+    $b64 = substr($token, 2);
+    $padded = $b64 . str_repeat('=', (4 - strlen($b64) % 4) % 4);
+    $raw = base64_decode(strtr($padded, '-_', '+/'), true);
+    if ($raw === false || strlen($raw) < 12 + 16) {
+        return null;
+    }
+    $iv     = substr($raw, 0, 12);
+    $tag    = substr($raw, 12, 16);
+    $cipher = substr($raw, 28);
+    $key = hex2bin(video_obscure_key());
+    $plain = openssl_decrypt($cipher, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
+    return $plain === false ? null : $plain;
+}
+
 /** Absolute path to the PDF-gate preflight probe file. */
 function pdf_gate_probe_path(): string
 {
@@ -1895,6 +1974,32 @@ function is_excluded(string $name, string $rel): bool
 function parse_name_list(string $raw): array
 {
     return array_values(array_filter(array_map('trim', preg_split('/[,\n]+/', $raw))));
+}
+
+/**
+ * Display text for one breadcrumb segment: a folder's literal name, on disk,
+ * with only its first character capitalised — "media" reads as "Media",
+ * "private" as "Private" — never Title Case on every word, which would
+ * mangle a hyphenated or multi-word folder name no one asked to have
+ * rewritten. mb_* throughout, so a folder name outside ASCII capitalises
+ * correctly rather than only appearing to. Used everywhere a raw path
+ * segment becomes visible text — the folder listing's own breadcrumb, a
+ * document's, and the same trail in structured data — so what a search
+ * result shows and what the page itself shows never disagree.
+ */
+function crumb_label(string $name): string
+{
+    if ($name === '') {
+        return $name;
+    }
+    // mbstring is documented as optional elsewhere in Folio — its absence
+    // disables Markdown rendering, never the whole site — so this must
+    // degrade the same way: a plain ASCII capitalise when mb_* is missing,
+    // rather than a fatal error on every single page, breadcrumb included.
+    if (function_exists('mb_strtoupper') && function_exists('mb_substr')) {
+        return mb_strtoupper(mb_substr($name, 0, 1)) . mb_substr($name, 1);
+    }
+    return strtoupper(substr($name, 0, 1)) . substr($name, 1);
 }
 
 function video_types(): array
@@ -3221,25 +3326,27 @@ function thumb_permitted(string $rel, array $m = []): bool
  * The URL to show for a file, preferring a derivative when one is possible.
  * Falls back to the original, so callers never need to branch.
  */
-function url_thumb(string $rel, int $width = 320, array $m = []): string
+function url_thumb(string $rel, int $width = 320, array $m = [], bool $obscure = false): string
 {
     if (!image_can_derive($rel) || !thumb_permitted($rel, $m)) {
         return url_raw($rel);
     }
-    return BASE_URL . '?action=thumb&w=' . (int) $width . '&file=' . rawurlencode($rel);
+    $file_param = $obscure ? video_obscure_path($rel) : rawurlencode($rel);
+    return BASE_URL . '?action=thumb&w=' . (int) $width . '&file=' . $file_param;
 }
 
 /** URL of a video's short moving preview clip, or '' when one cannot apply
  *  (not a video, ffmpeg unavailable, or the feature is off). The route
  *  itself still fails gracefully (404) if the clip cannot actually be built
  *  for this specific file — this only rules out the cases known in advance. */
-function url_video_preview(string $rel): string
+function url_video_preview(string $rel, bool $obscure = false): string
 {
     if (!VIDEO_PREVIEW_ENABLED || file_kind(strtolower(pathinfo($rel, PATHINFO_EXTENSION))) !== 'video'
         || !tool_have('ffmpeg')) {
         return '';
     }
-    return BASE_URL . '?action=video_preview&file=' . rawurlencode($rel);
+    $file_param = $obscure ? video_obscure_path($rel) : rawurlencode($rel);
+    return BASE_URL . '?action=video_preview&file=' . $file_param;
 }
 
 define('META_FILE', __DIR__ . '/data/metadata.json');
@@ -5752,7 +5859,7 @@ function schema_breadcrumbs(string $rel, string $leaf_name, string $leaf_url): a
         $items[] = [
             '@type' => 'ListItem',
             'position' => ++$pos,
-            'name' => $part,
+            'name' => crumb_label($part),
             'item' => url_dir($acc),
         ];
     }
@@ -9165,7 +9272,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'render') {
 /* one Folio actually offers so the cache cannot be filled on demand.   */
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'thumb') {
-    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    // An obscured hover-preview token decodes to the real path here; a
+    // plain path (every other file, and every install before this existed)
+    // passes through unchanged, since unobscuring a non-token returns null.
+    $file_param = (string) ($_GET['file'] ?? '');
+    $abs = resolve_path(video_unobscure_path($file_param) ?? $file_param);
     if ($abs === null || !is_file($abs)) {
         http_response_code(404);
         exit('Not found');
@@ -9260,7 +9371,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'thumb') {
 /* original file: only the derivative video_preview_build() produced.   */
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'video_preview') {
-    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    // Same reasoning as ?action=thumb: an obscured hover-preview token
+    // decodes to the real path; a plain path passes through unchanged.
+    $file_param_vp = (string) ($_GET['file'] ?? '');
+    $abs = resolve_path(video_unobscure_path($file_param_vp) ?? $file_param_vp);
     if ($abs === null || !is_file($abs)) {
         http_response_code(404);
         exit('Not found');
@@ -11671,7 +11785,7 @@ if (isset($_GET['view'])) {
         $acc = '';
         foreach (array_filter(explode('/', dirname($rel) === '.' ? '' : dirname($rel))) as $part) {
             $acc = ltrim($acc . '/' . $part, '/');
-            echo '<span class="sep">/</span><a href="' . e(url_dir($acc)) . '">' . e($part) . '</a>';
+            echo '<span class="sep">/</span><a href="' . e(url_dir($acc)) . '">' . e(crumb_label($part)) . '</a>';
         }
         ?>
         <span class="sep">/</span><span><?= e($title) ?></span>
@@ -12070,12 +12184,12 @@ $listing_ld = [
 <a class="skip-link" href="#folio-main">Skip to content</a>
 <header class="topbar">
     <h1><?= e(SITE_NAME) ?></h1>
-    <span class="running-head"><?= e($rel_dir === '' ? 'Collection' : $rel_dir) ?></span>
+    <span class="running-head"><?= e($rel_dir === '' ? 'Collection' : implode('/', array_map('crumb_label', explode('/', $rel_dir)))) ?></span>
     <nav class="crumbs">
         <a href="<?= e(url_dir('')) ?>">Home</a>
         <?php foreach ($crumbs as $c): ?>
             <span class="sep">/</span>
-            <a href="<?= e(url_dir($c['rel'])) ?>"><?= e($c['name']) ?></a>
+            <a href="<?= e(url_dir($c['rel'])) ?>"><?= e(crumb_label($c['name'])) ?></a>
         <?php endforeach; ?>
     </nav>
     <?php $folio_pages_menu = pages_menu(); if ($folio_pages_menu): ?>
@@ -12262,14 +12376,25 @@ $listing_ld = [
                 if ($f['kind'] === 'video' && $f['video_access'] !== 'public' && !is_admin()) {
                     $hover_served = false;
                 }
+                // A restricted or hidden video's hover preview is seen only
+                // by an admin, but the URL still ends up written into the
+                // page's own HTML — obscure the path there specifically, so
+                // that HTML (screenshotted, cached, or otherwise exposed)
+                // cannot be read for the file's literal, permanently-
+                // guessable direct address. Public video and every other
+                // kind keep a plain, cacheable path: there is no secrecy
+                // benefit to obscuring a path anyone can already see linked.
+                $video_needs_obscuring = $f['kind'] === 'video' && $f['video_access'] !== 'public';
                 $hover_url = $f['kind'] === 'image'
                     ? url_thumb($f['rel'], 320)
-                    : ($hover_served ? url_thumb($f['rel'], 320)
+                    : ($hover_served ? url_thumb($f['rel'], 320, [], $video_needs_obscuring)
                         : ($f['kind'] === 'pdf' ? $f['hotlink'] : ''));
-                // The moving clip is public video only, same gate as the
-                // static frame above — it is the poster's upgrade, offered
-                // only where the poster itself is.
-                $hover_preview = ($f['kind'] === 'video' && $hover_served) ? url_video_preview($f['rel']) : '';
+                // The moving clip follows the exact same gate as the static
+                // frame above ($hover_served already accounts for both
+                // public video and an admin viewing any tier) — it is the
+                // poster's upgrade, offered only where the poster itself is.
+                $hover_preview = ($f['kind'] === 'video' && $hover_served)
+                    ? url_video_preview($f['rel'], $video_needs_obscuring) : '';
                 ?>
                 <tr class="row-file" data-file="<?= e($f['rel']) ?>" data-category="<?= e($f['category']) ?>" data-tags="<?= e(implode(',', $f['tags'])) ?>" data-hover-kind="<?= e($f['kind']) ?>" data-hover-url="<?= e($hover_url) ?>" data-hover-thumb="<?= $hover_served ? '1' : '' ?>" data-hover-preview="<?= e($hover_preview) ?>" data-hover-title="<?= e($label) ?>">
                     <td data-sort-name="<?= e(function_exists('mb_strtolower') ? mb_strtolower($label) : strtolower($label)) ?>">
@@ -12417,8 +12542,7 @@ $listing_ld = [
                             $video_redact_count = (isset($f['video_redact']) && is_array($f['video_redact'])) ? count($f['video_redact']) : 0;
                             ?>
                             <fieldset class="meta-redact-fields meta-video-redact-fields"
-                                data-video-redact-file="<?= e($f['rel']) ?>"
-                                data-video-redact-frame="<?= e(root_relative(url_thumb($f['rel'], 640, $f))) ?>">
+                                data-video-redact-frame="<?= e(root_relative(url_thumb($f['rel'], 640, $f, video_access_of($f) !== 'public'))) ?>">
                                 <legend>Hover preview redaction</legend>
                                 <p class="field-note">Draw a box over a face or other detail to blur it. This affects only the hover/listing preview — the small poster frame and the short moving clip — not the full video played from the document page. The box stays fixed at this position for the whole preview clip; if the subject moves a great deal within the first few seconds, part of the frame may not stay covered.</p>
                                 <input type="hidden" name="video_redact_regions" class="video-redact-regions-input" value="<?= e($video_redact_regions_json) ?>">
