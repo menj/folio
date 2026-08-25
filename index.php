@@ -122,6 +122,9 @@ if (is_file(__DIR__ . '/config.php')) {
     @require __DIR__ . '/config.php';
 }
 
+// Media helpers live in /lib; /lib/vendor remains third-party and unmodified.
+require_once __DIR__ . '/lib/video.php';
+
 defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
@@ -5418,69 +5421,6 @@ function pdf_blur_generate(string $abs_pdf, string $rel): bool
     }
 }
 
-/** Where a restricted video's auto-generated blurred frame preview is
- *  cached. Prefixed so its hash space never collides with a PDF's, even
- *  though a shared $rel would be astronomically unlikely on its own. */
-function video_blur_cache_path(string $rel): string
-{
-    return __DIR__ . '/data/previews/' . hash('sha256', 'video:' . $rel) . '.jpg';
-}
-
-/** Whether a blurred video preview can be generated on this server: needs
- *  both ffmpeg, to pull a representative frame, and Imagick, to downscale
- *  and blur it — the same two-step loss pdf_blur_generate relies on. */
-function video_blur_available(): bool
-{
-    return tool_have('ffmpeg') && extension_loaded('imagick') && class_exists('Imagick');
-}
-
-/**
- * Extract one frame from a restricted video and reduce it to a small,
- * heavily blurred JPEG, cached exactly like pdf_blur_generate's page-one
- * preview and for the same reason: downscaling hard before blurring is a
- * genuine loss of the underlying content, not a filter a sharpening pass
- * could partially undo. Returns false on any failure; callers fall back
- * to the manual placeholder_image or the plain archival texture.
- */
-function video_blur_generate(string $abs, string $rel): bool
-{
-    if (!video_blur_available()) {
-        return false;
-    }
-    $cache = video_blur_cache_path($rel);
-    if (is_file($cache) && filemtime($cache) >= filemtime($abs)) {
-        return true;
-    }
-    $frame_error = null;
-    $frame = video_rasterise_frame($abs, 400, [], $frame_error);
-    if ($frame === null) {
-        return false;
-    }
-    try {
-        $img = new Imagick();
-        image_apply_limits($img);
-        $img->readImage($frame);
-        $img->setImageFormat('jpeg');
-        $img->flattenImages();
-        $w = max(1, (int) $img->getImageWidth());
-        $img->scaleImage(max(1, (int) ($w / 8)), 0);
-        $img->blurImage(6, 3);
-        $img->scaleImage(min(600, $w), 0);
-        $img->setImageCompressionQuality(70);
-        if (!is_dir(dirname($cache)) && !@mkdir(dirname($cache), 0750, true)) {
-            return false;
-        }
-        $ok = $img->writeImage($cache);
-        $img->clear();
-        return (bool) $ok;
-    } catch (Throwable $e) {
-        return false;
-    } finally {
-        @unlink($frame);
-    }
-}
-
-
 /* A redacted PDF is one an admin has drawn opaque rectangles onto.   */
 /* The public is served a RASTERISED, image-only derivative with the  */
 /* boxes burned in: because every page is an image, the text under a  */
@@ -9933,6 +9873,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'video_blur_preview') {
         session_write_close();
     }
     if (!video_blur_generate($abs, $rel)) {
+        video_blur_log('route', 'preview request could not be fulfilled', [
+            'file' => $rel,
+            'action' => 'video_blur_preview',
+        ]);
         http_response_code(404);
         exit('Not found');
     }
