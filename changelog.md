@@ -3,6 +3,61 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.50.1 — 24 August 2026
+
+### Fixed
+
+- **IndexNow could submit URLs the site's other discovery files deliberately
+  withhold.** `indexnow_url_list()` built its page list without the
+  `media_page_indexable()` check `sitemap.xml` already applies to the same
+  files, so a hidden-tier file's detail page — kept out of the sitemap on
+  purpose — could still be pushed straight at Bing, Yandex, and Naver by the
+  Submit URLs button. Separately, the function always added a PDF's raw,
+  permanent file URL regardless of `pdf_access`, where `sitemap-pdf.xml`
+  has long gated the same list with `media_full_access()` specifically
+  because "a gated file's bytes are not public." Both loops now call the
+  same gate their sitemap counterpart already uses, so IndexNow can no
+  longer become a second, looser path to a page or a file the rest of the
+  discovery fileset was built to keep back.
+
+## 1.50.0 — 24 August 2026
+
+### Added
+
+- **Verified social profiles now show as icons in the site footer**, drawn
+  from the same `SITE_SAMEAS` setting `identity.json` and `vcard.vcf`
+  already use — nothing new to configure, and no risk of the footer
+  listing a platform the vCard doesn't, or vice versa, since both now read
+  through one shared `social_platform_info()` map instead of each keeping
+  its own copy. Recognises 34 platforms (X, Bluesky, LinkedIn, GitHub,
+  Mastodon, and so on); an unrecognised URL still gets a domain-derived
+  label and a generic profile-link icon rather than being silently
+  dropped. Icons are inlined SVGs styled with `fill="currentColor"`, so
+  they recolour automatically across all four themes exactly like the
+  rest of the footer, and the row is simply omitted when no verified
+  profiles are configured. The parsing this relies on
+  (`SITE_SAMEAS` → validated URL list) was previously written out twice,
+  once for `identity.json` and once for `vcard.vcf`; both now call a
+  single `site_sameas_urls()` function.
+
+## 1.49.0 — 24 August 2026
+
+### Added
+
+- **Share menu on file detail pages.** A "Share" button beside the existing
+  Direct link and Download actions opens a small menu: copy link is always
+  offered, and X, Reddit, WhatsApp, and email share links are added only
+  when `media_page_indexable()` says the page itself is public and meant to
+  be found — the same check that already governs sitemap and crawler
+  visibility. A restricted or hidden file therefore only ever gets the
+  copy-link fallback, never a public share invitation, so the share menu
+  cannot become a second path around the existing access tiers. Markup and
+  styling reuse the existing `.btn`/`.chip` conventions rather than
+  introducing a new visual language; behaviour lives in `assets/js/view.js`
+  alongside the page's other progressive-enhancement scripts, so the menu
+  degrades to no-op (not broken) with JavaScript off, matching how printing
+  already behaves on that page.
+
 ## 1.48.2 — 23 August 2026
 
 ### Fixed

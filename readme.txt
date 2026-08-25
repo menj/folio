@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.48.2
+Stable tag: 1.50.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -66,6 +66,11 @@ pages remain the search target.
 Listing and category pages emit focused WebSite, breadcrumb, CollectionPage,
 and ItemList schema. Detailed typed file schema appears on the file page.
 Publisher schema is omitted when no publisher name is configured.
+
+Each file's detail page offers a share menu. Copy link is always available;
+X, Reddit, WhatsApp, and email links appear only when that page is public
+and indexable, so a restricted or hidden file is never offered a public
+share invitation.
 
 == Sessions and accounts ==
 

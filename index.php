@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.48.2');
+define('FOLIO_VERSION', '1.50.1');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -5127,10 +5127,36 @@ function pages_menu(): array
  * deliberately do not use it: they are tools, not published pages, and their
  * crumb navigation already carries everything they need.
  */
+/**
+ * A social icon's raw SVG markup, inlined so its `fill="currentColor"`
+ * actually inherits the surrounding text colour and recolours with the
+ * active theme — an <img src="..."> reference cannot do this; only markup
+ * sitting directly in the page can. Falls back to the generic 'link' icon
+ * for any key without a matching file (should not happen given
+ * social_platform_info always returns a known key, but a missing or
+ * renamed asset should degrade to a glyph, not a broken image or a fatal
+ * error), and to nothing at all if even that is missing.
+ */
+function social_icon_svg(string $icon): string
+{
+    static $cache = [];
+    if (isset($cache[$icon])) {
+        return $cache[$icon];
+    }
+    $safe = preg_replace('/[^a-z0-9_-]/', '', $icon);
+    $path = __DIR__ . '/assets/img/social/' . $safe . '.svg';
+    if (!is_file($path) && $safe !== 'link') {
+        $path = __DIR__ . '/assets/img/social/link.svg';
+    }
+    $svg = is_file($path) ? (string) file_get_contents($path) : '';
+    return $cache[$icon] = $svg;
+}
+
 function render_footer(): void
 {
     $pages     = pages_menu();
     $year      = date('Y');
+    $sameAs    = SITE_INDEXABLE ? site_sameas_urls() : [];
     ?>
 <footer class="site-footer">
     <div class="site-footer-inner">
@@ -5141,6 +5167,15 @@ function render_footer(): void
             <span class="footer-sep">&middot;</span>
             <span class="footer-colophon">Powered by <a class="footer-brand" href="<?= e(FOLIO_REPO_URI) ?>" rel="noopener">Folio</a><?php if (is_admin()): ?> <span class="footer-sep">&middot;</span> <span class="footer-version">v<?= e(FOLIO_VERSION) ?></span><?php endif; ?></span>
         </p>
+        <?php if ($sameAs): ?>
+        <p class="footer-social" aria-label="Verified profiles">
+            <?php foreach ($sameAs as $u):
+                $info = social_platform_info($u);
+                ?>
+                <a class="footer-social-icon" href="<?= e($u) ?>" rel="me noopener" target="_blank" aria-label="<?= e($info['label']) ?>" title="<?= e($info['label']) ?>"><?= social_icon_svg($info['icon']) ?></a>
+            <?php endforeach; ?>
+        </p>
+        <?php endif; ?>
         <nav class="footer-nav" aria-label="Site">
             <a href="<?= e(BASE_URL) ?>">Library</a>
             <?php foreach (footer_link_keys() as $link_key):
@@ -6207,12 +6242,25 @@ if (isset($_GET['indexnow_key'])) {
  */
 function indexnow_url_list(array $mime_map): array
 {
-    $all  = index_all_files($mime_map);
-    $urls = [BASE_URL];
+    $all      = index_all_files($mime_map);
+    $meta_all = meta_load();
+    $urls     = [BASE_URL];
 
-    // Document pages, and the folders they sit in.
+    // Document pages, and the folders they sit in. Gated the same way
+    // sitemap.xml already gates its own <url> entries: a hidden-tier file's
+    // page is deliberately kept out of the sitemap, and IndexNow — which
+    // actively pushes URLs at search engines rather than passively waiting
+    // to be crawled — must not become a second route around that same
+    // decision.
     $dirs = [];
     foreach ($all as $f) {
+        $rel = (string) $f['rel'];
+        if (!isset($mime_map[$f['ext']])) {
+            continue;
+        }
+        if (!media_page_indexable($rel, $meta_all[$rel] ?? [])) {
+            continue;
+        }
         $urls[] = $f['view'];
         $dir = (string) $f['dir'];
         while ($dir !== '') {
@@ -6235,12 +6283,20 @@ function indexnow_url_list(array $mime_map): array
         $urls[] = url_page((string) $mslot);
     }
 
-    // The PDF files themselves, matching the document sitemap's rule.
+    // The PDF files themselves, matching the document sitemap's rule: only a
+    // *public* PDF's raw bytes are ever advertised. A restricted or hidden
+    // PDF's page is still submitted above (its indexable detail page), but
+    // its raw file URL is not — sitemap-pdf.xml already enforces this with
+    // media_full_access(), and IndexNow must not be a second, looser path
+    // to the same bytes that gate is there to protect.
     foreach ($all as $f) {
         if (strtolower((string) $f['ext']) !== 'pdf') {
             continue;
         }
         $rel = (string) $f['rel'];
+        if (!media_full_access($rel, $meta_all[$rel] ?? [])) {
+            continue;
+        }
         $abs = resolve_path($rel);
         if ($abs !== null && is_file($abs)) {
             $urls[] = url_raw($rel);
@@ -10407,8 +10463,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     // and independent authority records (ORCID, Wikidata, VIAF, ISNI and
     // the like), each reinforcing that the same person is meant across
     // every one of them.
-    $sameAs = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
-    $sameAs = array_values(array_filter($sameAs, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
+    $sameAs = site_sameas_urls();
     if ($sameAs) {
         $subject['sameAs'] = $sameAs;
     }
@@ -10544,25 +10599,81 @@ function vcard_fold(string $line): string
  * Falls back to the capitalised host when the network isn't recognised, so
  * an unlisted profile still renders with a sensible label instead of none.
  */
-function vcard_social_label(string $url): string
+/**
+ * SITE_SAMEAS parsed into a clean list of validated URLs. One parse, reused
+ * everywhere the sameAs list is needed (identity.json, vcard.vcf, and the
+ * footer's social icons) instead of each caller repeating the same split
+ * and filter, which had drifted into two separate copies before this.
+ */
+function site_sameas_urls(): array
+{
+    $urls = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
+    return array_values(array_filter($urls, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
+}
+
+/**
+ * What a sameAs URL is, in the two forms every consumer needs: a short
+ * human label (vcard.vcf's X-SOCIALPROFILE type, and a fallback anywhere
+ * an icon can't be shown) and an icon key matching a file under
+ * assets/img/social/*.svg. One map, so recognising a platform for the
+ * vCard and recognising it for the footer's icon row can never disagree
+ * with each other. An unrecognised host still gets a readable label,
+ * derived from its domain, and an icon key of 'link' — a plain profile
+ * glyph — rather than being silently dropped.
+ */
+function social_platform_info(string $url): array
 {
     $host = strtolower((string) parse_url($url, PHP_URL_HOST));
     $host = preg_replace('/^www\./', '', $host);
     $map = [
-        'x.com' => 'X', 'twitter.com' => 'X',
-        'linkedin.com' => 'LinkedIn',
-        'github.com' => 'GitHub',
-        'flickr.com' => 'Flickr',
-        'facebook.com' => 'Facebook',
-        'instagram.com' => 'Instagram',
-        'mastodon.social' => 'Mastodon',
-        'youtube.com' => 'YouTube',
+        'x.com' => ['X', 'x'], 'twitter.com' => ['X', 'x'],
+        'bsky.app' => ['Bluesky', 'bluesky'],
+        'linkedin.com' => ['LinkedIn', 'linkedin'],
+        'github.com' => ['GitHub', 'github'],
+        'flickr.com' => ['Flickr', 'flickr'],
+        'facebook.com' => ['Facebook', 'facebook'],
+        'instagram.com' => ['Instagram', 'instagram'],
+        'mastodon.social' => ['Mastodon', 'mastodon'],
+        'youtube.com' => ['YouTube', 'youtube'],
+        'threads.net' => ['Threads', 'threads'],
+        'tiktok.com' => ['TikTok', 'tiktok'],
+        'reddit.com' => ['Reddit', 'reddit'],
+        'discord.com' => ['Discord', 'discord'], 'discord.gg' => ['Discord', 'discord'],
+        'telegram.org' => ['Telegram', 'telegram'], 't.me' => ['Telegram', 'telegram'],
+        'whatsapp.com' => ['WhatsApp', 'whatsapp'], 'wa.me' => ['WhatsApp', 'whatsapp'],
+        'substack.com' => ['Substack', 'substack'],
+        'medium.com' => ['Medium', 'medium'],
+        'pinterest.com' => ['Pinterest', 'pinterest'],
+        'snapchat.com' => ['Snapchat', 'snapchat'],
+        'twitch.tv' => ['Twitch', 'twitch'],
+        'vimeo.com' => ['Vimeo', 'vimeo'],
+        'behance.net' => ['Behance', 'behance'],
+        'dribbble.com' => ['Dribbble', 'dribbble'],
+        'tumblr.com' => ['Tumblr', 'tumblr'],
+        'weixin.qq.com' => ['WeChat', 'wechat'],
+        'line.me' => ['Line', 'line'],
+        'signal.org' => ['Signal', 'signal'],
+        'spotify.com' => ['Spotify', 'spotify'],
+        'goodreads.com' => ['Goodreads', 'goodreads'],
+        'quora.com' => ['Quora', 'quora'],
+        'wikipedia.org' => ['Wikipedia', 'wikipedia'],
+        'wikidata.org' => ['Wikidata', 'wikidata'],
+        'academia.edu' => ['Academia', 'academia'],
+        'scribd.com' => ['Scribd', 'scribd'],
+        'issuu.com' => ['Issuu', 'issuu'],
     ];
     if (isset($map[$host])) {
-        return $map[$host];
+        return ['label' => $map[$host][0], 'icon' => $map[$host][1]];
     }
-    $label = preg_replace('/\.(com|org|net|social|io|co)$/', '', $host);
-    return $label !== '' ? ucfirst($label) : 'Profile';
+    $label = preg_replace('/\.(com|org|net|social|io|co|app|me|edu|gg|tv)$/', '', $host);
+    return ['label' => $label !== '' ? ucfirst($label) : 'Profile', 'icon' => 'link'];
+}
+
+/** Back-compat wrapper: vcard.vcf's X-SOCIALPROFILE type, unchanged in
+ *  behaviour, now sourced from the shared platform map. */
+function vcard_social_label(string $url): string
+{
+    return social_platform_info($url)['label'];
 }
 
 if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
@@ -10620,8 +10731,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
     // Verified profile links, the same list identity.json exposes as sameAs,
     // one X-SOCIALPROFILE per network — the de-facto convention vCard
     // consumers (Apple Contacts, Google Contacts, Gravatar exports) read.
-    $sameAs = array_values(array_filter(array_map('trim', preg_split('/[\s,]+/', (string) SITE_SAMEAS))));
-    $sameAs = array_values(array_filter($sameAs, static fn($u) => filter_var($u, FILTER_VALIDATE_URL) !== false));
+    $sameAs = site_sameas_urls();
     foreach ($sameAs as $u) {
         $lines[] = 'X-SOCIALPROFILE;type=' . vcard_social_label($u) . ':' . vcard_escape($u);
     }
@@ -11875,6 +11985,29 @@ if (isset($_GET['view'])) {
             <?php if (in_array($kind, ['pdf', 'image', 'md'], true) && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
             <?php if ($full_access && !$video_restricted): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
             <?php if (in_array($kind, ['audio', 'video'], true) && $full_access && !$video_restricted): ?><a class="btn btn-ghost" href="<?= e($raw) ?>" download>Download</a><?php endif; ?>
+
+            <?php
+            /* Share is offered whenever the page itself is public and
+               indexable — the same condition that already governs whether
+               search engines are allowed to see it (media_page_indexable).
+               A restricted or hidden item still gets a "copy link"
+               affordance so an admin can hand the URL to someone directly,
+               but no public share-network buttons, since those imply the
+               content is meant to circulate. */
+            $is_indexable = media_page_indexable($rel, $m);
+            ?>
+            <div class="detail-share" data-share-url="<?= e($view) ?>" data-share-title="<?= e($title) ?>">
+                <button type="button" class="btn btn-ghost btn-share" aria-haspopup="true" aria-expanded="false">Share</button>
+                <div class="share-menu" hidden>
+                    <button type="button" class="share-item share-copy" data-share-action="copy">Copy link</button>
+                    <?php if ($is_indexable): ?>
+                    <a class="share-item" data-share-action="x" href="#" rel="noopener">X</a>
+                    <a class="share-item" data-share-action="reddit" href="#" rel="noopener">Reddit</a>
+                    <a class="share-item" data-share-action="whatsapp" href="#" rel="noopener">WhatsApp</a>
+                    <a class="share-item" data-share-action="email" href="#" rel="noopener">Email</a>
+                    <?php endif; ?>
+                </div>
+            </div>
         </p>
         <?php if ($transcript !== ''): ?>
         <section class="document-transcript">

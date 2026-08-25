@@ -912,6 +912,37 @@ td a:hover { color: var(--accent); }
 .chip-mini { font-size: 0.65rem; }
 a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 0.35em; }
 
+/* ---- Share menu ---------------------------------------------------- */
+.detail-share { position: relative; display: inline-block; }
+.share-menu {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    min-width: 9rem;
+    padding: 0.35rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    background: var(--leaf);
+    box-shadow: var(--shadow-lift);
+}
+.share-item {
+    display: block;
+    padding: 0.4rem 0.6rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--ink);
+    text-decoration: none;
+    font-size: 0.85rem;
+    text-align: left;
+    cursor: pointer;
+}
+.share-item:hover, .share-item:focus-visible { background: var(--rule); }
+.share-copy.copied { color: var(--accent); }
+
 /* The item count beside a category name. Set apart so it reads as a tally
    rather than as part of the name (so "Website 2" reads as Website, 2 items). */
 .chip-count {
@@ -2277,6 +2308,23 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     text-transform: uppercase;
     letter-spacing: 0.12em;
 }
+
+/* Icons for SITE_SAMEAS's verified profiles. Inlined SVG (not <img>) so
+   fill="currentColor" actually inherits --quiet and recolours with the
+   active theme, same as every other piece of footer chrome. */
+.footer-social {
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+.footer-social-icon {
+    display: inline-flex;
+    color: var(--quiet);
+}
+.footer-social-icon:hover, .footer-social-icon:focus-visible { color: var(--accent); }
+.footer-social-icon svg { width: 16px; height: 16px; }
 
 @media (max-width: 640px) {
     .site-footer-inner {

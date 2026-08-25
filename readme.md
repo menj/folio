@@ -52,6 +52,14 @@
   the admin, stored privately, with `AboutPage`, `FAQPage` (with parsed Question
   and Answer entities), and `WebPage` structured data
 * Direct hotlinks to every file, copied to the clipboard in one click
+* Share menu on every file's detail page: copy-link always available; X,
+  Reddit, WhatsApp, and email share links appear only when the page itself
+  is public and indexable, so a restricted or hidden file never gets a
+  public share invitation, just the copy-link fallback for handing the URL
+  to someone directly
+* Verified social profiles (`SITE_SAMEAS`) shown as recolourable icons in the
+  site footer, the same list already exposed in `identity.json` and
+  `vcard.vcf` — nothing to configure twice
 * SEO layer: per-file detail pages with canonical URLs, Open Graph and Twitter
   Card tags, an XML sitemap with image extensions, a generated llms.txt map for
   AI crawlers, an identity.json document, a downloadable vcard.vcf built from
@@ -133,7 +141,7 @@ data/                  Private accounts, settings, metadata, and install token
 assets/css/style.css   Stylesheet and colour schemes
 assets/css/flipbook.css  Styles for the PDF flip-view reader only
 assets/js/app.js       Listing behaviour: preview, print, editing, filtering
-assets/js/view.js      Detail page behaviour: printing
+assets/js/view.js      Detail page behaviour: printing, share menu
 assets/js/media.js     Themed audio and video transport, plus colour-scheme
                        switching on the standalone playlist pages; listing and detail
 assets/js/admin.js     Admin-only: delete/remove confirmations, rewrite preflight
@@ -1148,4 +1156,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.48.2. Single-file application with separated CSS and JS assets.
+1.50.1. Single-file application with separated CSS and JS assets.

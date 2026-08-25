@@ -229,4 +229,56 @@
             window.open(cfg.url, "_blank", "noopener");
         }
     });
+
+    /* ---- Share menu -------------------------------------------------- */
+    var shareWrap = document.querySelector(".detail-share");
+    if (shareWrap) {
+        initShareMenu(shareWrap);
+    }
+
+    function initShareMenu(wrap) {
+        var toggle = wrap.querySelector(".btn-share");
+        var menu   = wrap.querySelector(".share-menu");
+        var url    = wrap.getAttribute("data-share-url") || location.href;
+        var title  = wrap.getAttribute("data-share-title") || document.title;
+
+        var targets = {
+            x:        "https://twitter.com/intent/tweet?url=" + encodeURIComponent(url) + "&text=" + encodeURIComponent(title),
+            reddit:   "https://www.reddit.com/submit?url=" + encodeURIComponent(url) + "&title=" + encodeURIComponent(title),
+            whatsapp: "https://wa.me/?text=" + encodeURIComponent(title + " " + url),
+            email:    "mailto:?subject=" + encodeURIComponent(title) + "&body=" + encodeURIComponent(url)
+        };
+        menu.querySelectorAll("[data-share-action]").forEach(function (el) {
+            var action = el.getAttribute("data-share-action");
+            if (targets[action]) {
+                el.setAttribute("href", targets[action]);
+            }
+        });
+
+        toggle.addEventListener("click", function () {
+            var open = !menu.hidden;
+            menu.hidden = open;
+            toggle.setAttribute("aria-expanded", String(!open));
+        });
+
+        document.addEventListener("click", function (e) {
+            if (!wrap.contains(e.target)) {
+                menu.hidden = true;
+                toggle.setAttribute("aria-expanded", "false");
+            }
+        });
+
+        var copyBtn = menu.querySelector(".share-copy");
+        copyBtn.addEventListener("click", function () {
+            navigator.clipboard.writeText(url).then(function () {
+                var original = copyBtn.textContent;
+                copyBtn.textContent = "Copied";
+                copyBtn.classList.add("copied");
+                setTimeout(function () {
+                    copyBtn.textContent = original;
+                    copyBtn.classList.remove("copied");
+                }, 1500);
+            });
+        });
+    }
 }());
