@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.50.1**.
+The current supported release is **1.50.15**.
 
 ## Security controls
 
@@ -354,6 +354,19 @@ enable enforcement when its own verification shows the rule isn't actually
 blocking anything, with a clear reason why; the guard's state now persists
 across repeated page loads rather than resetting; and disabling correctly
 restores the default delisting-only model.
+
+A second cause of the same "gated video buffers, public video doesn't"
+symptom was found afterward: `stream_file_bytes()`, the function this gate
+routes non-public video through, never raised PHP's execution-time limit
+before streaming. Public video is served directly by the webserver and
+never touches PHP at all, so it was never exposed to this; a gated video
+of any real size or over a slow connection could easily outlast a shared
+host's default `max_execution_time` (commonly 30s), and PHP would kill the
+process mid-transfer rather than finish sending it — indistinguishable at
+the player from ordinary buffering that simply never resolves. Fixed with
+an uncapped `set_time_limit(0)` at the top of the function, covering both
+of its call sites (the gated-video fallback and the cached hover-preview
+clip) in one place.
 
 ### PDF access control
 

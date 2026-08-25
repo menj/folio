@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.50.1. Update this file in the same commit as any change it describes.
+Version 1.50.15. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.50.1');` |
-| `changelog.md` | `## 1.50.1 — 24 August 2026` |
-| `readme.txt` | `Stable tag: 1.50.1` |
-| `readme.md` | `1.50.1.` under `## Version` |
-| `security.md` | `The current supported release is **1.50.1**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.50.15');` |
+| `changelog.md` | `## 1.50.15 — 26 August 2026` |
+| `readme.txt` | `Stable tag: 1.50.15` |
+| `readme.md` | `1.50.15.` under `## Version` |
+| `security.md` | `The current supported release is **1.50.15**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -258,6 +258,7 @@ Public:
 | `?action=render` | Markdown to HTML, `.md` only |
 | `?action=raw` | streams a file's bytes (`serve=1`) or 301s to the direct file URL; the sole enforcement point for `pdf_access` on PDFs — see § PDF access control |
 | `?action=pdf_preview` | blurred first-page JPEG for a `hidden` PDF, generated on demand and cached; never the original file |
+| `?action=video_blur_preview` | blurred frame JPEG for a `restricted`/`hidden` video, generated on demand and cached; never the original file — see § Blurred previews for restricted/hidden video |
 | `?action=flipbook` | flip reader, PDF only; refuses `hidden` PDFs outright |
 | `?action=sitemap_pdf` | the document files themselves |
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
@@ -625,7 +626,7 @@ On top of the existing `title`, `desc`, `category`, `tags`:
 | `document_type` | controlled list (certificate, letter, card, article, magazine, tract, report, transcript, form, identity, academic, award, booklet, other) | distinct from the existing free-form `category`; also feeds a conservative Schema.org type override |
 | `transcript` | plain text, ~100,000 char cap | rendered server-side in the detail page HTML, never JS-injected — this is what keeps the content crawlable and AI-readable when the PDF itself is restricted |
 | `language` | e.g. `en`, `ms`, `ar` | optional, maps to `dcterms:language` / `inLanguage` |
-| `placeholder_image` | relative path to an existing image already in `uploads/` | manual fallback preview for `hidden` PDFs when Imagick/Ghostscript isn't available; validated to resolve to a real image file |
+| `placeholder_image` | relative path to an existing image already in `uploads/` | manual fallback preview, shared by two features: `hidden` PDFs when Imagick/Ghostscript isn't available, and `restricted`/`hidden` video when ffmpeg or Imagick isn't available; validated to resolve to a real image file |
 
 ### `?action=raw` is the sole enforcement point
 
@@ -707,6 +708,23 @@ PDF rendering isn't available, or where set regardless, the
 `uploads/` the admin points at directly. Availability is detected and
 reported on the Diagnostics screen the same way pdf.js availability already
 is.
+
+### Blurred previews for restricted/hidden video
+
+Mirrors the PDF mechanism above with a different frame source. Where the
+server has both ffmpeg and Imagick (`video_blur_available()`), a
+representative frame is extracted with the existing `video_rasterise_frame()`
+(the same function the hover-preview poster frame uses), then downscaled
+hard, blurred, and scaled back up (`video_blur_generate()`) — the same
+irreversible-loss ordering as `pdf_blur_generate()`, for the same reason.
+Cached in `data/previews/` alongside the PDF cache but under a distinct key
+(`hash('sha256', 'video:' . $rel)`, vs. the PDF cache's bare `hash('sha256', $rel)`,
+so the two never collide even given a shared `$rel`), and served through
+`?action=video_blur_preview`. `placeholder_image` is the same field the PDF
+path uses and takes the same priority when set. Where neither an
+auto-generated nor a manual preview is available, the restricted-video card
+falls back to a flat CSS texture instead of an image. Availability is
+reported on the Diagnostics screen alongside the PDF blur-preview check.
 
 ### Dublin Core Terms
 

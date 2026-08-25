@@ -66,6 +66,32 @@
         }
         var isVideo = el.tagName.toLowerCase() === "video";
 
+        // The desktop two-pane Playlist stage is stretched to fill the whole
+        // video column (see .playlist-video ... .fm-stage in style.css), so a
+        // portrait clip — narrow at its own aspect ratio — leaves the rest of
+        // that wide stage as bare black space. A blurred, cover-scaled copy of
+        // the current poster fills that space behind the actual video, which
+        // stays untouched at its correct size (object-fit: contain, no crop,
+        // no stretch). Elsewhere (the single-file page, mobile) the stage
+        // already shrinks to fit the video, so no poster is ever rendered
+        // server-side there and this stays a no-op: nothing is created, and
+        // the CSS that makes fm-stage-bg visible is itself scoped to the same
+        // desktop-playlist selector as the oversized stage it is fixing.
+        function setStageBackground(posterUrl) {
+            var bg = stage.querySelector(".fm-stage-bg");
+            if (!posterUrl) {
+                if (bg) { bg.remove(); }
+                return;
+            }
+            if (!bg) {
+                bg = document.createElement("div");
+                bg.className = "fm-stage-bg";
+                bg.setAttribute("aria-hidden", "true");
+                stage.insertBefore(bg, stage.firstChild);
+            }
+            bg.style.backgroundImage = "url(\"" + posterUrl + "\")";
+        }
+
         try {
             el.removeAttribute("controls");
             wrap.setAttribute("data-fm-ready", "1");
@@ -82,6 +108,7 @@
                 stage.tabIndex = 0;
                 el.parentNode.insertBefore(stage, el);
                 stage.appendChild(el);
+                setStageBackground(el.getAttribute("poster") || "");
             }
 
             var bar = document.createElement("div");
@@ -529,6 +556,14 @@
                     }
                     index = i;
                     el.src = queue[i].url;
+                    if (isVideo) {
+                        if (queue[i].poster) {
+                            el.setAttribute("poster", queue[i].poster);
+                        } else {
+                            el.removeAttribute("poster");
+                        }
+                        setStageBackground(queue[i].poster || "");
+                    }
                     el.load();
                     highlight();
                     if (play) {

@@ -7,7 +7,6 @@
    leaves of an open codex, divided by a gutter.
    ------------------------------------------------------------------ */
 
-:root,
 /* Shape and depth, shared by every theme. Radii were 2px, 3px and 6px in
    different places; naming them makes the interface look considered rather
    than assembled. */
@@ -289,6 +288,7 @@ body {
 }
 
 .fm-video.fm-restricted {
+    position: relative;
     aspect-ratio: 16 / 9;
     max-height: 40vh;
     display: flex;
@@ -296,14 +296,79 @@ body {
     justify-content: center;
     background: var(--leaf);
     border: 1px solid var(--rule);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: border-color 220ms var(--lift);
 }
+/* No preview image: the flat archival texture, painted on the card
+   itself since there is no separate background layer to blur. */
+.fm-video.fm-restricted:not(.fm-restricted-has-preview) {
+    background:
+        repeating-linear-gradient(135deg,
+            var(--gutter) 0, var(--gutter) 1px,
+            transparent 1px, transparent 13px),
+        var(--leaf);
+}
+/* A preview image sits on its own absolutely-positioned layer so the
+   blur filter — a second, purely visual pass on top of the server's
+   own irreversible downscale-then-blur in video_blur_generate() — never
+   touches the scrim or its text. filter on a parent blurs everything
+   painted inside it, labels included, which is why this can't just be
+   a filter on .fm-restricted itself. */
+.fm-restricted-bg {
+    position: absolute;
+    inset: -6px;
+    background-size: cover;
+    background-position: center;
+    filter: blur(4px) saturate(0.85);
+}
+.fm-restricted-scrim {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.55rem;
+    text-align: center;
+}
+.fm-restricted-has-preview .fm-restricted-scrim {
+    background: color-mix(in srgb, var(--leaf) 82%, transparent);
+}
+@media (hover: hover) {
+    .fm-video.fm-restricted:hover { border-color: var(--accent); }
+    .fm-video.fm-restricted:hover .fm-restricted-mark {
+        opacity: 1;
+        transform: scale(1.06);
+    }
+}
+
+.fm-restricted-mark {
+    width: 22px;
+    height: 22px;
+    color: var(--accent);
+    opacity: 0.85;
+    transition: opacity 220ms var(--lift), transform 220ms var(--lift);
+}
+.fm-restricted-mark svg { width: 100%; height: 100%; display: block; }
 
 .fm-restricted-note {
     margin: 0;
-    color: var(--muted);
+    color: var(--ink);
     font-family: var(--sans);
-    font-size: 0.9rem;
-    letter-spacing: 0.02em;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+.fm-restricted-sub {
+    margin: 0;
+    color: var(--quiet);
+    font-family: var(--sans);
+    font-size: 0.68rem;
+    letter-spacing: 0.11em;
+    text-transform: uppercase;
 }
 
 .fm-audio .fm-el {
@@ -573,6 +638,37 @@ body {
         max-height: none;
         height: 100%;
         margin-inline: 0;
+        justify-content: center;
+        align-items: center;
+    }
+    /* A portrait clip stays narrow at its own aspect ratio (.fm-el keeps its
+       object-fit: contain sizing, untouched), which leaves the rest of this
+       now-full-width stage as bare black either side of it. Rather than
+       stretching or cropping the actual video to fill that space, a second,
+       purely decorative layer behind it — the same poster frame, blown up
+       and blurred — fills the stage visually without the real video ever
+       leaving its correct shape. Scoped to this exact stage override, so the
+       single-file page and mobile Playlist (whose stage already shrinks to
+       fit the video, with nothing to fill) are entirely unaffected: neither
+       renders a poster for this route in the first place, so this rule has
+       nothing to select there either way.
+       z-index: -1, not a positive index on .fm-el, is what keeps this behind
+       the video: .fm-el is never given a position of its own here (it stays
+       plain, static, in-flow content, exactly as everywhere else in the
+       player), so it already paints above any positioned descendant with a
+       negative index by the normal stacking rules — the controls bar, the
+       play overlay, and the spinner (all position: absolute, z-index: auto)
+       stay exactly where they always were, above the video, untouched. */
+    .playlist-video .fm-standalone.fm-video .fm-stage-bg {
+        position: absolute;
+        inset: -6px;
+        background-size: cover;
+        background-position: center;
+        filter: blur(28px) saturate(1.1);
+        transform: scale(1.08);
+        opacity: 0.55;
+        z-index: -1;
+        pointer-events: none;
     }
     .playlist-video .fm-standalone.fm-video .fm-list {
         height: 100%;
@@ -792,6 +888,29 @@ body {
 /* ---- Listing ---------------------------------------------------- */
 
 table { width: 100%; border-collapse: collapse; }
+
+/* The file listing specifically (not the admin tables elsewhere, which have
+   their own varying column counts and are fine under auto layout): under
+   the default automatic table layout, a column with no content of its own —
+   the actions column, all buttons and no text — gets sized only after the
+   name/description column has claimed most of the width from its own long
+   titles, leaving the actions column pinned to a narrow, unpredictable
+   sliver with text-align: right pushing its buttons hard against the far
+   edge and a wide gap of empty cell behind them. table-layout: fixed makes
+   column widths explicit and predictable instead: size, date, and actions
+   get a set width below (enough for the common one- or two-button case),
+   and the name column, left with no width of its own, absorbs whatever
+   remains. Actions can still wrap — nothing here forces nowrap — a row
+   with several admin actions simply wraps within its now-consistent column
+   rather than stretching it. Unrelated to the >560px mobile layout, which
+   already discards the table structure entirely for stacked cards. */
+.listing > table { table-layout: fixed; }
+.listing > table th.col-size,
+.listing > table td.col-size { width: 6rem; }
+.listing > table th.col-modified,
+.listing > table td.col-modified { width: 9rem; }
+.listing > table th.col-actions,
+.listing > table td.row-actions { width: 13rem; }
 /* Top-align, so that when a row grows — an open edit form, several lines of
    tags — the size, date and buttons stay level with the title instead of
    drifting to the middle of a tall empty row. */
@@ -912,6 +1031,30 @@ td a:hover { color: var(--accent); }
 .chip-mini { font-size: 0.65rem; }
 a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 0.35em; }
 
+/* ---- Status badge ---------------------------------------------------
+   An outlined pill for an item's access state (Private, Restricted).
+   Deliberately quieter than .chip-active: a status is not a filter
+   control, so it never fills solid or invites a click. Colour is the
+   theme accent throughout — border, text, and the icon it's paired
+   with all read as one signal rather than three. */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35em;
+    padding: 0.14rem 0.65rem;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius-sm);
+    color: var(--accent);
+    font-family: var(--sans);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    background: transparent;
+}
+.status-badge svg { width: 12px; height: 12px; flex: none; }
+
+
 /* ---- Share menu ---------------------------------------------------- */
 .detail-share { position: relative; display: inline-block; }
 .share-menu {
@@ -942,6 +1085,13 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
 }
 .share-item:hover, .share-item:focus-visible { background: var(--rule); }
 .share-copy.copied { color: var(--accent); }
+
+/* Share carries the page's one deliberate accent moment: everywhere else
+   a ghost button hovers to --ink, but Share is the control that invites
+   the item to leave the archive, so it fills with --accent instead. */
+@media (hover: hover) {
+    .btn-share:hover { background: var(--accent); border-color: var(--accent); color: var(--leaf); }
+}
 
 /* The item count beside a category name. Set apart so it reads as a tally
    rather than as part of the name (so "Website 2" reads as Website, 2 items). */
@@ -1090,7 +1240,11 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     padding: 0.32rem 0.9rem;
     font-size: 0.8rem;
     letter-spacing: 0.04em;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
 }
+.btn svg, .btn-small svg { width: 13px; height: 13px; flex: none; }
 .btn-small { font-size: 0.72rem; padding: 0.18rem 0.6rem; }
 .btn-ghost { background: transparent; color: var(--accent); }
 .btn:hover, .btn-small:hover { background: var(--ink); border-color: var(--ink); color: var(--leaf); }
@@ -1302,6 +1456,11 @@ a.chip { text-decoration: none; display: inline-flex; align-items: center; gap: 
     line-height: 1.2;
     margin: 0 0 0.5rem;
     letter-spacing: -0.01em;
+}
+.detail-title .status-badge {
+    vertical-align: middle;
+    margin-left: 0.6rem;
+    transform: translateY(-0.15em);
 }
 .detail-subtitle {
     font-family: var(--sans);
@@ -1814,6 +1973,12 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     margin: -0.1rem 0 0.6rem;
 }
 .field-note a { color: var(--accent); }
+/* The one field-note used inline, inside a label's text flow rather than
+   as its own paragraph, needs the block margin above reset — a <span>
+   defaults to display:inline already, so this only needs to cancel the
+   margin, not set display itself. Previously done with a style="" attribute,
+   which a strict style-src CSP with no 'unsafe-inline' silently drops. */
+.field-note-inline { margin: 0; }
 .stack-form textarea {
     font-family: var(--sans);
     font-size: 0.9rem;
@@ -2325,6 +2490,7 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 }
 .footer-social-icon:hover, .footer-social-icon:focus-visible { color: var(--accent); }
 .footer-social-icon svg { width: 16px; height: 16px; }
+.footer-social-icon img { width: 16px; height: 16px; display: block; border-radius: 50%; }
 
 @media (max-width: 640px) {
     .site-footer-inner {

@@ -85,8 +85,15 @@
   the transcript rendered server-side so restricted documents stay fully
   readable and indexable even when the original PDF is not
 * Dublin Core Terms alongside the existing Schema.org structured data
-* Automatic blurred first-page previews for hidden PDFs,
-  with a manual placeholder-image fallback where that isn't available
+* Automatic blurred first-page previews for hidden PDFs and blurred frame
+  previews for restricted/hidden video, both with a manual placeholder-image
+  fallback where the server can't build one
+* Restricted and hidden video shows a sealed-archive notice — a keyhole icon,
+  a two-tier label, and either the blurred preview above or a plain archival
+  texture — with an outlined status badge next to the title
+* Verified social profiles (`SITE_SAMEAS`) render as recolourable inline-SVG
+  icons in the footer, `identity.json`, and `vcard.vcf` from one shared map,
+  so the three surfaces can't drift out of sync
 
 ## Design
 
@@ -199,6 +206,8 @@ Until both are done, every PDF behaves as Public regardless of what's set on it 
 Restricting a PDF is designed to keep its record page findable while gating the file itself — the "indexed page, gated file" split. A **Restricted** PDF keeps a public, crawlable record page: it stays in the public listing and the page sitemap, and its `robots` meta tag and `llms.txt` reference it exactly as for any other file, so search engines list it and a searcher can find it. Clicking through shows the detail page with a "restricted" notice where the document would be; the file is withheld. The file's own bytes are never advertised: a Restricted (or Hidden) PDF is left out of the PDF file sitemap, and its `contentUrl` and download actions are omitted from the structured data. A **Hidden** PDF goes further and is removed from the folder listing (while the page stays indexable, so it can still be found through search). In both cases, adding a `transcript` in the editor renders it directly in the page's HTML, so the content stays fully readable — by people and by search/AI crawlers — even when the original file is not. Video uses a lighter model of its own. Its **Restricted** and **Hidden** states delist a clip: the player and the file's URL are not shown to the public, who see a notice instead, yet the file itself is served directly by the webserver and stays reachable at its direct URL. The tier hides a clip from view rather than withholding its bytes, so a Restricted or Hidden video should be treated as reachable by anyone who has or can construct its URL. This is intentional, an accepted trade-off for direct-serve playback speed. A video that must be private should be kept out of the library, for example with `EXCLUDE_PATTERNS`, rather than relying on the tier.
 
 For **Hidden** PDFs specifically, Folio can generate a blurred first-page preview automatically if the server can render PDF pages (check Diagnostics). Where that isn't available, set `placeholder_image` in the editor to the relative path of any image already in `uploads/` to use as a manual stand-in instead.
+
+A **Restricted** or **Hidden** video gets the same treatment: instead of a blank notice, it shows a keyhole icon and a two-tier "This video is restricted / Private archive" label over a blurred frame, generated automatically if the server has both ffmpeg and Imagick (check Diagnostics). The frame is downscaled hard before it's blurred — the same irreversible-loss technique the PDF preview uses — so the result is safe to serve publicly even though the original clip is not. `placeholder_image` is the same field for both: set on a restricted video, it's used as the manual stand-in exactly like it is for a hidden PDF. Where neither an auto-generated nor a manual preview is available, the notice falls back to a plain archival texture instead of an image.
 
 ### Titles, descriptions, categories, tags
 
@@ -530,7 +539,7 @@ enables.
 | `pdftotext` | Pull text out of PDFs, cached for reuse |
 | `pdfinfo` | Page counts and PDF facts |
 | `pdftocairo` or `pdftoppm` | Render PDF page previews |
-| `ffmpeg` | A short moving preview clip on video hover, plus its static poster frame |
+| `ffmpeg` | A short moving preview clip on video hover, plus its static poster frame; also the frame source for a restricted video's blurred preview (with Imagick) |
 | `pngquant` | Smaller PNG derivatives |
 | `unpaper` | Straighten crooked scans before OCR |
 
@@ -574,7 +583,7 @@ Diagnostics lists everything found and where it looked.
 | `tesseract` | No OCR. Everything else is unaffected |
 | `pdftotext` | No text extraction from PDFs |
 | `pdftocairo` and `pdftoppm` | No PDF previews; the original file is served |
-| `ffmpeg` | No hover/listing preview for video at all — clip or frame; the play glyph shows instead |
+| `ffmpeg` | No hover/listing preview for video at all — clip or frame; the play glyph shows instead. A restricted video's card also falls back to a plain archival texture instead of a blurred preview |
 | `qpdf` | Single-page documents still OCR; multi-page ones explain why not |
 | `pngquant` | Rendered PDF pages are simply larger |
 | everything | Folio behaves exactly as it did before this feature existed |
@@ -655,7 +664,7 @@ one and says what is lost when it is absent.
 | Extension | What Folio does with it | Without it |
 | --- | --- | --- |
 | **mbstring** | Correct handling of multi-byte text | Markdown rendering is disabled |
-| **Imagick** | Thumbnails; converts TIFF, HEIC and AVIF for viewing; blurred previews | Falls back to GD |
+| **Imagick** | Thumbnails; converts TIFF, HEIC and AVIF for viewing; blurred previews for hidden PDFs and restricted video | Falls back to GD |
 | **GD** | Thumbnails for PNG, JPEG, GIF and WebP | No thumbnails; originals are served directly |
 | **fileinfo** | Detects file types from content, not just the extension | Falls back to the filename extension |
 | **iconv** | Transliterates accents when building URL slugs | Accents are stripped instead of converted |
@@ -1156,4 +1165,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.50.1. Single-file application with separated CSS and JS assets.
+1.50.15. Single-file application with separated CSS and JS assets.

@@ -720,7 +720,7 @@ today.
   search, rather than tracked separately from it.
 
 - **`index.php` is past the size the single-file design serves well, and has
-  grown rather than shrunk.** 12,684 lines and 229 functions now, up from
+  grown rather than shrunk.** 13,017 lines and 237 functions now, up from
   9,311 and 170 when this was first noted — every feature shipped since has
   added to one file rather than being weighed against it. Moving the admin
   screens into `admin/` includes would cut the main file roughly in half

@@ -3,6 +3,309 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.50.15 — 26 August 2026
+
+### Changed
+
+- **`tests/readme.md`'s "What is covered" table listed 14 of the suite's 31
+  test groups**, a gap that predated this release but sat directly beside
+  the assertions corrected in 1.50.14. Filled in every missing group,
+  including the three this release actually touched (PDF/video access
+  gating, hidden-file indexability, the PDF file sitemap), and added a
+  short "Signed URLs" section spelling out the two namespaced HMAC payloads
+  side by side — the exact distinction a stale test once got wrong.
+
+## 1.50.14 — 26 August 2026
+
+### Removed
+
+- **Dead code**: `meta_migrate_now()` (no callers — the documented admin
+  migration operation it implemented was never wired up; the current
+  architecture runs `meta_migrate()` in-memory on every read via
+  `meta_documents()` instead), `audio_playlist_for()`, `video_playlist_for()`,
+  and `media_playlist_for()` (no callers — the standalone Playlist route
+  builds its queue directly), and `video_redact_is_on()` (no callers; its
+  PDF sibling `redact_is_on()` is still used in three places and was left
+  alone).
+
+### Fixed
+
+- **A duplicated `:root` selector** (`:root, /* comment */ :root {`) in
+  `style.css`, harmless but redundant, collapsed to a single `:root`.
+- **An orphaned docblock for `site_icon_tags()`** that had drifted to sit
+  in front of unrelated asset-manifest documentation, moved back to sit
+  directly above the function it actually describes.
+- **Two stale, superseded docblocks describing an mtime-based cache-busting
+  scheme** for release assets — the actual implementation (byte-length
+  comparison against `manifest.json`, immune to FTP mtime reordering) is
+  already documented correctly right above `asset_manifest()`; the outdated
+  duplicates above it are removed.
+- **`assets/manifest.json` had drifted from the real `style.css` and
+  `media.js`** (recorded 83,681 / 28,270 bytes; actual 90,852 / 30,100),
+  the byproduct of edits in prior releases that changed those two files
+  without regenerating the manifest. Folio's own fallback (byte length
+  mismatch → serve the readable source) meant this was never a runtime
+  failure, but the minified builds were silently going unused. Regenerated
+  `manifest.json` with current sizes and `sha256`/`min_size` for both CSS
+  entries.
+- **`tests/smoke.sh` had two assertions contradicting the documented,
+  intentional behaviour they were meant to test**, both concerning what
+  "hidden" is supposed to keep off which surface:
+  - The video-signed-URL test built its HMAC payload as `<rel>|<expiry>`,
+    the PDF signing scheme (`pdf_sign()`). Production video verification
+    uses a separately namespaced `video_sign()`, payload
+    `video|<rel>|<expiry>` — so the test's own "valid" token was rejected
+    by the real validator, and its "forged" `deadbeef` token comparison was
+    validating nothing.
+  - The hidden-video sitemap assertion expected a hidden video's page to be
+    *absent* from the sitemap, and the PDF-file-sitemap assertion expected
+    a hidden PDF's raw file to be *present* in the file sitemap — both the
+    opposite of the actual, documented policy: "Hidden" removes a file
+    from the folder listing while deliberately keeping its record *page*
+    indexable (`media_page_indexable()`'s own docblock, the video-tier
+    dropdown label, and the video access control settings page all say
+    this explicitly), while gated *file bytes* are correctly excluded from
+    the file-only PDF sitemap (`sitemap_pdf`'s own code comment already
+    described this "indexed page, gated file" split). Corrected both
+    assertions to match; also dropped a `?action=feed_json` assertion that
+    tested a route which doesn't exist in this codebase and so always
+    passed vacuously. Ran the full suite against a live instance: 31/31
+    pass.
+
+## 1.50.13 — 26 August 2026
+
+### Fixed
+
+- **The file listing's action buttons (Preview, Edit, Link, and the rest)
+  sat pinned to the extreme right edge of the page**, separated from the
+  row's own name and description by a wide, empty gap, and wrapped onto a
+  second line even when the page clearly had room to spare. Root cause: the
+  listing table has no `table-layout: fixed`, so under the browser's
+  automatic layout the name/description column — the one with real,
+  variable-length content — claims most of the available width first, and
+  the actions column (all buttons, no text) is left to whatever sliver of
+  minimum width remains; `.row-actions`'s existing `text-align: right` then
+  pushes its buttons to the far edge of that leftover space rather than
+  visually anchoring them to the row. Fixed by giving the file listing's
+  table `table-layout: fixed` with explicit widths on the size, date, and
+  actions columns; the name column, left with no width of its own, absorbs
+  whatever remains. Scoped to `.listing > table` specifically, so the
+  admin screens' other tables (Footer links, etc.), which vary in column
+  count and are fine under automatic layout, are untouched. Actions still
+  wrap onto a second line for a row with several admin actions — nothing
+  here forces `nowrap` — just now within a consistent, predictable column
+  instead of an ever-shifting one.
+
+## 1.50.12 — 26 August 2026
+
+### Fixed
+
+- **The "(optional)" label next to Long Description in the file-edit form
+  tripped a CSP violation on every page load of an admin listing**, logged
+  to the browser console. It used a `style="display:inline"` attribute to
+  override `.field-note`'s block-level margin for this one inline usage
+  (everywhere else `.field-note` is its own `<p>`), but the strict
+  `style-src 'self'` CSP has no `unsafe-inline` or nonce, so the browser
+  silently dropped the attribute. Replaced with a `.field-note-inline`
+  modifier class in the stylesheet. No visual change: the parent
+  `.meta-form-label` is a column flexbox, so the span was already forced
+  onto its own line regardless of its own `display` value — the old
+  inline style was already inert before CSP started blocking it too.
+
+## 1.50.11 — 26 August 2026
+
+### Fixed
+
+- **In the desktop standalone Playlist, a portrait video rendered inside a
+  stage stretched to fill the whole two-pane video column**, leaving bare
+  black space either side of the narrow, correctly-proportioned video
+  itself. The video was never distorted — `.fm-el`'s `object-fit: contain`
+  sizing was working exactly as intended — the mismatch was between the
+  video and its stage: `.playlist-video ... .fm-stage` overrides the stage
+  to `width: 100%` so the two-pane grid cell governs its height, but the
+  video inside continues to size itself off its own aspect ratio, so a
+  portrait clip stays narrow inside a now much wider container. Landscape
+  video already used most of that width, which is why the mismatch only
+  showed up on portrait media. Fixed with a blurred, cover-scaled copy of
+  the video's own poster frame as a decorative layer behind it (`.fm-stage
+  -bg`, `z-index: -1`) — the real video is centred and untouched, at its
+  correct shape, with the otherwise-empty stage visually filled rather
+  than left as flat black. The background layer follows the queue: each
+  playlist entry now carries its own poster (video only, only when a
+  derivative can be built), swapped in alongside the video on every track
+  change rather than sticking to the first track's frame. Scoped to the
+  same desktop two-pane selector as the original stage override — the
+  single-file page and mobile Playlist, whose stage already shrinks to fit
+  the video, never render a poster for this route and are unaffected.
+
+## 1.50.10 — 26 August 2026
+
+### Fixed
+
+- **The restricted-video notice (keyhole icon, "This video is restricted" /
+  "Private archive") rendered as a flat, textureless box** with no blurred
+  preview and no diagonal archival-texture fallback, even though both were
+  implemented. Cause: `assets/css/style.min.css`, the file actually served,
+  was stale — it still only had `.fm-restricted` and `.fm-restricted-note`
+  from an older pass, missing `.fm-restricted-bg`, `.fm-restricted-scrim`,
+  `.fm-restricted-mark`, `.fm-restricted-sub`, and the no-preview diagonal
+  texture rule, all of which exist in `style.css`. Regenerated the minified
+  build from source so it matches.
+
+### Changed
+
+- **The Share button no longer appears on restricted-video or hidden-PDF
+  pages.** It previously still rendered with a "Copy link" option (public
+  share-network buttons were already withheld), on the reasoning that an
+  admin might want to hand the URL to someone directly. That's now dropped
+  in favour of no Share affordance at all on these pages — there's no
+  underlying content to circulate, so even a copy-link button implied more
+  than the page offers. Admins can still copy the URL from the browser's
+  address bar.
+
+## 1.50.9 — 25 August 2026
+
+### Fixed
+
+- **Gated video (restricted/hidden, once the access guard is on) could
+  stall partway through playback and never recover**, while public video
+  played fine. `stream_file_bytes()`, the function every gated video is
+  routed through, never raised PHP's execution-time limit before
+  streaming. Public video is served directly by the webserver and never
+  touches PHP, so it was never exposed to this; a gated video of any real
+  size, or over a slow connection, could easily outlast a shared host's
+  default `max_execution_time` (commonly 30s) — PHP would kill the
+  process mid-transfer, and the player would see the connection drop,
+  stall, and reopen a new Range request from where it left off, which
+  looks exactly like buffering that never resolves. Fixed with an
+  uncapped `set_time_limit(0)` at the top of the function, covering both
+  of its call sites in one place.
+
+## 1.50.8 — 25 August 2026
+
+### Changed
+
+- **`menj.blog`'s icon is now a threshold-traced portrait silhouette**
+  derived directly from the site owner's own photo, replacing the "M"
+  monogram from 1.50.7. Processed as a stencil-style reduction (upscale,
+  blur, threshold, then traced to vector with `potrace`) rather than a
+  redrawn likeness, and normalised into the same 24×24 `fill="currentColor"`
+  convention as every other icon in the set, `fill-rule="evenodd"` to
+  preserve the eye/mouth cutouts as holes rather than filling them solid.
+
+## 1.50.7 — 25 August 2026
+
+### Changed
+
+- **`menj.blog`'s footer/`identity.json`/`vcard.vcf` icon is now an "M"
+  monogram** (`assets/img/social/menj-blog.svg`), matching the flat,
+  single-colour `currentColor` treatment every other entry without a real
+  brand mark already uses (Academia's "A", Gravatar's "G", Acronym Finder's
+  "AF"). Replaces a personal photo that had been served as a raster PNG via
+  `social_icon_svg()`'s photo-fallback path — consistent with the rest of the
+  set, but at the cost of the literal photo, which a flat monochrome
+  reduction can't meaningfully preserve. The PNG asset is left in place,
+  unused, since `social_icon_svg()` checks for a `.svg` first.
+
+## 1.50.6 — 25 August 2026
+
+### Fixed
+
+- **Academia, Tumblr, and Substack profiles fell back to the generic link
+  icon** instead of their own icon in the footer, `identity.json`, and
+  `vcard.vcf`. `social_platform_info()`'s domain map only matched a host
+  exactly, but all three platforms put a profile at a personal subdomain
+  rather than the bare domain — `username.academia.edu`,
+  `username.tumblr.com`, `name.substack.com` — which the exact match never
+  caught. Added a subdomain-suffix fallback after the exact match, guarded
+  with a leading dot so it can't false-positive on a lookalike domain
+  (`notgithub.com` still correctly falls through to the generic icon rather
+  than matching `github.com`).
+
+## 1.50.5 — 25 August 2026
+
+### Fixed
+
+- **Fatal parse error taking down the entire site** (`Unmatched '}' in
+  index.php`), introduced in 1.50.4. A cleanup edit to the
+  `?action=video_gate_test` route while adjacent routes were being added
+  accidentally deleted its own body — the admin check, the
+  `Content-Type: application/json` header, and the actual preflight
+  logic — leaving only its closing tail behind a bare `if { }`. Restored
+  in full. Every `.php` file in this release now lints clean with
+  `php -l` before packaging, which is how this should have been caught
+  before 1.50.4 shipped rather than after.
+
+## 1.50.4 — 25 August 2026
+
+### Added
+
+- **A thin-line UI icon set** (lock, keyhole, film, eye, archive, external)
+  in `assets/img/ui/`, served through a new `ui_icon_svg()` helper that
+  mirrors `social_icon_svg()`'s inline-and-cache pattern, so `stroke="currentColor"`
+  recolours correctly across all four themes.
+- **Restricted video now shows a sealed-archive treatment** instead of a
+  plain one-line notice: a keyhole icon, a two-tier "This video is
+  restricted / Private archive" label, and a subtle diagonal hairline
+  texture standing in for the missing frame.
+- **Blurred preview for restricted and hidden video**, the video
+  counterpart to the existing hidden-PDF blurred first-page preview.
+  `video_blur_generate()` extracts a frame with the same `video_rasterise_frame()`
+  already used for hover previews, then downscales hard before blurring —
+  the same irreversible-loss technique `pdf_blur_generate()` uses — so
+  the result is safe to serve publicly. Reuses the existing `placeholder_image`
+  field for a manual fallback rather than adding a new one, exactly like
+  the PDF path. Served at a new `?action=video_blur_preview` route and
+  surfaced on the Diagnostics screen alongside the existing PDF blur-preview
+  check.
+- **An outlined status badge** next to the title of any restricted or
+  private item (`.status-badge`), reusing the theme accent for border,
+  text, and icon together rather than mixing colours.
+
+### Fixed
+
+- **`.fm-restricted-note` referenced an undefined CSS variable** (`--muted`
+  instead of `--quiet`), so the old restricted-video notice was silently
+  falling back to unstyled default text colour.
+- **A direct `/favicon.ico` request never fell back to a custom `branding/favicon.svg`
+  or `branding/favicon.png`.** The `<link>` tags in `<head>` already
+  preferred a branding SVG or PNG correctly, but browsers, bookmarks, and
+  tab restore ask for the literal `/favicon.ico` path regardless of what
+  those tags say — and that route only checked `branding/favicon.ico`
+  before falling through to the shipped default. A site that followed
+  `branding/readme.txt`'s own advice to drop in just an SVG or PNG would
+  see its custom icon in the tab, in search results, everywhere the
+  `<link>` tags reach — and still get Folio's own default the moment
+  something asked for `/favicon.ico` directly.
+
+## 1.50.3 — 25 August 2026
+
+### Fixed
+
+- **The Share button dropped onto its own orphan line below Flip view,
+  Print, and Direct link**, instead of sitting in the same row. The
+  action row was a `<p class="detail-actions">` wrapping a
+  `<div class="detail-share">` — a div is not valid inside a p, so the
+  browser silently closed the paragraph the moment it hit the div,
+  ending the flex container early and stranding Share outside it. The
+  `.detail-actions` flex rules were already correct; the wrapper is now
+  a `<div>`, so Share stays in the same row and wraps together with the
+  other actions on narrow screens like everything else already did.
+
+## 1.50.2 — 25 August 2026
+
+### Added
+
+- **Four more platforms recognised by `SITE_SAMEAS`.** Gravatar,
+  Google Play, Google Scholar, and Acronym Finder now resolve to their
+  own icon instead of the generic link glyph, via the same
+  `social_platform_info()` map every other platform uses — so the
+  footer, `identity.json`, and `vcard.vcf` all pick this up automatically
+  with nothing extra to configure. Google Play and Google Scholar reuse
+  Font Awesome's monochrome brand marks; Gravatar and Acronym Finder have
+  no official monochrome mark, so both were hand-drawn as letterform
+  monograms in the same style `academia.svg` already uses.
+
 ## 1.50.1 — 24 August 2026
 
 ### Fixed

@@ -126,7 +126,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.50.1');
+define('FOLIO_VERSION', '1.50.15');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -1735,7 +1735,17 @@ function url_category(string $cat): string
 if (isset($_SERVER['REQUEST_URI'])) {
     $icon_path = strtolower(basename((string) parse_url((string) $_SERVER['REQUEST_URI'], PHP_URL_PATH)));
     $icon_map = [
-        'favicon.ico'          => ['branding/favicon.ico', 'assets/img/favicon.ico'],
+        // A bare /favicon.ico request is what bookmarks, tab restore, and
+        // the address bar actually ask for — regardless of what the <link>
+        // tags in <head> say — so it needs the same branding/ priority
+        // those tags already use (svg, then png, then ico), not just an
+        // .ico-shaped file. Without this, a site that only dropped a
+        // favicon.svg or favicon.png into branding/ (both explicitly
+        // supported per branding/readme.txt) would have every *tag-aware*
+        // browser show the custom icon while a direct /favicon.ico request
+        // — the one this screenshot is literally showing — fell straight
+        // through to the shipped default, with no error to explain why.
+        'favicon.ico'          => ['branding/favicon.svg', 'branding/favicon.png', 'branding/favicon.ico', 'assets/img/favicon.ico'],
         'favicon.svg'          => ['branding/favicon.svg', 'assets/img/favicon.svg'],
         'favicon.png'          => ['branding/favicon.png'],
         'apple-touch-icon.png' => ['branding/apple-touch-icon.png', 'assets/img/apple-touch-icon.png'],
@@ -4432,33 +4442,6 @@ function document_forget(string $document_id, string &$error = ''): bool
     return $error === '';
 }
 
-/**
- * The <link> tags for the site icon.
- *
- * Resolution order: an explicit SITE_ICON, then anything in branding/, then
- * the icon that ships with Folio. Emitted from one place so a new page type
- * cannot quietly keep pointing at the default.
- */
-/**
- * A versioned URL for a release-owned asset.
- *
- * The stylesheet and scripts are told to cache for a year and never
- * revalidate, which is right for files that only change on upgrade — but only
- * if the URL changes with them. Without this, an upgrade ships new markup to
- * a browser still holding the previous stylesheet, and the page renders with
- * rules that no longer match: sort buttons drawn as plain boxes, tags still
- * carrying borders the new CSS removed.
- */
-/**
- * URL for a release-owned asset, carrying the version so a year-long cache is
- * bypassed exactly when the file changes.
- *
- * A minified twin is preferred when one exists and is not older than the
- * source. The mtime comparison is what makes editing safe: change
- * `style.css` to adjust a theme and it immediately outranks the stale
- * `style.min.css`, with nothing to rebuild and no setting to remember.
- * Deleting the `.min.` files reverts to readable sources permanently.
- */
 define('ASSET_MANIFEST_FILE', __DIR__ . '/assets/manifest.json');
 
 /**
@@ -4575,6 +4558,13 @@ function asset_url(string $path): string
     return BASE_URL . $rel . '?v=' . rawurlencode(FOLIO_VERSION);
 }
 
+/**
+ * The <link> tags for the site icon.
+ *
+ * Resolution order: an explicit SITE_ICON, then anything in branding/, then
+ * the icon that ships with Folio. Emitted from one place so a new page type
+ * cannot quietly keep pointing at the default.
+ */
 function site_icon_tags(): string
 {
     static $html = null;
@@ -4707,9 +4697,9 @@ function meta_load(): array
  * The document store, in the identity-keyed format, whatever is on disk.
  *
  * Legacy path-keyed files are migrated in memory on read so the rest of the
- * application sees one shape. Persisting that form is a separate, deliberate
- * step (meta_migrate_now) which takes a backup first: a page view must never
- * rewrite the metadata file as a side effect.
+ * application sees one shape. That migration is never persisted back to
+ * disk automatically — meta_documents() re-runs it on every miss of its own
+ * cache — so a page view never rewrites the metadata file as a side effect.
  */
 /** Forget the cached document view, after a write. */
 function meta_documents_reset(): void
@@ -4734,46 +4724,6 @@ function meta_documents(bool $reset = false): array
         return $cache = ['version' => 2, 'documents' => []];
     }
     return $cache = meta_is_migrated($raw) ? $raw : meta_migrate($raw);
-}
-
-/**
- * Persist the migration, once, with a backup.
- *
- * Separate from meta_load() on purpose: a page view should never rewrite the
- * metadata file as a side effect. This runs from the admin, and refuses to
- * replace a valid store with one that does not validate.
- */
-function meta_migrate_now(string &$message = '', array &$warnings = []): bool
-{
-    $valid = true;
-    $current = meta_decode_file(is_file(META_FILE) ? META_FILE : LEGACY_META_FILE, $valid);
-    if (!$valid) {
-        $message = 'The metadata file could not be parsed. It has not been changed.';
-        return false;
-    }
-    if (meta_is_migrated($current)) {
-        $message = 'Already migrated.';
-        return true;
-    }
-    $migrated = meta_migrate($current, $warnings);
-    $error = '';
-    if (!meta_validate($migrated, $error)) {
-        $message = 'Migration produced an inconsistent store, so nothing was changed: ' . $error;
-        return false;
-    }
-    // Keep a dated copy of the pre-migration file alongside the usual .bak.
-    if (is_file(META_FILE)) {
-        @copy(META_FILE, META_FILE . '.pre-1.6.' . date('Ymd-His') . '.bak');
-    }
-    $result = meta_update(static function (array $existing) use ($migrated) {
-        return meta_is_migrated($existing) ? $existing : $migrated;
-    });
-    if ($result === false) {
-        $message = 'The metadata file could not be written. Nothing was changed.';
-        return false;
-    }
-    $message = 'Migrated ' . count($migrated['documents']) . ' document(s).';
-    return true;
 }
 
 /** Perform a locked read-update-write transaction. Returns the new map or false. */
@@ -5128,6 +5078,29 @@ function pages_menu(): array
  * crumb navigation already carries everything they need.
  */
 /**
+ * A thin-line UI icon's raw SVG markup, inlined for the same reason
+ * social_icon_svg inlines its icons: only markup sitting directly in the
+ * page lets stroke="currentColor" inherit the surrounding text colour and
+ * recolour with the active theme. Covers status and function glyphs
+ * (lock, keyhole, film, eye, archive, external) used in metadata rows,
+ * restricted-media states, and controls — kept separate from the social
+ * icon set because these are single-colour outline strokes, not the
+ * filled brand marks in assets/img/social/. Falls back to an empty string
+ * for an unknown key rather than a broken image or a fatal error.
+ */
+function ui_icon_svg(string $icon): string
+{
+    static $cache = [];
+    if (isset($cache[$icon])) {
+        return $cache[$icon];
+    }
+    $safe = preg_replace('/[^a-z0-9_-]/', '', $icon);
+    $path = __DIR__ . '/assets/img/ui/' . $safe . '.svg';
+    $svg  = is_file($path) ? (string) file_get_contents($path) : '';
+    return $cache[$icon] = $svg;
+}
+
+/**
  * A social icon's raw SVG markup, inlined so its `fill="currentColor"`
  * actually inherits the surrounding text colour and recolours with the
  * active theme — an <img src="..."> reference cannot do this; only markup
@@ -5144,12 +5117,26 @@ function social_icon_svg(string $icon): string
         return $cache[$icon];
     }
     $safe = preg_replace('/[^a-z0-9_-]/', '', $icon);
-    $path = __DIR__ . '/assets/img/social/' . $safe . '.svg';
-    if (!is_file($path) && $safe !== 'link') {
-        $path = __DIR__ . '/assets/img/social/link.svg';
+    $svg_path = __DIR__ . '/assets/img/social/' . $safe . '.svg';
+    if (is_file($svg_path)) {
+        return $cache[$icon] = (string) file_get_contents($svg_path);
     }
-    $svg = is_file($path) ? (string) file_get_contents($path) : '';
-    return $cache[$icon] = $svg;
+    // A brand mark can be a flat, single-colour currentColor vector; a
+    // photograph fundamentally cannot — there is no line-art reduction of a
+    // face that reads as anything but a generic person glyph. Where an
+    // entry needs its own photo rather than a mark (a personal blog with
+    // no logo, say), an actual PNG asset is the intended file, not a
+    // missing one — so this checks for it before falling back to the
+    // generic link icon.
+    $png_path = __DIR__ . '/assets/img/social/' . $safe . '.png';
+    if (is_file($png_path)) {
+        return $cache[$icon] = '<img src="' . e(BASE_URL . 'assets/img/social/' . $safe . '.png') . '" alt="" width="16" height="16" loading="lazy">';
+    }
+    if ($safe !== 'link') {
+        $link_path = __DIR__ . '/assets/img/social/link.svg';
+        return $cache[$icon] = is_file($link_path) ? (string) file_get_contents($link_path) : '';
+    }
+    return $cache[$icon] = '';
 }
 
 function render_footer(): void
@@ -5338,57 +5325,6 @@ function file_kind(string $ext): string
 }
 
 /**
- * Media files of one kind that share a folder with $rel, in listing order.
- * Audio and video use the same queue model and player controls.
- */
-function media_playlist_for(string $rel, string $kind): array
-{
-    global $mime_map;
-    if (!in_array($kind, ['audio', 'video'], true)) {
-        return [];
-    }
-    $dir = str_replace('\\', '/', dirname($rel));
-    if ($dir === '.' || $dir === '/') {
-        $dir = '';
-    }
-    $queue = [];
-    foreach (index_all_files($mime_map ?? []) as $f) {
-        if (($f['dir'] ?? null) !== $dir || ($f['kind'] ?? '') !== $kind) {
-            continue;
-        }
-        // hotlink is access-aware (url_raw_effective): '' means this file is
-        // not linkable in the current context — a hidden or unverified-viewer
-        // video for the public. Skip it; never fall back to the raw URL, which
-        // would hand out the guarded file. Audio always has a hotlink, so this
-        // only ever filters restricted video.
-        $url = (string) ($f['hotlink'] ?? '');
-        if ($url === '') {
-            continue;
-        }
-        $title = ($f['title'] ?? '') !== ''
-            ? $f['title']
-            : pathinfo($f['name'], PATHINFO_FILENAME);
-        $queue[] = [
-            'url' => $url,
-            'title' => $title,
-            'view' => $f['view'],
-            'current' => $f['rel'] === $rel,
-        ];
-    }
-    return count($queue) >= 2 ? $queue : [];
-}
-
-function audio_playlist_for(string $rel): array
-{
-    return media_playlist_for($rel, 'audio');
-}
-
-function video_playlist_for(string $rel): array
-{
-    return media_playlist_for($rel, 'video');
-}
-
-/**
  * The file's real, content-sniffed MIME type, for metadata only
  * (encodingFormat / dcterms:format). Deliberately not used for routing,
  * previews, or sitemap inclusion — $mime_map above stays authoritative
@@ -5482,9 +5418,69 @@ function pdf_blur_generate(string $abs_pdf, string $rel): bool
     }
 }
 
-/* ================================================================== */
-/* PDF redaction (coordinate-box, image-only derivative).             */
-/*                                                                    */
+/** Where a restricted video's auto-generated blurred frame preview is
+ *  cached. Prefixed so its hash space never collides with a PDF's, even
+ *  though a shared $rel would be astronomically unlikely on its own. */
+function video_blur_cache_path(string $rel): string
+{
+    return __DIR__ . '/data/previews/' . hash('sha256', 'video:' . $rel) . '.jpg';
+}
+
+/** Whether a blurred video preview can be generated on this server: needs
+ *  both ffmpeg, to pull a representative frame, and Imagick, to downscale
+ *  and blur it — the same two-step loss pdf_blur_generate relies on. */
+function video_blur_available(): bool
+{
+    return tool_have('ffmpeg') && extension_loaded('imagick') && class_exists('Imagick');
+}
+
+/**
+ * Extract one frame from a restricted video and reduce it to a small,
+ * heavily blurred JPEG, cached exactly like pdf_blur_generate's page-one
+ * preview and for the same reason: downscaling hard before blurring is a
+ * genuine loss of the underlying content, not a filter a sharpening pass
+ * could partially undo. Returns false on any failure; callers fall back
+ * to the manual placeholder_image or the plain archival texture.
+ */
+function video_blur_generate(string $abs, string $rel): bool
+{
+    if (!video_blur_available()) {
+        return false;
+    }
+    $cache = video_blur_cache_path($rel);
+    if (is_file($cache) && filemtime($cache) >= filemtime($abs)) {
+        return true;
+    }
+    $frame_error = null;
+    $frame = video_rasterise_frame($abs, 400, [], $frame_error);
+    if ($frame === null) {
+        return false;
+    }
+    try {
+        $img = new Imagick();
+        image_apply_limits($img);
+        $img->readImage($frame);
+        $img->setImageFormat('jpeg');
+        $img->flattenImages();
+        $w = max(1, (int) $img->getImageWidth());
+        $img->scaleImage(max(1, (int) ($w / 8)), 0);
+        $img->blurImage(6, 3);
+        $img->scaleImage(min(600, $w), 0);
+        $img->setImageCompressionQuality(70);
+        if (!is_dir(dirname($cache)) && !@mkdir(dirname($cache), 0750, true)) {
+            return false;
+        }
+        $ok = $img->writeImage($cache);
+        $img->clear();
+        return (bool) $ok;
+    } catch (Throwable $e) {
+        return false;
+    } finally {
+        @unlink($frame);
+    }
+}
+
+
 /* A redacted PDF is one an admin has drawn opaque rectangles onto.   */
 /* The public is served a RASTERISED, image-only derivative with the  */
 /* boxes burned in: because every page is an image, the text under a  */
@@ -5515,12 +5511,6 @@ if (!defined('REDACT_PAGE_WIDTH')) {
 function redact_is_on(array $m): bool
 {
     return !empty($m['redact']) && is_array($m['redact']);
-}
-
-/** Whether a video has hover-preview redaction regions set. */
-function video_redact_is_on(array $m): bool
-{
-    return !empty($m['video_redact']) && is_array($m['video_redact']);
 }
 
 /** Normalise a raw region list for the video hover preview: {x,y,w,h}
@@ -9123,6 +9113,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
                 ? 'Imagick is installed but cannot read PDFs on this server. Upload a manual placeholder image per file instead.'
                 : 'Imagick is not installed. Upload a manual placeholder image per file instead of an automatic blurred preview.'),
     ];
+    $ffmpeg_ok = tool_have('ffmpeg');
+    $cfg_checks[] = [
+        'label'  => 'Blurred preview for restricted video',
+        'brief'  => 'Available',
+        'status' => $imagick_ok && $ffmpeg_ok ? 'ok' : 'warn',
+        'note'   => $imagick_ok && $ffmpeg_ok
+            ? 'Available — a blurred frame is generated automatically behind the restriction notice.'
+            : ($ffmpeg_ok
+                ? 'ffmpeg is installed but Imagick is not, so the extracted frame cannot be blurred. Upload a manual placeholder image per file instead.'
+                : 'ffmpeg is not installed, so no frame can be extracted. Upload a manual placeholder image per file instead of an automatic blurred preview.'),
+    ];
 
     $groups = [
         ['Environment', $env_checks],
@@ -9563,7 +9564,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
             continue;
         }
         $title = ($f['title'] ?? '') !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
-        $queue[] = ['url' => $url, 'title' => $title];
+        $entry = ['url' => $url, 'title' => $title];
+        // A per-track poster, video only, so the desktop two-pane stage's
+        // blurred fill (fm-stage-bg in style.css) follows whichever clip is
+        // actually playing rather than being stuck on the first track's
+        // frame once the queue advances. thumb_permitted()'s one gate is
+        // PDF-only, so image_can_derive() alone is the right check for video.
+        if ($playlist_kind === 'video' && image_can_derive($f['rel'])) {
+            $entry['poster'] = url_thumb($f['rel'], 960);
+        }
+        $queue[] = $entry;
     }
     if (count($queue) < 2) {
         // A single track is not a playlist. Send the reader to the folder.
@@ -9574,6 +9584,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
     $pl_title = $rel_pl === '' ? SITE_NAME : basename($rel_pl);
     $pl_json  = json_encode($queue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     $back_url = url_dir($rel_pl);
+    // The first track's poster, if any (see the per-track 'poster' field
+    // above), for the video element's initial poster attribute.
+    $video_poster = $queue[0]['poster'] ?? '';
 
     header('Content-Type: text/html; charset=UTF-8');
     send_security_headers();
@@ -9606,7 +9619,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
         <div class="folio-media fm-<?= e($playlist_kind) ?> fm-standalone" data-media-kind="<?= e($playlist_kind) ?>"
              data-playlist="<?= e($pl_json) ?>" data-playlist-index="0">
             <?php if ($playlist_kind === 'video'): ?>
-            <video class="fm-el" controls playsinline preload="metadata" src="<?= e($queue[0]['url']) ?>">
+            <video class="fm-el" controls playsinline preload="metadata" src="<?= e($queue[0]['url']) ?>"<?= $video_poster !== '' ? ' poster="' . e($video_poster) . '"' : '' ?>>
                 <a href="<?= e($queue[0]['url']) ?>">Open video</a>
             </video>
             <?php else: ?>
@@ -9636,6 +9649,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'playlist') {
  */
 function stream_file_bytes(string $abs, string $mime, string $disposition = 'inline'): void
 {
+    // Public video never touches this function — the webserver serves it
+    // directly, with no PHP process and so no execution-time limit anywhere
+    // in the path. This function exists specifically for the cases where a
+    // file *must* go through PHP (a gated video once the access guard is
+    // on, or the servers-that-can't-shortcut fallback), which makes the
+    // default max_execution_time a real risk here that it isn't anywhere
+    // else: a large file or a slow connection can easily outlast a 30s
+    // default, and PHP kills the process mid-transfer rather than finishing
+    // the response — the player sees the connection drop, stalls, and
+    // reopens a new Range request from where it left off, which looks
+    // exactly like buffering that never resolves. Uncapped rather than a
+    // fixed generous number for the same reason chunked reading below
+    // avoids loading the file into memory: video sizes vary too widely for
+    // any fixed cap to be both safe for a large file and not silently
+    // pointless for a small one.
+    @set_time_limit(0);
     $size = filesize($abs);
     header('Content-Type: ' . $mime);
     header('X-Content-Type-Options: nosniff');
@@ -9852,7 +9881,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
 /* ------------------------------------------------------------------ */
 /* Blurred first-page preview for "hidden" PDFs.                        */
 /* Never the original file: this streams only the derived, heavily      */
-/* downsampled and blurred JPEG, generated by pdf_blur_generate(). Safe  */
+/* downsampled and blurred JPEG, generated by pdf_blur_generate(). Safe */
 /* to serve publicly since no reconstructable content survives the blur.*/
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
@@ -9881,6 +9910,41 @@ if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
     readfile($cache);
     exit;
 }
+
+/* ------------------------------------------------------------------ */
+/* Blurred frame preview for restricted/hidden videos, the video        */
+/* counterpart to ?action=pdf_preview immediately above. Never the      */
+/* original file: this streams only the derived, heavily downsampled   */
+/* and blurred JPEG generated by video_blur_generate(). Safe to serve   */
+/* publicly since no reconstructable content survives the blur.        */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'video_blur_preview') {
+    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    if ($abs === null || !is_file($abs) || file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) !== 'video') {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if (is_excluded(basename($rel), $rel) || video_access_of(meta_load()[$rel] ?? []) === 'public') {
+        http_response_code(404);
+        exit('Not found');
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    if (!video_blur_generate($abs, $rel)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $cache = video_blur_cache_path($rel);
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . (string) filesize($cache));
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: public, max-age=86400');
+    readfile($cache);
+    exit;
+}
+
 
 /* ------------------------------------------------------------------ */
 /* Video access-control preflight, a true dry run: write the deny rule, */
@@ -10661,9 +10725,27 @@ function social_platform_info(string $url): array
         'academia.edu' => ['Academia', 'academia'],
         'scribd.com' => ['Scribd', 'scribd'],
         'issuu.com' => ['Issuu', 'issuu'],
+        'gravatar.com' => ['Gravatar', 'gravatar'],
+        'play.google.com' => ['Google Play', 'google-play'],
+        'scholar.google.com' => ['Google Scholar', 'google-scholar'],
+        'acronymfinder.com' => ['Acronym Finder', 'acronym-finder'],
+        'menj.blog' => ['MENJ', 'menj-blog'],
     ];
     if (isset($map[$host])) {
         return ['label' => $map[$host][0], 'icon' => $map[$host][1]];
+    }
+    // Several of these platforms put a profile at a personal subdomain
+    // rather than the bare domain — username.academia.edu,
+    // username.tumblr.com, name.substack.com — so an exact match on $host
+    // alone misses the very URLs these entries exist to catch. Falling
+    // through to a suffix match after the exact one keeps the exact check
+    // as the fast, unambiguous common case (x.com, github.com, ... are
+    // never themselves a subdomain of anything in this map) while still
+    // catching the subdomain form.
+    foreach ($map as $domain => $info) {
+        if (str_ends_with($host, '.' . $domain)) {
+            return ['label' => $info[0], 'icon' => $info[1]];
+        }
     }
     $label = preg_replace('/\.(com|org|net|social|io|co|app|me|edu|gg|tv)$/', '', $host);
     return ['label' => $label !== '' ? ucfirst($label) : 'Profile', 'icon' => 'link'];
@@ -11822,6 +11904,21 @@ if (isset($_GET['view'])) {
             $hidden_preview_url = BASE_URL . '?action=pdf_preview&file=' . rawurlencode($rel);
         }
     }
+    // Same idea as $hidden_preview_url above, for a restricted video: an
+    // obscured still behind the restriction notice rather than a blank
+    // card, using the same placeholder_image field so nothing new needs
+    // configuring twice, then falling back to an auto-generated blurred
+    // frame when the server can build one.
+    $video_preview_url = '';
+    if ($video_restricted) {
+        $placeholder_rel = trim((string) ($m['placeholder_image'] ?? ''));
+        $placeholder_abs = $placeholder_rel !== '' ? resolve_path($placeholder_rel) : null;
+        if ($placeholder_abs !== null && is_file($placeholder_abs)) {
+            $video_preview_url = url_raw($placeholder_rel);
+        } elseif (video_blur_available()) {
+            $video_preview_url = BASE_URL . '?action=video_blur_preview&file=' . rawurlencode($rel);
+        }
+    }
     $view  = url_view($rel);
     /* Title is always the SEO title and page title. Short description (desc)
        is always the SEO meta description. Long description is never used as
@@ -11903,7 +12000,16 @@ if (isset($_GET['view'])) {
 </header>
 <main class="detail" id="folio-main" tabindex="-1">
     <article>
-        <h2 class="detail-title"><?= e($title) ?></h2>
+        <?php
+        $access_state = $kind === 'video' ? $video_access : ($kind === 'pdf' ? $pdf_access : 'public');
+        $is_restricted_item = $access_state !== 'public';
+        ?>
+        <h2 class="detail-title">
+            <?= e($title) ?>
+            <?php if ($is_restricted_item): ?>
+            <span class="status-badge"><?= ui_icon_svg($access_state === 'hidden' ? 'keyhole' : 'lock') ?><?= $access_state === 'hidden' ? 'Private' : 'Restricted' ?></span>
+            <?php endif; ?>
+        </h2>
         <?php if ($page_desc !== ''): ?><p class="detail-desc"><?= e($page_desc) ?></p><?php endif; ?>
         <?php if ($cat !== '' || $tags): ?>
         <p class="detail-chips">
@@ -11963,8 +12069,15 @@ if (isset($_GET['view'])) {
                 </div>
             <?php elseif ($kind === 'video'): ?>
                 <?php if ($video_restricted): ?>
-                <div class="folio-media fm-video fm-restricted" aria-label="Restricted video">
-                    <p class="fm-restricted-note">This video is restricted.</p>
+                <div class="folio-media fm-video fm-restricted<?= $video_preview_url !== '' ? ' fm-restricted-has-preview' : '' ?>" aria-label="Restricted video">
+                    <?php if ($video_preview_url !== ''): ?>
+                    <div class="fm-restricted-bg" style="background-image:url(<?= e($video_preview_url) ?>)"></div>
+                    <?php endif; ?>
+                    <div class="fm-restricted-scrim">
+                        <div class="fm-restricted-mark"><?= ui_icon_svg('keyhole') ?></div>
+                        <p class="fm-restricted-note">This video is restricted</p>
+                        <p class="fm-restricted-sub">Private archive</p>
+                    </div>
                 </div>
                 <?php else: ?>
                 <div class="folio-media fm-video" data-media-kind="video">
@@ -11980,7 +12093,7 @@ if (isset($_GET['view'])) {
             <?php endif; ?>
         </figure>
         <p class="detail-facts detail-facts-lead"><?= implode(' <span class="sep">&middot;</span> ', $facts) ?></p>
-        <p class="detail-actions">
+        <div class="detail-actions">
             <?php if ($kind === 'pdf' && !$pdf_is_hidden): ?><a class="btn" href="<?= e(url_flipbook($rel)) ?>">Flip view</a><?php endif; ?>
             <?php if (in_array($kind, ['pdf', 'image', 'md'], true) && !$pdf_is_hidden): ?><button id="btn-print" class="btn btn-ghost">Print</button><?php endif; ?>
             <?php if ($full_access && !$video_restricted): ?><a class="btn btn-ghost" href="<?= e($raw) ?>">Direct link</a><?php endif; ?>
@@ -11990,14 +12103,15 @@ if (isset($_GET['view'])) {
             /* Share is offered whenever the page itself is public and
                indexable — the same condition that already governs whether
                search engines are allowed to see it (media_page_indexable).
-               A restricted or hidden item still gets a "copy link"
-               affordance so an admin can hand the URL to someone directly,
-               but no public share-network buttons, since those imply the
-               content is meant to circulate. */
+               A restricted or hidden item gets no Share button at all:
+               there's no underlying content to hand around, so even a
+               "copy link" affordance would just be copying a link to a
+               notice. Admins can still copy the URL from the address bar. */
             $is_indexable = media_page_indexable($rel, $m);
             ?>
+            <?php if (!$video_restricted && !$pdf_is_hidden): ?>
             <div class="detail-share" data-share-url="<?= e($view) ?>" data-share-title="<?= e($title) ?>">
-                <button type="button" class="btn btn-ghost btn-share" aria-haspopup="true" aria-expanded="false">Share</button>
+                <button type="button" class="btn btn-ghost btn-share" aria-haspopup="true" aria-expanded="false"><?= ui_icon_svg('external') ?>Share</button>
                 <div class="share-menu" hidden>
                     <button type="button" class="share-item share-copy" data-share-action="copy">Copy link</button>
                     <?php if ($is_indexable): ?>
@@ -12008,7 +12122,8 @@ if (isset($_GET['view'])) {
                     <?php endif; ?>
                 </div>
             </div>
-        </p>
+            <?php endif; ?>
+        </div>
         <?php if ($transcript !== ''): ?>
         <section class="document-transcript">
             <h3>Document transcription</h3>
@@ -12428,8 +12543,15 @@ $listing_ld = [
                        links: the order is decided here, because sorting one
                        page of several would not sort the folder. */
                     $col = static function (string $key, string $label) use ($paginated, $sort_key, $sort_order, $rel_dir): string {
+                        // Matches the td class of the same column
+                        // (col-size / col-modified) so table-layout: fixed —
+                        // which only reads widths from the header row — has
+                        // something to size the column by.
+                        $th_class = in_array($key, ['size', 'date'], true)
+                            ? ' class="col-' . ($key === 'date' ? 'modified' : $key) . '"'
+                            : '';
                         if (!$paginated) {
-                            return '<th aria-sort="none" data-sort-key="' . e($key) . '">'
+                            return '<th' . $th_class . ' aria-sort="none" data-sort-key="' . e($key) . '">'
                                  . '<button type="button" class="col-sort">' . e($label)
                                  . '<span class="sort-mark" aria-hidden="true"></span></button></th>';
                         }
@@ -12443,7 +12565,7 @@ $listing_ld = [
                             $href .= (strpos($href, '?') === false ? '?' : '&') . http_build_query($q);
                         }
                         $aria = $active ? ($sort_order === 'asc' ? 'ascending' : 'descending') : 'none';
-                        return '<th aria-sort="' . $aria . '">'
+                        return '<th' . $th_class . ' aria-sort="' . $aria . '">'
                              . '<a class="col-sort" href="' . e($href) . '">' . e($label)
                              . '<span class="sort-mark" aria-hidden="true"></span></a></th>';
                     };
@@ -12458,7 +12580,7 @@ $listing_ld = [
                     }
                     $listing_cols = ($total_files > 0) ? 4 : 1;
                     ?>
-                    <?php if ($total_files > 0): ?><th></th><?php endif; ?>
+                    <?php if ($total_files > 0): ?><th class="col-actions"></th><?php endif; ?>
                 </tr>
             </thead>
             <tbody>
@@ -12567,7 +12689,7 @@ $listing_ld = [
                                 <span class="field-note">Up to 120 characters. Used as the SEO meta description and as the page description when no Long Description is set.</span>
                             </label>
                             <label class="meta-form-label">
-                                Long description <span class="field-note" style="display:inline">(optional)</span>
+                                Long description <span class="field-note field-note-inline">(optional)</span>
                                 <textarea name="long_desc" maxlength="500" rows="3" placeholder="Optional longer description shown on the file details page only — not used for SEO"><?= e($f['long_desc'] ?? '') ?></textarea>
                                 <span class="field-note">Up to 500 characters. Shown on the detail page instead of the Short Description. Never used as the SEO meta description.</span>
                             </label>
@@ -12629,7 +12751,7 @@ $listing_ld = [
                             <?php if (!pdf_access_enforced() && $f['pdf_access'] !== 'public'): ?>
                                 <p class="field-note">Not enforced yet on this server — behaves as Public until the PDF access preflight is confirmed on the Crawlers screen.</p>
                             <?php endif; ?>
-                            <input type="text" name="placeholder_image" maxlength="255" placeholder="Placeholder image path for Hidden (e.g. redactions/cert-blur.jpg)" value="<?= e($f['placeholder_image']) ?>">
+                            <input type="text" name="placeholder_image" maxlength="255" placeholder="Placeholder image path for a hidden PDF or restricted video (e.g. redactions/cert-blur.jpg)" value="<?= e($f['placeholder_image']) ?>">
                             <?php
                             $redact_regions_json = json_encode(
                                 (isset($f['redact']) && is_array($f['redact'])) ? $f['redact'] : [],

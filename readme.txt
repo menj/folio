@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.50.1
+Stable tag: 1.50.15
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -220,6 +220,125 @@ Poppler. Without Tesseract there is no OCR but nothing else changes. Without
 any of them Folio behaves exactly as it did before the feature existed.
 
 PDF pages are rendered with Poppler where it is installed.
+
+= 1.50.15 =
+
+Fills in tests/readme.md's coverage table, which was missing 17 of the
+suite's 31 test groups (a pre-existing gap), and adds a short section
+documenting the two namespaced HMAC signing payloads (PDF vs video) side
+by side.
+
+= 1.50.14 =
+
+Codebase cleanup: removes five dead functions with no callers
+(meta_migrate_now, audio/video/media_playlist_for, video_redact_is_on),
+fixes stray/duplicated documentation in style.css and index.php,
+regenerates assets/manifest.json (it had drifted from the real style.css
+and media.js, so the minified builds were silently going unused), and
+corrects two tests/smoke.sh assertions that contradicted Folio's actual,
+documented "hidden" access policy. Full suite now passes 31/31.
+
+= 1.50.13 =
+
+Fixes the file listing's action buttons (Preview, Edit, Link) sitting
+pinned to the far-right page edge with a wide empty gap before them, and
+wrapping even when there was clearly room. The listing table now uses
+table-layout: fixed with a controlled width for the actions column, so
+buttons stay anchored to their row; the name column absorbs the rest.
+Wrapping is preserved for rows with several actions.
+
+= 1.50.12 =
+
+Fixes a CSP violation logged on every admin listing page load: a label in
+the file-edit form used an inline style="" attribute that the strict CSP
+silently dropped. Moved to a stylesheet class. No visual change.
+
+= 1.50.11 =
+
+Fixes a portrait video in the desktop Playlist rendering inside a stage
+stretched much wider than the video itself, leaving bare black space on
+either side. The video was never distorted; a blurred, scaled copy of its
+own poster now fills the stage behind it, while the real video stays
+centred and untouched at its correct shape.
+
+= 1.50.10 =
+
+Fixes the restricted-video notice rendering flat with no blur or texture:
+the minified stylesheet actually served was stale and missing several of
+the rules `style.css` already had. Also drops the Share button entirely
+from restricted-video and hidden-PDF pages, rather than showing a
+copy-link-only version of it.
+
+= 1.50.9 =
+
+Fixes gated video stalling partway through playback and never recovering.
+The function every gated video streams through never raised PHP's
+execution-time limit, so a large file or slow connection could outlast a
+shared host's default 30-second limit and get killed mid-transfer. Public
+video was never affected, since it bypasses PHP entirely.
+
+= 1.50.8 =
+
+menj.blog's icon is now a threshold-traced portrait silhouette from the
+site owner's own photo, replacing the 1.50.7 "M" monogram, still in the
+same flat currentColor treatment as the rest of the set.
+
+= 1.50.7 =
+
+menj.blog's own footer/identity.json/vcard.vcf icon is now a flat "M"
+monogram instead of a personal photo, matching the currentColor treatment
+every other logo-less entry already uses.
+
+= 1.50.6 =
+
+Fixes Academia, Tumblr, and Substack profiles in SITE_SAMEAS falling back to
+the generic link icon instead of their own, because all three put a profile
+at a personal subdomain rather than the bare domain and the matcher only
+checked for an exact host match.
+
+= 1.50.5 =
+
+Fixes a fatal parse error introduced in 1.50.4 that could take a site down
+entirely. Every .php file in the release now lints clean before packaging.
+
+= 1.50.4 =
+
+Restricted and hidden video now shows a sealed-archive notice — a keyhole
+icon, a two-tier label, and an automatically generated blurred frame preview
+where the server has ffmpeg and Imagick — instead of a plain one-line notice.
+Mirrors the existing hidden-PDF blurred preview: the frame is downscaled hard
+before it's blurred, so the result is safe to serve publicly. Reuses the
+existing placeholder_image field as a manual fallback rather than adding a
+new one. Adds a thin-line UI icon set and an outlined status badge next to
+the title of any restricted or private item. Fixes an undefined CSS variable
+that had been silently breaking the restricted-video notice's text colour.
+
+= 1.50.3 =
+
+Fixes the Share button dropping onto its own line below Flip view, Print,
+and Direct link, caused by invalid HTML (a block element nested inside a
+paragraph) rather than the flexbox rules, which were already correct.
+
+= 1.50.2 =
+
+Gravatar, Google Play, Google Scholar, and Acronym Finder are now recognised
+by SITE_SAMEAS and get their own icon in the footer, identity.json, and
+vcard.vcf, rather than the generic link glyph.
+
+= 1.50.1 =
+
+Fixes IndexNow URL submission not applying the same visibility gates as the
+sitemap, so a hidden-tier file could be pushed to search engines even though
+it's deliberately excluded from discovery elsewhere.
+
+= 1.50.0 =
+
+Verified social profiles (SITE_SAMEAS) now render as recolourable inline-SVG
+icons in the site footer, sourced from the same shared map that already
+powers identity.json and vcard.vcf.
+
+Older entries are not mirrored here in full; see changelog.md in the release
+for the complete history back to 1.0.0.
 
 = 1.6.0 =
 

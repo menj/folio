@@ -279,7 +279,7 @@ curl -sS -b "${COOKIE}" --data-urlencode 'action=meta' --data-urlencode "csrf=${
 [[ "$(status_code "${BASE}?action=raw&serve=1&file=viewclip.mp4")" == '404' ]] \
     || fail 'viewer video was reachable without a signed URL'
 V_EXP="$(( $(date +%s) + 900 ))"
-V_TOK="$(printf '%s' "viewclip.mp4|${V_EXP}" \
+V_TOK="$(printf '%s' "video|viewclip.mp4|${V_EXP}" \
     | openssl dgst -sha256 -hmac 'smoke-test-signing-key-do-not-use-in-production' -r | cut -d' ' -f1)"
 [[ "$(status_code "${BASE}?action=raw&serve=1&file=viewclip.mp4&expires=${V_EXP}&token=${V_TOK}")" == '200' ]] \
     || fail 'viewer video was not served for a valid signed URL'
@@ -293,17 +293,19 @@ PUB_RANGE="$(curl -sS -o /dev/null -w '%{http_code}' -H 'Range: bytes=0-99' "${B
 [[ "${PUB_RANGE}" == '206' ]] || fail "public video did not honour a range request (got ${PUB_RANGE})"
 pass 'video_access gate: hidden admin-only, viewer signed, public streams with range'
 
-# FOLIO-VIDEO-002: a hidden video is kept off every public surface — the
-# sitemap, the JSON feed, and the public listing — while an admin still sees it.
+# FOLIO-VIDEO-002: a hidden video is removed from the folder listing (its
+# bytes are still gated) while its record page stays sitemap-indexable —
+# the same "hidden also removes the page from the folder listing while
+# keeping it findable through search" policy the video access control
+# settings page and the video_access dropdown both describe, identical to
+# how a hidden PDF's record page already behaves (see FOLIO-PDF-002 below).
 curl -sS "${BASE}?action=sitemap" -o "${TMP}/vid-sitemap.xml"
-! grep -Fq 'hideclip' "${TMP}/vid-sitemap.xml" || fail 'hidden video appears in the sitemap'
-curl -sS "${BASE}?action=feed_json" -o "${TMP}/vid-feed.json"
-! grep -Fq 'hideclip' "${TMP}/vid-feed.json" || fail 'hidden video appears in the JSON feed'
+grep -Fq 'hideclip' "${TMP}/vid-sitemap.xml" || fail 'hidden video record page is missing from the sitemap'
 curl -sS "${BASE}?dir=" -o "${TMP}/vid-listing-anon.html"
 ! grep -Fq 'hideclip' "${TMP}/vid-listing-anon.html" || fail 'hidden video appears in the public listing'
 curl -sS -b "${COOKIE}" "${BASE}?dir=" -o "${TMP}/vid-listing-admin.html"
 grep -Fq 'hideclip' "${TMP}/vid-listing-admin.html" || fail 'admin cannot see the hidden video in the listing'
-pass 'hidden video is absent from sitemap, feed, and public listing but visible to admin'
+pass 'hidden video is absent from the public listing but stays sitemap-indexable, and is visible to admin'
 
 # FOLIO-PDF-002: the sitemap, robots meta, and llms.txt must stay exactly as
 # indexable for restricted PDFs as for any other file — pdf_access must
@@ -814,14 +816,17 @@ pass 'release assets are versioned so an upgrade is not served stale CSS'
 curl -sS "${BASE}?action=sitemap_pdf" -o "${TMP}/pdf-sitemap.xml"
 grep -Fq '<urlset' "${TMP}/pdf-sitemap.xml" || fail 'the PDF sitemap was not served'
 # foo.pdf is hidden and Foo!.pdf is viewer-only, both set earlier in this run.
-# Neither may be advertised: a crawler invited to them would be refused.
+# Neither PDF's raw *file* may be advertised here: a crawler invited to fetch
+# it would be refused. Their record *pages* still appear in the main page
+# sitemap (see FOLIO-PDF-002 above) — this file sitemap only lists the
+# bytes, gated by media_full_access(), exactly as the sitemap_pdf handler's
+# own comment describes ("the 'indexed page, gated file' split").
 grep -Fq 'public-doc.pdf' "${TMP}/pdf-sitemap.xml" \
     || fail 'a public PDF is missing from the PDF sitemap'
-# Every PDF in the library is listed, including ones with a pdf_access
-# setting: the sitemap's job is to get documents crawled, and the access
-# setting governs delivery, not discovery.
-grep -Fq '/foo.pdf' "${TMP}/pdf-sitemap.xml" \
-    || fail 'a PDF with an access setting was left out of the PDF sitemap'
+! grep -Fq '/foo.pdf' "${TMP}/pdf-sitemap.xml" \
+    || fail 'a hidden PDF file was advertised in the PDF sitemap'
+! grep -Fq 'Foo%21.pdf' "${TMP}/pdf-sitemap.xml" \
+    || fail 'a viewer-only PDF file was advertised in the PDF sitemap'
 ! grep -Fq 'private.secret' "${TMP}/pdf-sitemap.xml" \
     || fail 'an excluded file appeared in the PDF sitemap'
 ! grep -Fq '_drafts' "${TMP}/pdf-sitemap.xml" \
