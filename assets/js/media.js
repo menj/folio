@@ -67,29 +67,71 @@
         var isVideo = el.tagName.toLowerCase() === "video";
 
         // The desktop two-pane Playlist stage is stretched to fill the whole
-        // video column (see .playlist-video ... .fm-stage in style.css), so a
-        // portrait clip — narrow at its own aspect ratio — leaves the rest of
-        // that wide stage as bare black space. A blurred, cover-scaled copy of
-        // the current poster fills that space behind the actual video, which
-        // stays untouched at its correct size (object-fit: contain, no crop,
-        // no stretch). Elsewhere (the single-file page, mobile) the stage
-        // already shrinks to fit the video, so no poster is ever rendered
-        // server-side there and this stays a no-op: nothing is created, and
-        // the CSS that makes fm-stage-bg visible is itself scoped to the same
-        // desktop-playlist selector as the oversized stage it is fixing.
-        function setStageBackground(posterUrl) {
-            var bg = stage.querySelector(".fm-stage-bg");
-            if (!posterUrl) {
-                if (bg) { bg.remove(); }
+        // video column (see .playlist-video ... .fm-stage in style.css), so
+        // a clip whose own aspect ratio is narrower than the stage — most
+        // visibly portrait, but any ratio short of the stage's own shape —
+        // leaves the rest of that stage as bare black space. The single-file
+        // page and mobile Playlist do not have this problem at all: their
+        // stage sizes itself to the video's own rendered shape (width:
+        // fit-content, see the base .fm-stage rule), so there is never any
+        // leftover area to fill in the first place. This background layer is
+        // therefore built only in the Playlist context (data-playlist on the
+        // wrapper — the same signal the queue logic below already keys off),
+        // and only takes effect visually where the CSS scopes it to, the
+        // desktop two-pane selector.
+        //
+        // A second, muted <video> of the same clip — not a static poster —
+        // sits behind the real one: blurred and scaled up to cover the
+        // stage, its own playback mirrored to the main video's (play, pause,
+        // and periodic drift correction on timeupdate/seeked). The two
+        // independent decode pipelines are not guaranteed to stay locked in
+        // step, but nothing watching a heavily blurred backdrop needs frame
+        // accuracy — only that it doesn't visibly drift apart over a long
+        // clip. This doubles the bytes fetched for this one video while
+        // playing, which is the real cost of an actual moving background
+        // rather than one still frame; preload="none" defers that cost
+        // until playback actually starts (the poster alone, itself blurred
+        // by the same CSS the live video gets, covers the paused state).
+        var bgVideo = null;
+
+        function setStageBackground(src, posterUrl) {
+            if (!src) {
+                if (bgVideo) { bgVideo.remove(); bgVideo = null; }
                 return;
             }
-            if (!bg) {
-                bg = document.createElement("div");
-                bg.className = "fm-stage-bg";
-                bg.setAttribute("aria-hidden", "true");
-                stage.insertBefore(bg, stage.firstChild);
+            if (!bgVideo) {
+                bgVideo = document.createElement("video");
+                bgVideo.className = "fm-stage-bg";
+                bgVideo.muted = true;
+                bgVideo.loop = true;
+                bgVideo.playsInline = true;
+                bgVideo.preload = "none";
+                bgVideo.setAttribute("aria-hidden", "true");
+                bgVideo.tabIndex = -1;
+                stage.insertBefore(bgVideo, stage.firstChild);
             }
-            bg.style.backgroundImage = "url(\"" + posterUrl + "\")";
+            if (posterUrl) {
+                bgVideo.setAttribute("poster", posterUrl);
+            } else {
+                bgVideo.removeAttribute("poster");
+            }
+            if (bgVideo.getAttribute("data-bg-src") !== src) {
+                bgVideo.setAttribute("data-bg-src", src);
+                bgVideo.src = src;
+                if (!el.paused) {
+                    var p = bgVideo.play();
+                    if (p && p.catch) { p.catch(function () {}); }
+                }
+            }
+        }
+
+        function syncStageBackground() {
+            if (!bgVideo || bgVideo.readyState < 1) {
+                return;
+            }
+            if (Math.abs(bgVideo.currentTime - el.currentTime) > 0.3) {
+                try { bgVideo.currentTime = el.currentTime; } catch (ignore) {}
+            }
         }
 
         try {
@@ -108,7 +150,19 @@
                 stage.tabIndex = 0;
                 el.parentNode.insertBefore(stage, el);
                 stage.appendChild(el);
-                setStageBackground(el.getAttribute("poster") || "");
+                if (wrap.getAttribute("data-playlist")) {
+                    setStageBackground(el.currentSrc || el.src, el.getAttribute("poster") || "");
+                    el.addEventListener("play", function () {
+                        if (!bgVideo) { return; }
+                        var p = bgVideo.play();
+                        if (p && p.catch) { p.catch(function () {}); }
+                    });
+                    el.addEventListener("pause", function () {
+                        if (bgVideo) { bgVideo.pause(); }
+                    });
+                    el.addEventListener("seeked", syncStageBackground);
+                    el.addEventListener("timeupdate", syncStageBackground);
+                }
             }
 
             var bar = document.createElement("div");
@@ -562,7 +616,7 @@
                         } else {
                             el.removeAttribute("poster");
                         }
-                        setStageBackground(queue[i].poster || "");
+                        setStageBackground(queue[i].url, queue[i].poster || "");
                     }
                     el.load();
                     highlight();

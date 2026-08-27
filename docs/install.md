@@ -62,7 +62,19 @@ commented rewrite block in `.htaccess`, set `PRETTY_URLS` to `true` in
 
 ## Crawlers
 
-Customise the supplied `robots.txt`, especially its absolute sitemap URL, and
-publish it at the domain root. The Crawlers screen controls site indexability,
-the XML sitemap, and llms.txt. Sitemap and llms.txt return 404 while the site is
-non-indexable.
+`robots.txt` is generated automatically, reflecting the settings below —
+there is no file to edit or upload. If Folio is installed at your domain
+root, it just works once `.htaccess` is in place. If Folio lives in a
+subfolder, `/robots.txt` at the true domain root is outside anything
+Folio's own `.htaccess` can reach — add one rewrite rule to your domain
+root's own config, shown with your actual path filled in on the Crawlers
+screen:
+
+```
+RewriteRule ^robots\.txt$ /your-folio-folder/index.php?action=robots [L]
+```
+
+The Crawlers screen controls site indexability, the XML sitemap, and
+llms.txt. Sitemap and llms.txt return 404 while the site is non-indexable;
+robots.txt never does — it is what announces non-indexability in the first
+place, so it always responds regardless.

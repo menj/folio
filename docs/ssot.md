@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.50.15. Update this file in the same commit as any change it describes.
+Version 1.50.24. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.50.15');` |
-| `changelog.md` | `## 1.50.15 — 26 August 2026` |
-| `readme.txt` | `Stable tag: 1.50.15` |
-| `readme.md` | `1.50.15.` under `## Version` |
-| `security.md` | `The current supported release is **1.50.15**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.50.24');` |
+| `changelog.md` | `## 1.50.24 — 27 August 2026` |
+| `readme.txt` | `Stable tag: 1.50.24` |
+| `readme.md` | `1.50.24.` under `## Version` |
+| `security.md` | `The current supported release is **1.50.24**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -66,7 +66,6 @@ install.php               first-run installer, delete after use
 config-sample.php         settings template
 .gitignore                excludes config.php, data/*, uploads/*
 .htaccess                 Apache rules, active as shipped
-robots.txt                to be copied to the domain root
 readme.md                 technical documentation
 changelog.md              version history
 security.md               vulnerability disclosure policy
@@ -93,6 +92,9 @@ lib/parsedown/            Parsedown 1.8.0, MIT
 lib/pdfjs/                PDF.js, Apache 2.0
 lib/js-yaml/              js-yaml 5.3.0, MIT — renders sitemap.html in the browser
 lib/vendor/               Google API client and dependencies, MIT/Apache 2.0 — Google Indexing API
+lib/video.php             restricted/hidden video blur-preview helpers, Folio's own code — not
+                          third-party, kept out of index.php the same way the lib/ vendor
+                          folders already are
 
 tests/smoke.sh            regression suite
 tests/readme.md           how to run it
@@ -128,7 +130,8 @@ data/metadata.lock        write lock
 data/folder-descriptions.json  folder descriptions, keyed by folder path
 data/pages.json           standalone page content
 data/aspect.json          cached PDF page shapes; safe to delete
-data/previews/            generated, cached blurred previews for hidden PDFs
+data/previews/            generated, cached blurred previews for hidden PDFs and
+                          restricted/hidden video (distinct hash namespaces, one folder)
 data/.obscure-key         key for obscuring a gated video's path in hover-preview
                           URLs; regenerating invalidates only URLs already loaded
                           in an open page, nothing stored
@@ -261,6 +264,7 @@ Public:
 | `?action=video_blur_preview` | blurred frame JPEG for a `restricted`/`hidden` video, generated on demand and cached; never the original file — see § Blurred previews for restricted/hidden video |
 | `?action=flipbook` | flip reader, PDF only; refuses `hidden` PDFs outright |
 | `?action=sitemap_pdf` | the document files themselves |
+| `?action=sitemap_video` | the public video files themselves, `video:` extension tags — empty while the video guard is on, since a signed URL would expire before the sitemap is next crawled |
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
 | `?action=identity` | Schema.org identity document — Person + WebSite (`/identity.json`) |
@@ -268,6 +272,7 @@ Public:
 | `?action=yaml` | YAML index of every public document (`/library.yaml`) |
 | `?action=sitemap_html` | Human-readable HTML sitemap of library.yaml (`/sitemap.html`; old `/library.html` and `?action=yaml_view` still resolve, redirected) |
 | `?action=llms` | llms.txt for AI crawlers |
+| `?action=robots` | robots.txt, generated live from current settings — never gated on `SITE_INDEXABLE` or any `*_ENABLED` flag, unlike every other discovery endpoint above, since it is what announces non-indexability in the first place |
 | `?action=playlist` | standalone audio or video player for a folder (`&kind=video` for video) |
 | `?action=video_preview` | short, silent, looping moving preview clip for a public video's hover/listing thumbnail; requires ffmpeg |
 | `?indexnow_key=` | IndexNow ownership file |
@@ -298,8 +303,8 @@ Admin, all requiring a session:
 | `?action=logout` | POST, admin: end the session |
 
 Under clean URLs these become `/slug/`, `/category/slug/`, `/sitemap.xml`,
-`/sitemap-pdf.xml`, `/sitemap-categories.xml`, `/sitemap.html`, `/identity.json`, `/vcard.vcf`, `/llms.txt`,
-`/library.yaml`, and
+`/sitemap-pdf.xml`, `/sitemap-video.xml`, `/sitemap-categories.xml`, `/sitemap.html`, `/identity.json`, `/vcard.vcf`, `/llms.txt`,
+`/robots.txt`, `/library.yaml`, and
 `/{key}.txt`. Admin paths keep their query-string form.
 
 ## Derivative images
@@ -744,7 +749,7 @@ permanent metadata.
 
 ## Testing
 
-`tests/smoke.sh` provisions a temporary installation and asserts twenty-nine
+`tests/smoke.sh` provisions a temporary installation and asserts thirty-two
 behaviours, covering caching, host validation, symlink containment, slug
 collisions, file delivery, metadata writes, JSON-LD escaping, session
 revocation, CSRF on logout, installer headers, sitemap generation, and PDF

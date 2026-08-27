@@ -264,6 +264,22 @@ define('EXCLUDE_PATTERNS', []);
  *  engine is available. The original is always what downloads. */
 // define('CONVERT_FORMATS', ['tif', 'tiff', 'heic', 'heif', 'avif']);
 
+/**
+ * A restricted or hidden video's blurred hover/listing preview needs both
+ * ffmpeg (to pull a representative frame) and the Imagick PHP extension (to
+ * downscale and blur it). When generation fails — either tool missing, the
+ * source unreadable, or data/previews/ not writable — Folio falls back
+ * silently to the manual placeholder_image or the plain archival texture;
+ * the public response is a generic 404 either way, never an error detail.
+ *
+ * Set this false to silence the server-side error_log entries that explain
+ * *why* generation failed. On by default, since a preview that silently
+ * never appears is otherwise hard to diagnose from the admin alone — check
+ * your host's PHP error log, or ?action=diagnostics for the ffmpeg/Imagick
+ * detection Folio already does for other features.
+ */
+// define('VIDEO_BLUR_DIAGNOSTICS', true);
+
 /* ---------------------------------------------------------------- */
 /* External utilities                                                */
 /* ---------------------------------------------------------------- */

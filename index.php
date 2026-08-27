@@ -129,7 +129,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.50.15');
+define('FOLIO_VERSION', '1.50.24');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -1468,6 +1468,14 @@ function url_sitemap_pdf(): string
         : BASE_URL . '?action=sitemap_pdf';
 }
 
+/** The video sitemap: every public video, with the video: extension tags. */
+function url_sitemap_video(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/sitemap-video.xml'
+        : BASE_URL . '?action=sitemap_video';
+}
+
 /** URL of the category sitemap, which lists every category archive page. */
 function url_sitemap_categories(): string
 {
@@ -1500,6 +1508,69 @@ function url_llms(): string
         : BASE_URL . '?action=llms';
 }
 
+/** URL of the virtual robots.txt. */
+function url_robots(): string
+{
+    return PRETTY_URLS
+        ? rtrim(BASE_URL, '/') . '/robots.txt'
+        : BASE_URL . '?action=robots';
+}
+
+/**
+ * The full text of robots.txt, reflecting current settings — used by both
+ * the live ?action=robots route and the Crawlers screen's preview. Never
+ * gated on any *_ENABLED flag or on SITE_INDEXABLE the way the other
+ * discovery endpoints are: robots.txt is how a crawler learns whether the
+ * site is indexable in the first place, so it must always be servable,
+ * including (especially) while non-indexable, when it is the thing saying
+ * "Disallow: /" rather than nothing at all.
+ */
+function robots_txt_generate(): string
+{
+    $sitemap_url = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap';
+    $robots  = "User-agent: *\n";
+    $robots .= SITE_INDEXABLE ? "Allow: /\n" : "Disallow: " . parse_url(BASE_URL, PHP_URL_PATH) . "\n";
+    $robots .= "\n";
+    if (SITEMAP_ENABLED && SITE_INDEXABLE) {
+        $robots .= 'Sitemap: ' . $sitemap_url . "\n";
+        // Announced separately so crawlers find the documents themselves, not
+        // only the pages describing them.
+        $robots .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
+        // Likewise for video: content_loc is the raw video file, distinct
+        // from the page sitemap's record-page URLs.
+        $robots .= 'Sitemap: ' . url_sitemap_video() . "\n";
+        // Category archive pages have their own sitemap, kept apart from the
+        // main one so the two never duplicate each other.
+        $robots .= 'Sitemap: ' . url_sitemap_categories() . "\n";
+    }
+    // The AI-discovery files have no standard robots.txt directive the way
+    // sitemaps do, so they are named in comments — universally safe to parse,
+    // and they close the reference loop: robots.txt (read first by every
+    // crawler) now points at the rest of the family. Only enabled files listed.
+    if (SITE_INDEXABLE) {
+        $related = [];
+        if (LLMS_ENABLED) {
+            $related[] = 'llms.txt (reading map for AI): ' . url_llms();
+        }
+        if (IDENTITY_ENABLED) {
+            $related[] = 'identity.json (who the site is): ' . url_identity();
+        }
+        if (VCARD_ENABLED && IDENTITY_ENABLED) {
+            $related[] = 'vcard.vcf (downloadable contact card): ' . url_vcard();
+        }
+        if (YAML_ENABLED) {
+            $related[] = 'library.yaml (full index + AI usage policy): ' . url_yaml();
+        }
+        if ($related) {
+            $robots .= "\n# AI-discovery files:\n";
+            foreach ($related as $line) {
+                $robots .= '# ' . str_replace(["\r", "\n"], '', $line) . "\n";
+            }
+        }
+    }
+    return $robots;
+}
+
 /** URL of the YAML library index. */
 function url_yaml(): string
 {
@@ -1529,6 +1600,7 @@ function sitemap_sibling_comment(): string
     $lines = [];
     if (SITEMAP_ENABLED) {
         $lines[] = 'document sitemap: ' . url_sitemap_pdf();
+        $lines[] = 'video sitemap: ' . url_sitemap_video();
         $lines[] = 'category sitemap: ' . url_sitemap_categories();
     }
     if (IDENTITY_ENABLED) {
@@ -1804,6 +1876,8 @@ if (PRETTY_URLS) {
         $_GET['indexnow_key'] = $m[1];
     } elseif ($route === 'llms.txt') {
         $_GET['action'] = 'llms';
+    } elseif ($route === 'robots.txt') {
+        $_GET['action'] = 'robots';
     } elseif ($route === 'library.yaml') {
         $_GET['action'] = 'yaml';
     } elseif ($route === 'sitemap.html') {
@@ -1817,6 +1891,8 @@ if (PRETTY_URLS) {
         $_GET['action'] = 'sitemap';
     } elseif ($route === 'sitemap-pdf.xml') {
         $_GET['action'] = 'sitemap_pdf';
+    } elseif ($route === 'sitemap-video.xml') {
+        $_GET['action'] = 'sitemap_video';
     } elseif ($route === 'sitemap-categories.xml') {
         $_GET['action'] = 'sitemap_categories';
     } elseif ($route === 'identity.json') {
@@ -6883,6 +6959,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     $cat_sitemap_url   = url_sitemap_categories();
     $cat_sitemap_count = count(category_register($all_indexed));
 
+    /* The video sitemap lists only public video with a derivable thumbnail,
+       and none at all while the video guard is on (its URLs would expire
+       before Google re-crawls the sitemap) — counted with the same three
+       gates the endpoint applies, so the number shown here cannot drift. */
+    $video_sitemap_url   = url_sitemap_video();
+    $video_sitemap_count = 0;
+    if (!video_guard_active()) {
+        foreach ($all_indexed as $f) {
+            if ($f['kind'] !== 'video') {
+                continue;
+            }
+            $video_rel = (string) $f['rel'];
+            $video_m   = meta_load()[$video_rel] ?? [];
+            if (!media_full_access($video_rel, $video_m) || !image_can_derive($video_rel)) {
+                continue;
+            }
+            $video_abs = resolve_path($video_rel);
+            if ($video_abs !== null && is_file($video_abs)) {
+                $video_sitemap_count++;
+            }
+        }
+    }
+
     /* IndexNow key file URL, if a key exists. */
     $indexnow_key_url = INDEXNOW_KEY !== ''
         ? (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/' . INDEXNOW_KEY . '.txt'
@@ -6924,43 +7023,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
        and the JSON handler returns 'ok'. Otherwise the fetch fails. */
     $probe_url = rtrim(BASE_URL, '/') . '/__probe__/';
 
-    $robots  = "User-agent: *\n";
-    $robots .= SITE_INDEXABLE ? "Allow: /\n" : "Disallow: " . parse_url(BASE_URL, PHP_URL_PATH) . "\n";
-    $robots .= "\n";
-    if (SITEMAP_ENABLED && SITE_INDEXABLE) {
-        $robots .= 'Sitemap: ' . $sitemap_url . "\n";
-        // Announced separately so crawlers find the documents themselves, not
-        // only the pages describing them.
-        $robots .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
-        // Category archive pages have their own sitemap, kept apart from the
-        // main one so the two never duplicate each other.
-        $robots .= 'Sitemap: ' . url_sitemap_categories() . "\n";
-    }
-    // The AI-discovery files have no standard robots.txt directive the way
-    // sitemaps do, so they are named in comments — universally safe to parse,
-    // and they close the reference loop: robots.txt (read first by every
-    // crawler) now points at the rest of the family. Only enabled files listed.
-    if (SITE_INDEXABLE) {
-        $related = [];
-        if (LLMS_ENABLED) {
-            $related[] = 'llms.txt (reading map for AI): ' . url_llms();
-        }
-        if (IDENTITY_ENABLED) {
-            $related[] = 'identity.json (who the site is): ' . url_identity();
-        }
-        if (VCARD_ENABLED && IDENTITY_ENABLED) {
-            $related[] = 'vcard.vcf (downloadable contact card): ' . url_vcard();
-        }
-        if (YAML_ENABLED) {
-            $related[] = 'library.yaml (full index + AI usage policy): ' . url_yaml();
-        }
-        if ($related) {
-            $robots .= "\n# AI-discovery files:\n";
-            foreach ($related as $line) {
-                $robots .= '# ' . str_replace(["\r", "\n"], '', $line) . "\n";
-            }
-        }
-    }
+    $robots = robots_txt_generate();
 
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
     header('Content-Type: text/html; charset=UTF-8');
@@ -7194,7 +7257,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
     <?php endif; ?>
 
     <h2 class="detail-title">Sitemap preview</h2>
-    <p class="detail-desc">Folio publishes three sitemaps, and the <code>robots.txt</code> below announces all three.</p>
+    <p class="detail-desc">Folio publishes four sitemaps, and the <code>robots.txt</code> below announces all four.</p>
     <ul class="sitemap-list">
         <li>
             <a href="<?= e($sitemap_url) ?>">Page sitemap</a>
@@ -7206,6 +7269,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             &mdash; <strong><?= (int) $pdf_sitemap_count ?></strong> PDF<?= $pdf_sitemap_count === 1 ? '' : 's' ?>:
             the files themselves, so a search engine indexes what is inside them rather than
             only the pages describing them.
+        </li>
+        <li>
+            <a href="<?= e($video_sitemap_url) ?>">Video sitemap</a>
+            &mdash; <strong><?= (int) $video_sitemap_count ?></strong> video<?= $video_sitemap_count === 1 ? '' : 's' ?>:
+            title, description and thumbnail for each public video, so it can be found and understood
+            without waiting on a crawl and render.<?= video_guard_active() ? ' Empty while the video guard is on — a signed URL would expire before the sitemap is next crawled.' : '' ?>
         </li>
         <li>
             <a href="<?= e($cat_sitemap_url) ?>">Category sitemap</a>
@@ -7336,10 +7405,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         <?php endif; ?>
     <?php endif; ?>
 
-    <h2 class="detail-title">robots.txt for your domain root</h2>
-    <p class="detail-desc">Folio cannot write outside its own folder, so robots.txt stays a manual step: copy this into the file at your domain root (for example <code>https://example.com/robots.txt</code>), merging with whatever is already there. It reflects the settings above.</p>
+    <?php
+    $robots_path    = (string) parse_url(BASE_URL, PHP_URL_PATH);
+    $robots_at_root = $robots_path === '' || $robots_path === '/';
+    ?>
+    <h2 class="detail-title">robots.txt</h2>
+    <?php if ($robots_at_root): ?>
+        <p class="detail-desc">Generated automatically at <a href="<?= e(url_robots()) ?>"><?= e(url_robots()) ?></a>, reflecting the settings above — nothing to copy or upload.</p>
+    <?php else: ?>
+        <p class="detail-desc">Folio cannot write outside its own folder, so a domain-root <code>robots.txt</code> needs one rewrite rule pointing at Folio's own route. Add this to the <code>.htaccess</code> (or equivalent) at your domain root — outside Folio's own folder — adjusting the path if Folio is not installed at <code><?= e($robots_path) ?></code>:</p>
+        <pre class="hash-out"><code>RewriteRule ^robots\.txt$ <?= e(rtrim($robots_path, '/')) ?>/index.php?action=robots [L]</code></pre>
+        <p class="detail-desc">Once that line is in place, your domain root's <code>robots.txt</code> resolves through Folio and reflects the settings above automatically — nothing further to maintain.</p>
+    <?php endif; ?>
+    <p class="detail-desc">Current content:</p>
     <pre class="hash-out"><code><?= e($robots) ?></code></pre>
-    <p class="detail-facts">The shipped <code>robots.txt</code> in the package also lists AI crawlers individually if you prefer the explicit form.</p>
 </main>
 <script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script>
 </body>
@@ -9018,12 +9097,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
             }
         }
     }
+    // Three real states, not two: confirmed and live is 'ok'; confirmed
+    // before but silently no longer enforced (the signing key was cleared)
+    // is a genuine regression and stays 'warn' regardless of whether any
+    // restricted/hidden file currently exists, because the admin may
+    // believe protection is active when it is not; using the default,
+    // page-level model — Folio's own documented default, not a misconfig —
+    // is 'info', never 'warn': its own note already says this is fine.
+    $video_gate_regressed = !$pdf_signing_key_set && !empty(VIDEO_GATE_CONFIRMED);
+    if ($video_guard_live) {
+        $video_access_status = 'ok';
+    } elseif ($video_gate_regressed) {
+        $video_access_status = 'warn';
+    } elseif ($video_restricted_unenforced) {
+        $video_access_status = 'info';
+    } else {
+        $video_access_status = 'ok';
+    }
     $cfg_checks[] = [
         'label'  => 'Video access control',
-        'status' => $video_guard_live ? 'ok' : ($video_restricted_unenforced ? 'warn' : 'ok'),
+        'status' => $video_access_status,
         'note'   => $video_guard_live
             ? 'Confirmed and enforced.'
-            : (!$pdf_signing_key_set && !empty(VIDEO_GATE_CONFIRMED)
+            : ($video_gate_regressed
                 ? 'Was confirmed, but FOLIO_URL_SIGNING_KEY is no longer set — enforcement has stopped until it is restored'
                 : ($video_restricted_unenforced
                     ? 'Using the default page-level model, which is fine unless webserver-level enforcement is'
@@ -9054,15 +9150,84 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
                 : 'Imagick is not installed. Upload a manual placeholder image per file instead of an automatic blurred preview.'),
     ];
     $ffmpeg_ok = tool_have('ffmpeg');
+    // Reuses lib/video.php's own video_blur_available() rather than
+    // re-deriving the same ffmpeg/Imagick check inline — the two used to
+    // drift (this row checked availability with its own copy of the logic,
+    // while actual generation went through a separate function), so a
+    // failure that had nothing to do with ffmpeg or Imagick — an unwritable
+    // cache directory, an unreadable source file, an Imagick exception —
+    // had nowhere to be reported. video_blur_available() itself already
+    // logs the specific missing piece (PATH searched, PHP version, which
+    // Imagick component) via video_blur_log() when it returns false.
+    $video_blur_env_ok = video_blur_available();
+    $preview_dir = __DIR__ . '/data/previews';
+    $preview_dir_exists = is_dir($preview_dir);
+    $preview_dir_writable = $preview_dir_exists
+        ? is_writable($preview_dir)
+        : is_writable(dirname($preview_dir));
+
+    // A real self-test, not just an environment check: if the prerequisites
+    // are present and at least one restricted or hidden video actually
+    // exists, attempt one genuine generation against it and show the exact
+    // reason for a failure right here — this is the only way to catch a
+    // problem that ffmpeg/Imagick being present cannot predict, which is
+    // the gap that prompted this. Read-only from the source video's point
+    // of view: it only ever writes into data/previews/, cached by content
+    // hash the same way a real request would, so running this check
+    // repeatedly costs nothing after the first successful run.
+    $blur_self_test = null;
+    if ($video_blur_env_ok && $preview_dir_writable) {
+        foreach (meta_load() as $probe_rel => $probe_row) {
+            if (video_access_of((array) $probe_row) === 'public') {
+                continue;
+            }
+            $probe_abs = resolve_path($probe_rel);
+            if ($probe_abs === null || !is_file($probe_abs)
+                || file_kind(strtolower(pathinfo($probe_abs, PATHINFO_EXTENSION))) !== 'video') {
+                continue;
+            }
+            $probe_error = null;
+            $blur_self_test = [
+                'file' => $probe_rel,
+                'ok'   => video_blur_generate($probe_abs, $probe_rel, $probe_error),
+                'error' => $probe_error,
+            ];
+            break;
+        }
+    }
+
+    $video_blur_note = '';
+    $video_blur_status = 'warn';
+    if (!$video_blur_env_ok) {
+        $video_blur_note = $ffmpeg_ok
+            ? 'ffmpeg is installed but Imagick is not, so the extracted frame cannot be blurred. Upload a manual placeholder image per file instead.'
+            : 'ffmpeg is not installed, so no frame can be extracted. Upload a manual placeholder image per file instead of an automatic blurred preview.';
+    } elseif (!$preview_dir_writable) {
+        $video_blur_status = 'bad';
+        $video_blur_note = 'ffmpeg and Imagick are both available, but ' . $preview_dir
+            . ' is not writable by PHP, so a generated preview cannot be cached. Fix its permissions.';
+    } elseif ($blur_self_test !== null) {
+        if ($blur_self_test['ok']) {
+            $video_blur_status = 'ok';
+            $video_blur_note = 'Available and verified — a real preview was just generated for '
+                . $blur_self_test['file'] . '.';
+        } else {
+            $video_blur_status = 'bad';
+            $video_blur_note = 'ffmpeg and Imagick are both available, but generating a preview for '
+                . $blur_self_test['file'] . ' failed: ' . ($blur_self_test['error'] ?: 'unknown reason') . ' '
+                . 'Set VIDEO_BLUR_DIAGNOSTICS in config.php (on by default) and check the PHP error log '
+                . 'for the full detail behind this.';
+        }
+    } else {
+        $video_blur_status = 'ok';
+        $video_blur_note = 'Available — a blurred frame is generated automatically behind the restriction '
+            . 'notice. No restricted or hidden video exists yet to verify against.';
+    }
     $cfg_checks[] = [
         'label'  => 'Blurred preview for restricted video',
-        'brief'  => 'Available',
-        'status' => $imagick_ok && $ffmpeg_ok ? 'ok' : 'warn',
-        'note'   => $imagick_ok && $ffmpeg_ok
-            ? 'Available — a blurred frame is generated automatically behind the restriction notice.'
-            : ($ffmpeg_ok
-                ? 'ffmpeg is installed but Imagick is not, so the extracted frame cannot be blurred. Upload a manual placeholder image per file instead.'
-                : 'ffmpeg is not installed, so no frame can be extracted. Upload a manual placeholder image per file instead of an automatic blurred preview.'),
+        'brief'  => $video_blur_status === 'ok' ? 'Available' : ($video_blur_status === 'bad' ? 'Failing' : 'Unavailable'),
+        'status' => $video_blur_status,
+        'note'   => $video_blur_note,
     ];
 
     $groups = [
@@ -9088,6 +9253,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
                 return '<span class="chip chip-mini diag-ok">OK</span>';
             case 'warn':
                 return '<span class="chip chip-mini diag-warn">CHECK</span>';
+            case 'info':
+                return '<span class="chip chip-mini diag-info">NOTE</span>';
             default:
                 return '<span class="chip chip-mini diag-bad">FAIL</span>';
         }
@@ -9127,11 +9294,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
 
     <?php
     /* Anything not OK, gathered first: the reason to open this page is almost
-       always to find what is wrong, not to read thirty-five passing rows. */
+       always to find what is wrong, not to read thirty-five passing rows.
+       'info' deliberately stays out of this: it marks a documented, chosen
+       trade-off whose own note already says the current state is fine, not
+       something the admin needs to act on. Pulling it in here would put a
+       "this is fine" row in a tab titled "Needs attention," which says the
+       opposite of what the row itself says. */
     $attention = [];
     foreach ($groups as [$g_label, $g_checks]) {
         foreach ($g_checks as $c) {
-            if ($c['status'] !== 'ok') {
+            if ($c['status'] !== 'ok' && $c['status'] !== 'info') {
                 $c['group'] = $g_label;
                 $attention[] = $c;
             }
@@ -9789,7 +9961,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
             // the content of the library: a scanned certificate a search engine
             // cannot see is a document nobody will find, and following the
             // links inside a PDF is how a crawler discovers the rest.
-            header('X-Robots-Tag: index, follow');
+            //
+            // But this must still follow SITE_INDEXABLE: the robots meta tag
+            // on every HTML page already flips to noindex,nofollow when the
+            // library isn't meant to be found yet, and a PDF has no <head> of
+            // its own for that meta tag to live in — X-Robots-Tag is the only
+            // way this route has to say the same thing for the bytes
+            // themselves. Asserting index,follow unconditionally here meant
+            // a library marked "not ready to be found" was still telling
+            // Google to index every PDF served through this route.
+            header('X-Robots-Tag: ' . (SITE_INDEXABLE ? 'index, follow' : 'noindex, nofollow'));
         }
         if ($ext === 'svg') {
             header("Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; sandbox");
@@ -10073,6 +10254,84 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap_pdf') {
         if ($e['lastmod'] > 0) {
             echo '    <lastmod>' . date('c', $e['lastmod']) . "</lastmod>\n";
         }
+        echo "  </url>\n";
+    }
+    echo '</urlset>';
+    exit;
+}
+
+if (isset($_GET['action']) && $_GET['action'] === 'sitemap_video') {
+    if (!SITEMAP_ENABLED || !SITE_INDEXABLE) {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    $all = index_all_files($mime_map);
+    $entries = [];
+    foreach ($all as $f) {
+        if ($f['kind'] !== 'video') {
+            continue;
+        }
+        $rel = (string) $f['rel'];
+        $m   = meta_load()[$rel] ?? [];
+        // Only public video: a video sitemap's <video:content_loc> is the raw
+        // file itself, so a restricted or hidden video has nothing byte-level
+        // to list here — the same "indexed page, gated file" split already
+        // used for the PDF file sitemap. Its detail page still appears in the
+        // main page sitemap regardless of tier.
+        if (!media_full_access($rel, $m)) {
+            continue;
+        }
+        $abs = resolve_path($rel);
+        if ($abs === null || !is_file($abs)) {
+            continue;
+        }
+        // <video:thumbnail_loc> is required. If this server cannot derive one
+        // (no Imagick/GD, or ffmpeg unavailable for a video frame), there is
+        // nothing valid to list — silently skip rather than publish a video
+        // sitemap entry Google would reject for a missing required tag.
+        if (!image_can_derive($rel)) {
+            continue;
+        }
+        // <video:content_loc> must be a stable URL Google can refetch on its
+        // own schedule, not a short-lived one. When the .htaccess video guard
+        // is on, even a public video is served through a signed, expiring URL
+        // (url_raw_effective()'s doing) — by the time a sitemap is re-crawled,
+        // that signature may well have lapsed, so there is nothing durable to
+        // list. Skip rather than publish a content_loc that goes stale.
+        if (video_guard_active()) {
+            continue;
+        }
+        $title = ($m['title'] ?? '') !== '' ? $m['title'] : pathinfo($rel, PATHINFO_FILENAME);
+        $doc_date = document_date_parse((string) ($m['doc_date'] ?? ''));
+        $entries[] = [
+            'page'        => url_view($rel),
+            'thumb'       => url_thumb($rel, 640),
+            'title'       => $title,
+            'desc'        => trim((string) ($m['desc'] ?? '')),
+            'content_loc' => url_raw($rel),
+            'pub_date'    => $doc_date['iso'] !== '' ? $doc_date['iso'] : date('c', (int) $f['lastmod']),
+        ];
+    }
+
+    header('Content-Type: application/xml; charset=UTF-8');
+    send_public_cache_headers(900);
+    echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+    echo '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9"'
+        . ' xmlns:video="http://www.google.com/schemas/sitemap-video/1.1">' . "\n";
+    echo sitemap_sibling_comment();
+    foreach ($entries as $e) {
+        echo "  <url>\n";
+        echo '    <loc>' . htmlspecialchars($e['page'], ENT_XML1) . "</loc>\n";
+        echo "    <video:video>\n";
+        echo '      <video:thumbnail_loc>' . htmlspecialchars($e['thumb'], ENT_XML1) . "</video:thumbnail_loc>\n";
+        echo '      <video:title>' . htmlspecialchars($e['title'], ENT_XML1) . "</video:title>\n";
+        // <video:description> is required; when the admin hasn't written one,
+        // fall back to the title rather than omit a required tag.
+        echo '      <video:description>' . htmlspecialchars($e['desc'] !== '' ? $e['desc'] : $e['title'], ENT_XML1) . "</video:description>\n";
+        echo '      <video:content_loc>' . htmlspecialchars($e['content_loc'], ENT_XML1) . "</video:content_loc>\n";
+        echo '      <video:publication_date>' . htmlspecialchars($e['pub_date'], ENT_XML1) . "</video:publication_date>\n";
+        echo "    </video:video>\n";
         echo "  </url>\n";
     }
     echo '</urlset>';
@@ -10540,6 +10799,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     $doc = [
         '@context' => 'https://schema.org',
         '@graph'   => [$subject, $website],
+        // Declares the external convention this document also conforms to,
+        // alongside the Schema.org vocabulary named in @context.
+        '_specification' => [
+            'url' => 'https://www.ai-visibility.org.uk/',
+        ],
     ];
     echo json_encode($doc, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
     exit;
@@ -10882,6 +11146,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
     if (SITEMAP_ENABLED) {
         $out .= "    sitemap: " . $y(PRETTY_URLS ? $base . 'sitemap.xml' : BASE_URL . '?action=sitemap') . "\n";
         $out .= "    document_sitemap: " . $y(url_sitemap_pdf()) . "\n";
+        $out .= "    video_sitemap: " . $y(url_sitemap_video()) . "\n";
         $out .= "    category_sitemap: " . $y(url_sitemap_categories()) . "\n";
     }
     if (IDENTITY_ENABLED) {
@@ -10996,6 +11261,16 @@ if (isset($_GET['action']) && ($_GET['action'] === 'sitemap_html' || $_GET['acti
     exit;
 }
 
+if (isset($_GET['action']) && $_GET['action'] === 'robots') {
+    // Never gated on SITE_INDEXABLE or any *_ENABLED flag — see
+    // robots_txt_generate()'s own docblock for why this route must always
+    // respond, including (especially) while the library is non-indexable.
+    header('Content-Type: text/plain; charset=UTF-8');
+    send_public_cache_headers(900);
+    echo robots_txt_generate();
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     if (!LLMS_ENABLED || !SITE_INDEXABLE) {
         http_response_code(404);
@@ -11005,6 +11280,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     send_public_cache_headers(900);
     $all = index_all_files($mime_map);
     $out = '# ' . SITE_NAME . "\n\n> " . SITE_DESCRIPTION . "\n\n";
+    $out .= 'Specification: [AI Visibility](https://www.ai-visibility.org.uk/)' . "\n\n";
     if (LLMS_INTRO !== '') {
         $out .= LLMS_INTRO . "\n\n";
     }
@@ -11088,6 +11364,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
               . "): every page in the library.\n"
               . '- [Document sitemap](' . url_sitemap_pdf()
               . "): the public PDF files themselves.\n"
+              . '- [Video sitemap](' . url_sitemap_video()
+              . "): the public video files, with title, description and thumbnail.\n"
               . '- [Category sitemap](' . url_sitemap_categories()
               . "): the category archive pages.\n";
     }

@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.50.15
+Stable tag: 1.50.24
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -221,10 +221,86 @@ any of them Folio behaves exactly as it did before the feature existed.
 
 PDF pages are rendered with Poppler where it is installed.
 
+= 1.50.24 =
+
+robots.txt is now generated live, the same way sitemap.xml and llms.txt
+already are, replacing the static file and the old copy-into-your-domain-
+root manual step. If Folio is installed at your domain root this needs
+nothing further; a subfolder install needs one rewrite rule at the domain
+root's own config instead of an entire file kept in sync by hand. Never
+returns 404, unlike other discovery endpoints, since it is what announces
+non-indexability in the first place.
+
+= 1.50.23 =
+
+Fixes the video sitemap's title/description using raw CDATA instead of
+proper XML escaping — a title containing "]]>" would have produced
+malformed XML. Adds smoke test coverage for the video sitemap and a
+security.md paragraph documenting the 1.50.21 X-Robots-Tag fix, neither of
+which had any before now.
+
+= 1.50.22 =
+
+Added a video sitemap (sitemap-video.xml): title, description, thumbnail,
+and content_loc for every public video, following the video: extension
+tags. Announced in robots.txt and llms.txt, and shown on the Crawlers
+screen alongside the page, document, and category sitemaps. Empty while
+the video-routing guard is on, since a signed content_loc could expire
+before the sitemap is next crawled.
+
+= 1.50.21 =
+
+A restricted (non-indexable) library no longer leaves its PDFs telling
+Google to index them anyway. The X-Robots-Tag on raw PDF/txt/md responses
+now follows SITE_INDEXABLE, the same as every HTML page's robots meta tag
+already does.
+
+= 1.50.20 =
+
+llms.txt now carries a Specification line, and identity.json a
+_specification object, both pointing at the AI Visibility convention
+(https://www.ai-visibility.org.uk/) that each document also follows.
+
+= 1.50.19 =
+
+The desktop Playlist's stage-fill background (added in 1.50.11) is now a
+genuine second, playing video of the same clip rather than a static
+poster frame — it moves the way the foreground does. Muted, looped, and
+deferred until playback actually starts so it costs no extra bandwidth
+while paused. Scope is unchanged: only the desktop two-pane Playlist
+stage, since the single-file page never has unused stage space to fill.
+
+= 1.50.18 =
+
+Diagnostics no longer flags "Video access control" as Needs attention just
+for using the deliberate, documented default (page-level, not webserver-
+enforced) model — a new blue "NOTE" tier replaces the amber "CHECK" for
+this and any future row describing a chosen trade-off rather than a
+problem. A genuinely separate case — enforcement having been confirmed
+once and then silently stopped — still correctly warns.
+
+= 1.50.17 =
+
+The Diagnostics "Blurred preview for restricted video" check now runs a
+real test against an actual restricted/hidden video when one exists,
+showing the exact reason for a failure right on the page instead of only
+ffmpeg/Imagick's presence. Also adds a check for whether data/previews/ is
+writable, a separate common failure the old check couldn't see. Corrects a
+test-count slip from the previous release (32 test groups, not 31).
+
+= 1.50.16 =
+
+Adds diagnostic logging for restricted-video blur previews: every failure
+point (missing ffmpeg/Imagick, unreadable source, unwritable cache
+directory, an Imagick exception) now logs a specific reason to the PHP
+error log, controlled by a new VIDEO_BLUR_DIAGNOSTICS setting. The public
+response is unchanged, still a plain 404. Video preview helpers also moved
+into their own file, lib/video.php.
+
 = 1.50.15 =
 
-Fills in tests/readme.md's coverage table, which was missing 17 of the
-suite's 31 test groups (a pre-existing gap), and adds a short section
+Fills in tests/readme.md's coverage table, which was missing 18 of the
+suite's 32 test groups (a pre-existing gap), and adds a short section
 documenting the two namespaced HMAC signing payloads (PDF vs video) side
 by side.
 

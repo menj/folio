@@ -389,7 +389,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && $critical_ok) {
                     <li>Confirm <code>.htaccess</code> reached the server. It ships with the release, but many FTP clients hide dotfiles &mdash; turn on hidden files if it is missing.</li>
                     <li>Upload documents into <code>uploads/</code> over FTP.</li>
                     <li>Log in and add titles, descriptions, categories, and tags.</li>
-                    <li>Edit <code>robots.txt</code> and upload it to your domain root.</li>
+                    <li>robots.txt is generated automatically from the Crawlers settings — no file to edit. If Folio lives in a subfolder rather than at your domain root, see the Crawlers screen for the one-line rewrite rule your domain root's own config needs.</li>
                 </ol>
 
                 <p class="detail-actions">

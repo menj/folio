@@ -320,6 +320,24 @@ curl -sS "${BASE}?action=llms" -o "${TMP}/pdf-llms.txt"
 grep -Fq 'full transcription available' "${TMP}/pdf-llms.txt" || fail 'llms.txt did not note transcription availability for the hidden PDF'
 pass 'pdf_access does not affect sitemap, robots meta, or llms.txt indexability'
 
+# robots.txt is generated live from current settings — unlike every other
+# discovery endpoint, it must never 404: it is what announces
+# non-indexability in the first place (Disallow: / instead of Allow: /), so
+# a crawler that could not fetch it would have to assume everything is
+# allowed, the opposite of what a non-indexable library wants. SITE_INDEXABLE
+# is true for the whole run (this suite provisions one static config.php, so
+# toggling it at runtime to test the Disallow branch would need a second
+# server instance — left untested here, same as the equivalent gap already
+# noted for the X-Robots-Tag/SITE_INDEXABLE fix).
+ROBOTS_RESPONSE="$(curl -sS -D - -o "${TMP}/robots.txt" "${BASE}?action=robots")"
+grep -qi '^Content-Type: text/plain' <<<"${ROBOTS_RESPONSE}" \
+    || fail 'robots.txt was not served as text/plain'
+grep -Fq 'Allow: /' "${TMP}/robots.txt" \
+    || fail 'robots.txt did not allow crawling while the site is indexable'
+grep -Fq 'Sitemap:' "${TMP}/robots.txt" \
+    || fail 'robots.txt is missing its Sitemap: references'
+pass 'robots.txt is generated live and always responds'
+
 # FOLIO-SEC-001: metadata is user input and lands inside a <script> element.
 # A closing script tag in any field must not be able to end that element.
 INJECT_TITLE='Report </script><img src=x onerror=alert(1)><script>'
@@ -842,6 +860,28 @@ grep -qiE '^X-Robots-Tag:.*nofollow' <<<"${PDF_ROBOTS}" \
 grep -qiE '^X-Robots-Tag:.*noindex' <<<"${PDF_ROBOTS}" \
     && fail 'a PDF was served noindex'
 pass 'PDF sitemap lists only reachable documents, served index and follow'
+
+# The video sitemap follows the same "indexed page, gated file" split as the
+# PDF file sitemap above: a restricted or hidden video's raw file has nothing
+# valid to list here (its record page still appears in the main sitemap
+# regardless of tier), and excluded files/folders and non-video files never
+# belong in it either. pubclip/viewclip/hideclip are random bytes, not a
+# decodable video, so image_can_derive() has nothing to build a thumbnail
+# from and every one of them is correctly absent from a *populated* entry —
+# this only tests the gating that runs before thumbnail derivation, not that
+# a real public video with a derivable thumbnail is actually listed.
+curl -sS "${BASE}?action=sitemap_video" -o "${TMP}/video-sitemap.xml"
+grep -Fq '<urlset' "${TMP}/video-sitemap.xml" || fail 'the video sitemap was not served'
+grep -Fq 'xmlns:video=' "${TMP}/video-sitemap.xml" || fail 'the video sitemap is missing the video: namespace'
+! grep -Fq 'hideclip' "${TMP}/video-sitemap.xml" \
+    || fail 'a hidden video file was advertised in the video sitemap'
+! grep -Fq 'viewclip' "${TMP}/video-sitemap.xml" \
+    || fail 'a viewer-only video file was advertised in the video sitemap'
+! grep -Fq 'private.secret' "${TMP}/video-sitemap.xml" \
+    || fail 'an excluded file appeared in the video sitemap'
+! grep -Fq 'public-doc.pdf' "${TMP}/video-sitemap.xml" \
+    || fail 'a non-video file appeared in the video sitemap'
+pass 'video sitemap serves valid XML and excludes gated, excluded, and non-video files'
 
 # Canonical slugs, aliases, and redirects. A document's public address must
 # survive the file being renamed or moved, so it is stored rather than derived.

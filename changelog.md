@@ -3,11 +3,284 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.50.24 — 27 August 2026
+
+### Changed
+
+- **`robots.txt` is now generated live, at `?action=robots` (`/robots.txt`
+  under clean URLs), the same way `sitemap.xml` and `llms.txt` already
+  are — replacing the static file previously shipped in the package root
+  and the Crawlers screen's "copy this into your domain root" manual step.**
+  A new `robots_txt_generate()` function (extracted from what was inline
+  Crawlers-screen logic, now shared by both the live route and the
+  screen's own preview) produces the same content as before — indexability
+  directive, all four `Sitemap:` lines, the AI-discovery-file comment
+  block — from current settings, with nothing left to go stale between an
+  admin's last edit and what a crawler actually reads.
+  - Deliberately **never gated** on `SITE_INDEXABLE` or any `*_ENABLED`
+    flag, unlike every other discovery endpoint: `robots.txt` is how a
+    crawler learns the site is non-indexable in the first place
+    (`Disallow: /` rather than `Allow: /`), so it has to always respond —
+    a 404 here would leave a crawler assuming everything is allowed,
+    exactly backwards from a non-indexable library's intent.
+  - `.htaccess` gained one hardcoded `RewriteRule`, grouped with the
+    existing sitemap.xml/sitemap-pdf.xml/sitemap-categories.xml/feed.json
+    rules that get the same explicit-query-string treatment rather than
+    relying solely on the generic catch-all.
+  - **If Folio is installed at your domain root**, this needs nothing
+    further — `/robots.txt` resolves through Folio automatically once the
+    updated `.htaccess` is in place. **If Folio lives in a subfolder**,
+    the true domain root is outside anything Folio's own `.htaccess` can
+    reach, so one rewrite rule is still needed at the domain root's own
+    config — now one line instead of an entire file to keep in sync by
+    hand, shown filled in with the real path on the Crawlers screen.
+  - Updated everywhere this was described as a manual, permanent-by-design
+    step: the Crawlers screen itself, `install.php`'s post-install
+    checklist, `docs/install.md`, `readme.md` (five separate places), and
+    added a dedicated upgrade note in `docs/upgrading.md` for anyone
+    coming from an older release with a hand-edited `robots.txt`.
+  - Added a smoke test confirming the route always responds as
+    `text/plain` with the expected `Allow:`/`Sitemap:` content. Left
+    untested, and said so in both the test and `tests/readme.md`: the
+    `Disallow: /` branch, which needs `SITE_INDEXABLE` toggled at
+    runtime — the same gap already noted for the 1.50.21 `X-Robots-Tag`
+    fix, for the same reason (this suite provisions one static `config.php`
+    per run).
+
+## 1.50.23 — 27 August 2026
+
+### Fixed
+
+- **The video sitemap's `<video:title>` and `<video:description>` used raw
+  `<![CDATA[...]]>` wrapping instead of `htmlspecialchars(..., ENT_XML1)`**,
+  the escaping every other tag in the same function correctly uses. A title
+  or description containing the literal sequence `]]>` — plausible as
+  ordinary text, not just as an attack — would close the CDATA section
+  early and produce malformed XML, which Google's sitemap validator would
+  reject outright. Switched both tags to the same escaping the rest of the
+  function already uses; CDATA was never actually needed here, since
+  neither tag is expected to carry markup.
+
+### Added
+
+- **A smoke test for the video sitemap** (`?action=sitemap_video`), added in
+  1.50.22 with no test coverage of its own: confirms valid XML with the
+  `video:` namespace, and that a hidden or viewer-only video's file, an
+  excluded file, and a non-video file are all correctly absent — the same
+  "indexed page, gated file" split the PDF file sitemap test already
+  covers. Does not yet cover a real, decodable public video with a
+  derivable thumbnail actually appearing populated: the suite's existing
+  video fixtures are random bytes, not playable video, which is sufficient
+  to test the gating that runs before thumbnail derivation but not the
+  positive case. `tests/readme.md`'s coverage table updated to match.
+- **A paragraph in `security.md`** documenting the 1.50.21 `X-Robots-Tag`
+  fix (a restricted-library PDF no longer tells Google to index it
+  regardless of `SITE_INDEXABLE`) — the fix itself shipped in 1.50.21 with
+  a changelog entry, but no explanation in the document that's supposed to
+  be the definitive record of what Folio does and doesn't enforce.
+
+### Known gap
+
+- **The `X-Robots-Tag`/`SITE_INDEXABLE` fix has no regression test.**
+  `tests/smoke.sh` provisions one static `config.php` before the server
+  starts; testing the fix properly means toggling `SITE_INDEXABLE` at
+  runtime and confirming the header follows it, which needs either a
+  second server instance with a different config or a live settings-form
+  POST this suite has no existing pattern for. Flagged rather than rushed:
+  a hasty restructuring of the suite's single-config design risked being a
+  worse regression than the untested edge case it would close.
+
+## 1.50.22 — 27 August 2026
+
+### Added
+
+- **A video sitemap (`sitemap-video.xml`)**, following the same shape as the
+  existing document sitemap: one `<url>` per public video, with the
+  `video:` namespace's required tags (`thumbnail_loc`, `title`,
+  `description`, `content_loc`) plus `publication_date`. Gated exactly like
+  the file itself is everywhere else — a restricted or hidden video is
+  skipped (its detail page still appears in the main page sitemap), and a
+  video with no derivable thumbnail is skipped rather than published with a
+  missing required tag. The whole sitemap is empty while the video-routing
+  guard is on: a signed `content_loc` could expire before Google next
+  re-crawls the sitemap, so there is nothing durable to list until then.
+  Announced in `robots.txt` and `llms.txt`, and shown with a live count on
+  the Crawlers screen, alongside the page, document, and category sitemaps.
+
+## 1.50.21 — 27 August 2026
+
+### Fixed
+
+- **A restricted-library PDF still told Google to index it.** The `?action=raw`
+  route's `serve=1` delivery path (the primary path for every `uploads/*.pdf`
+  request, per the .htaccess rewrite; also the fallback used for `.txt`/`.md`
+  on hosts without `mod_rewrite`) set `X-Robots-Tag: index, follow`
+  unconditionally for pdf/txt/md, regardless of `SITE_INDEXABLE`. Every HTML
+  page already flips its `<meta name="robots">` to `noindex, nofollow` when
+  the library is marked not ready to be found — a PDF has no `<head>` for
+  that meta tag to live in, so `X-Robots-Tag` is the only way the raw bytes
+  can carry the same signal, and it was asserting the opposite. Now follows
+  `SITE_INDEXABLE` the same way the HTML pages do.
+
+## 1.50.20 — 27 August 2026
+
+### Added
+
+- **A `Specification` line in `llms.txt`**, pointing at the AI Visibility
+  convention (`https://www.ai-visibility.org.uk/`) this document also
+  follows, alongside the site's own description and (when set) publisher
+  briefing.
+- **A `_specification` object in `identity.json`**, naming the same AI
+  Visibility URL, alongside `@context` and `@graph`, so a consumer of the
+  Schema.org document can also discover the external convention it
+  conforms to.
+
+## 1.50.19 — 26 August 2026
+
+### Changed
+
+- **The desktop Playlist's stage-fill background (added in 1.50.11) is now
+  a genuine second, playing `<video>` of the same clip, not a static
+  poster frame.** The earlier version filled the space beside a
+  narrower-than-stage video with a blurred still image; this one plays a
+  muted, looped copy of the actual clip behind it, so the background moves
+  the way the foreground does rather than sitting frozen on one frame for
+  the whole video.
+  - `setStageBackground()` in `media.js` now builds a `<video
+    class="fm-stage-bg">` (muted, looped, `preload="none"` so the extra
+    bytes are only fetched once playback actually starts) instead of a
+    `<div>` with a `background-image`.
+  - Its playback is mirrored to the main video: `play`/`pause` call
+    through directly, and `timeupdate`/`seeked` snap-correct any drift
+    past 0.3s. Two independent decode pipelines are not guaranteed to
+    stay frame-locked, but nothing watching a heavily blurred backdrop
+    needs frame accuracy, only that it doesn't visibly drift apart over a
+    long clip. Verified live: after 1.5s of playback the two were 0.08s
+    apart; after a seek, 0.04s; pausing the main video paused the
+    background in the same tick.
+  - `.fm-stage-bg` in `style.css` moved from `background-size: cover` to
+    `object-fit: cover`, with explicit `width`/`height` added — a
+    replaced element like `<video>` does not stretch to fill from `inset`
+    alone the way a plain `<div>` does, unlike the block-level element it
+    replaces.
+  - Scoping is unchanged: this remains specific to the desktop two-pane
+    Playlist stage. The single-file page's stage sizes itself to the
+    video's own rendered shape (`width: fit-content`) and so never has
+    unused space to fill in the first place — confirmed by reading the
+    base `.fm-stage` rule, not assumed — so building a second video
+    element there would only double the bandwidth for a layout that
+    already has no gap.
+  - The real cost of a live background over a static one: this doubles
+    the bytes fetched for a video while it is playing. `preload="none"`
+    defers that until the reader actually presses play; the poster
+    attribute (unchanged, still generated server-side per track) covers
+    the paused state, letterboxed through the same blur/scale CSS the
+    live video gets once loaded.
+
+## 1.50.18 — 26 August 2026
+
+### Added
+
+- **A new `info` status tier for Diagnostics**, alongside the existing
+  `ok`/`warn`/`bad`. A blue "NOTE" chip, distinct from `warn`'s amber
+  "CHECK" — for a row describing a deliberate, documented default the
+  admin has not gotten wrong, only not chosen the more locked-down of two
+  valid options. Explicitly excluded from the "Needs attention" tab, which
+  gathers everything `!== 'ok'`: an `info` row is not something to act on,
+  and putting one in a tab titled "Needs attention" said the opposite of
+  what the row's own note already said.
+
+### Fixed
+
+- **The "Video access control" Diagnostics row was marked `warn` — and so
+  pulled into "Needs attention" — for using video's own documented default
+  (page-level, unlisted-but-fetchable) model**, even though its note
+  already said this "is fine unless webserver-level enforcement is
+  specifically wanted." Moved to the new `info` tier. While fixing it,
+  separated out a second, genuinely distinct case that the same status
+  expression had been conflating with the deliberate-default one:
+  enforcement having been confirmed once and then silently regressing
+  (`FOLIO_URL_SIGNING_KEY` cleared after the fact) is a real problem — the
+  admin may believe protection is active when it isn't — and correctly
+  stays `warn` regardless of whether any restricted/hidden file currently
+  exists, rather than only warning when one happens to. Checked the PDF
+  access control row for the same issue: its unenforced state means a
+  restricted PDF actually behaves as public, a real gap between the
+  admin's own setting and what's served, not a deliberate default —
+  correctly stays `warn`, left unchanged.
+
+## 1.50.17 — 26 August 2026
+
+### Fixed
+
+- **The Diagnostics "Blurred preview for restricted video" row could never
+  explain a failure that wasn't simply "ffmpeg or Imagick missing."** It
+  re-derived that one check with its own inline copy of the logic instead
+  of calling `video_blur_available()` from `lib/video.php` — the two could
+  drift, and worse, an environment check alone can't see a failure that has
+  nothing to do with ffmpeg or Imagick: an unwritable `data/previews/`, an
+  unreadable source file, an Imagick exception during generation. Those
+  were only ever visible in the PHP error log via `video_blur_log()`, never
+  on the Diagnostics page itself.
+
+  Now: the row calls `video_blur_available()` directly rather than
+  duplicating it; a new `data/previews/` writability check catches the
+  most common non-environment failure explicitly; and when a restricted or
+  hidden video actually exists in the library, Diagnostics runs one real
+  `video_blur_generate()` against it (read-only from the source video's
+  perspective — cached by content hash, so repeat visits cost nothing after
+  the first) and shows the exact outcome: confirmed working, or the
+  specific reason it failed, right on the page. `video_blur_generate()`
+  gained an optional `&$error` out-parameter for this — the same
+  convention `video_rasterise_frame()` already uses — so the detail
+  `video_blur_log()` sends to the error log is now also available directly
+  to any caller that wants to show it, not just to whoever goes looking in
+  server logs.
+
+### Changed
+
+- Corrected an arithmetic slip from 1.50.15: `tests/readme.md`'s coverage
+  table has always had 32 rows, correctly matching the suite's 32 test
+  groups, but the prose describing it in the changelog, `readme.txt`, and
+  `docs/ssot.md` said 31. Fixed all three to match the table that was
+  already right.
+
+## 1.50.16 — 26 August 2026
+
+### Added
+
+- **Diagnostic logging for restricted-video blur previews** (`lib/video.php`,
+  new). The four functions that generate a hidden/restricted video's
+  blurred hover-preview frame — `video_blur_cache_path()`,
+  `video_blur_available()`, `video_blur_generate()`, and a new
+  `video_blur_log()` — moved out of `index.php` into their own file, and
+  every failure point along the way (ffmpeg missing, the Imagick extension
+  or class unavailable, the source file unreadable, the cache directory
+  missing or unwritable, an Imagick exception, a zero-byte write) now logs
+  a specific reason to the PHP error log rather than failing silently into
+  a generic 404. The public response is unchanged either way — still a
+  plain 404, never a path, binary name, or exception detail. Controlled by
+  a new `VIDEO_BLUR_DIAGNOSTICS` constant (default on), documented in
+  `config-sample.php` alongside the other optional toggles — it was
+  present in code but undocumented in the change this built on top of.
+  Also fixed a docblock that had gone orphaned in the same refactor:
+  `video_blur_available()`'s own description had been separated from the
+  function by the newly-inserted diagnostics block and was describing the
+  wrong thing above it; moved back to sit directly above the function it
+  actually documents.
+
+### Fixed
+
+- **`assets/manifest.json` carried a stale `sha256` for `style.css`** in
+  the source this release was built from — the byte length was already
+  correct, but the hash itself didn't match the file's actual (unchanged)
+  content. Restored the correct value.
+
 ## 1.50.15 — 26 August 2026
 
 ### Changed
 
-- **`tests/readme.md`'s "What is covered" table listed 14 of the suite's 31
+- **`tests/readme.md`'s "What is covered" table listed 14 of the suite's 32
   test groups**, a gap that predated this release but sat directly beside
   the assertions corrected in 1.50.14. Filled in every missing group,
   including the three this release actually touched (PDF/video access

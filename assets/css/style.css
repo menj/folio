@@ -641,17 +641,20 @@ body {
         justify-content: center;
         align-items: center;
     }
-    /* A portrait clip stays narrow at its own aspect ratio (.fm-el keeps its
-       object-fit: contain sizing, untouched), which leaves the rest of this
-       now-full-width stage as bare black either side of it. Rather than
-       stretching or cropping the actual video to fill that space, a second,
-       purely decorative layer behind it — the same poster frame, blown up
-       and blurred — fills the stage visually without the real video ever
-       leaving its correct shape. Scoped to this exact stage override, so the
-       single-file page and mobile Playlist (whose stage already shrinks to
-       fit the video, with nothing to fill) are entirely unaffected: neither
-       renders a poster for this route in the first place, so this rule has
-       nothing to select there either way.
+    /* A clip narrower than the stage (its own object-fit: contain sizing on
+       .fm-el, untouched) leaves the rest of this now-full-width stage as
+       bare space either side of it. Rather than stretching or cropping the
+       actual video to fill that space, a second, purely decorative <video>
+       behind it — the same clip, playing in sync (see setStageBackground in
+       media.js), blown up and blurred — fills the stage visually without
+       the real video ever leaving its correct shape. object-fit: cover here
+       is deliberately different from .fm-el's contain: this layer is
+       allowed to crop, since it is scenery, not content. Scoped to this
+       exact stage override, so the single-file page and mobile Playlist
+       (whose stage already shrinks to fit the video, with nothing to fill)
+       are entirely unaffected: media.js only ever builds this element in a
+       Playlist context in the first place, so this rule has nothing to
+       select there either way.
        z-index: -1, not a positive index on .fm-el, is what keeps this behind
        the video: .fm-el is never given a position of its own here (it stays
        plain, static, in-flow content, exactly as everywhere else in the
@@ -662,8 +665,9 @@ body {
     .playlist-video .fm-standalone.fm-video .fm-stage-bg {
         position: absolute;
         inset: -6px;
-        background-size: cover;
-        background-position: center;
+        width: calc(100% + 12px);
+        height: calc(100% + 12px);
+        object-fit: cover;
         filter: blur(28px) saturate(1.1);
         transform: scale(1.08);
         opacity: 0.55;
@@ -2138,7 +2142,8 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
 
 .diag-ok,
 .diag-warn,
-.diag-bad {
+.diag-bad,
+.diag-info {
     cursor: default;
     font-weight: 600;
     letter-spacing: 0.08em;
@@ -2158,9 +2163,21 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     border-color: #a01c1c;
     background: color-mix(in srgb, #a01c1c 10%, transparent);
 }
+/* A deliberate, documented default — a choice the admin has not made
+   "wrong," just not the more locked-down of two valid options — gets its
+   own neutral tone rather than sharing warn's amber. Amber reads as "you
+   should look at this"; this tier is for rows whose own note already says
+   the current state is fine. Never counted toward $warn_count/$bad_count
+   and never pulled into the "Needs attention" tab: it is not one. */
+.diag-info {
+    color: #2a5f8f;
+    border-color: #3f7bb0;
+    background: color-mix(in srgb, #3f7bb0 10%, transparent);
+}
 [data-theme="night"] .diag-ok   { color: #6fce93; border-color: #6fce93; }
 [data-theme="night"] .diag-warn { color: #e0b061; border-color: #e0b061; }
 [data-theme="night"] .diag-bad  { color: #e58a8a; border-color: #e58a8a; }
+[data-theme="night"] .diag-info { color: #7cb3e0; border-color: #7cb3e0; }
 
 .diag-cmd {
     font-family: var(--mono);

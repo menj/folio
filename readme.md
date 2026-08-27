@@ -162,7 +162,6 @@ lib/vendor/            Google API client and dependencies (MIT/Apache 2.0), used
 changelog.md           Version history
 .htaccess              Apache rules, active as shipped
 tests/                 Isolated integration smoke test
-robots.txt             Neutral crawler template; upload to the DOMAIN ROOT
 license.txt            GNU General Public License v3
 uploads/               Your published files; keep this directory present
 uploads/.htaccess      Hardening for the publicly served uploads folder
@@ -179,7 +178,9 @@ See `docs/install.md` for the complete procedure. In brief:
 5. Read that one-time token over FTP, enter it in the installer, and provide the
    exact canonical `SITE_URL` for the Folio folder.
 6. Complete the account and site fields, then delete `install.php`.
-7. Log in, run the admin-only diagnostics, and publish a customised `robots.txt`.
+7. Log in and run the admin-only diagnostics. robots.txt is generated
+   automatically — see "Getting documents found" below if Folio lives in
+   a subfolder rather than at your domain root.
 
 Clean URLs can be enabled later; query-string URLs remain fully supported.
 
@@ -262,12 +263,13 @@ FTP therefore changes its URL.
 
 ### SEO
 
-Upload `robots.txt` to your domain root, for example `https://example.com/robots.txt`,
-after editing the `Sitemap:` line to match your domain and folder. A robots.txt
-placed inside a subfolder is ignored. If a robots.txt already exists at the root,
-merge the `Sitemap:` line into it rather than replacing the file. The supplied
-version opens the whole site to search engines and to AI crawlers such as GPTBot,
-ClaudeBot, PerplexityBot, and CCBot.
+`robots.txt` is generated automatically from the Crawlers settings —
+reachable at your domain root once Folio is installed there, or via one
+rewrite rule at your domain root's own config if Folio lives in a
+subfolder (see "Getting documents found" below). It opens the whole site
+to search engines and to AI crawlers such as GPTBot, ClaudeBot,
+PerplexityBot, and CCBot by default, following whatever the Crawlers
+screen's indexability toggle and sitemap settings say.
 
 Submit `sitemap.xml` in Google Search Console. Detail pages carry the ranking signals, and their quality depends on the titles and descriptions you write. Untitled files fall back to thin generated metadata.
 
@@ -410,9 +412,11 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   in what order, independent of each link's own enable/disable toggle above —
   removing one from the footer only hides it there. Default order: llms.txt,
   YAML, vCard, JSON, HTML, XML.
-* **robots.txt generator.** The screen shows a robots.txt reflecting the
-  settings above, ready to copy into the file at your domain root. Folio never
-  writes outside its own folder, so that final step stays manual by design.
+* **robots.txt.** Generated automatically, reflecting the settings above.
+  Served live at your domain root once Folio is installed there; a
+  subfolder install needs one rewrite rule at the domain root's own
+  config, shown filled in with the real path on this screen — see
+  "Getting documents found" above for the exact line.
 * **Clean URLs** with a real preflight check: click **Test rewrite**, and Folio
   probes a fake pretty URL through your `.htaccess`. Only if that probe
   succeeds is the Enable button revealed. It cannot silently take the site
@@ -814,17 +818,23 @@ window before concluding it has not worked.
 
 ## Getting documents found
 
-Folio publishes two sitemaps:
+Folio publishes four sitemaps:
 
 | Sitemap | Lists |
 | --- | --- |
 | `/sitemap.xml` | Record pages and standalone pages |
 | `/sitemap-pdf.xml` | The public PDF files themselves |
+| `/sitemap-video.xml` | The public video files themselves, with `video:` title, description, thumbnail, and publication date |
 | `/sitemap-categories.xml` | The category archive pages |
 
-The second matters for a document library. Search engines index PDFs as pages
-in their own right, so a scanned certificate can be found directly rather than
-only through the page describing it. Both are announced in `robots.txt`.
+The PDF and video sitemaps matter for a document library. Search engines index
+PDFs as pages in their own right, so a scanned certificate can be found
+directly rather than only through the page describing it; a video sitemap
+gives Google a title, description, and thumbnail for each video without
+waiting on a crawl and render of the page it lives on. The video sitemap is
+empty while the video-routing guard (Crawlers screen) is on, since its
+`content_loc` would need to be a signed URL that could expire before the
+sitemap is next crawled. All four are announced in `robots.txt`.
 
 Documents are served `index, follow`, so crawlers may index them and follow
 the links inside them.
@@ -835,6 +845,24 @@ access setting governs delivery, not discovery.
 Files matching `EXCLUDE_PATTERNS` are the one exception, and not really an
 exception at all: those are not part of the library. They return 404 on every
 route, so a sitemap entry would point at nothing.
+
+### robots.txt
+
+Generated automatically, reflecting the settings above — there is no file
+to edit or upload. If Folio is installed at your domain root, `/robots.txt`
+resolves through it directly once `.htaccess` is in place. If Folio lives
+in a subfolder, `/robots.txt` at the true domain root is outside anything
+Folio's own `.htaccess` can reach, so add one rewrite rule to your domain
+root's own config — the Crawlers screen shows it with your actual path
+filled in:
+
+```
+RewriteRule ^robots\.txt$ /your-folio-folder/index.php?action=robots [L]
+```
+
+Unlike the sitemaps above, `robots.txt` never returns 404: it is what
+announces non-indexability in the first place (`Disallow: /` instead of
+`Allow: /`), so it always has to respond.
 
 ## Sorting and filtering the listing
 
@@ -1011,7 +1039,9 @@ alone. Run the diagnostics, hard-refresh, and verify.
 
 **To remove:** download `uploads/` first, then delete the installation folder.
 Folio writes nothing outside it: no database, no configuration elsewhere on the
-server. Remove the `Sitemap:` line from your root `robots.txt` afterwards.
+server. `robots.txt` is generated by Folio itself, so it stops resolving once
+the folder is gone — nothing to edit. If you added the one-line rewrite for a
+subfolder install to your domain root's own config, remove that too.
 
 ## Site secrets
 
@@ -1165,4 +1195,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.50.15. Single-file application with separated CSS and JS assets.
+1.50.24. Single-file application with separated CSS and JS assets.

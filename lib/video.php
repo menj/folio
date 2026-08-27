@@ -5,6 +5,14 @@
  * Restricted-video derivatives are generated from a representative frame,
  * aggressively reduced, blurred with Imagick, and cached outside the public
  * source-video path. Vendor libraries are intentionally not modified.
+ *
+ * Copyright (C) 2026 Mohd Elfie Nieshaem Juferi. This program is free
+ * software: you can redistribute it and/or modify it under the terms of
+ * the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any
+ * later version. See license.txt, or <https://www.gnu.org/licenses/>.
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
 declare(strict_types=1);
@@ -17,9 +25,6 @@ function video_blur_cache_path(string $rel): string
     return dirname(__DIR__) . '/data/previews/' . hash('sha256', 'video:' . $rel) . '.jpg';
 }
 
-/** Whether a blurred video preview can be generated on this server: needs
- *  both ffmpeg, to pull a representative frame, and Imagick, to downscale
- *  and blur it — the same two-step loss pdf_blur_generate relies on. */
 /**
  * Diagnostic logging for restricted-video blur previews.  Logging is deliberately
  * server-side only: the public response remains a generic 404 on failure so
@@ -54,6 +59,9 @@ function video_blur_log(string $stage, string $message, array $context = []): vo
     error_log('Folio video-blur: ' . implode(' | ', $parts));
 }
 
+/** Whether a blurred video preview can be generated on this server: needs
+ *  both ffmpeg, to pull a representative frame, and Imagick, to downscale
+ *  and blur it — the same two-step loss pdf_blur_generate relies on. */
 function video_blur_available(): bool
 {
     $ffmpeg = tool_path('ffmpeg');
@@ -81,16 +89,25 @@ function video_blur_available(): bool
  * genuine loss of the underlying content, not a filter a sharpening pass
  * could partially undo. Returns false on any failure; callers fall back
  * to the manual placeholder_image or the plain archival texture.
+ *
+ * $error, when passed, receives a short human-readable reason for a false
+ * return — the same detail video_blur_log() already sends to the PHP error
+ * log, just also handed back directly so a caller like Diagnostics can show
+ * it on the page itself rather than sending an admin to dig through server
+ * logs for what video_blur_log() already knows.
  */
-function video_blur_generate(string $abs, string $rel): bool
+function video_blur_generate(string $abs, string $rel, ?string &$error = null): bool
 {
+    $error = null;
     if (!video_blur_available()) {
+        $error = 'ffmpeg or the Imagick extension is unavailable — see the checks above.';
         video_blur_log('generate', 'preview prerequisites are unavailable', [
             'file' => $rel,
         ]);
         return false;
     }
     if (!is_readable($abs)) {
+        $error = 'The source video is not readable by PHP (check file ownership/permissions).';
         video_blur_log('generate', 'source video is not readable', [
             'file' => $rel,
             'path' => $abs,
@@ -114,6 +131,7 @@ function video_blur_generate(string $abs, string $rel): bool
     $frame_error = null;
     $frame = video_rasterise_frame($abs, 400, [], $frame_error);
     if ($frame === null) {
+        $error = 'ffmpeg could not extract a frame: ' . ($frame_error ?: 'unknown ffmpeg error') . '.';
         video_blur_log('ffmpeg', 'frame extraction failed', [
             'file' => $rel,
             'error' => $frame_error ?: 'unknown ffmpeg error',
@@ -147,6 +165,7 @@ function video_blur_generate(string $abs, string $rel): bool
         $img->scaleImage(min(600, $w), 0);
         $img->setImageCompressionQuality(70);
         if (!is_dir(dirname($cache)) && !@mkdir(dirname($cache), 0750, true) && !is_dir(dirname($cache))) {
+            $error = 'The preview cache directory (' . dirname($cache) . ') could not be created.';
             video_blur_log('cache', 'could not create preview cache directory', [
                 'file' => $rel,
                 'directory' => dirname($cache),
@@ -156,6 +175,7 @@ function video_blur_generate(string $abs, string $rel): bool
             return false;
         }
         if (!is_writable(dirname($cache))) {
+            $error = 'The preview cache directory (' . dirname($cache) . ') is not writable by PHP.';
             video_blur_log('cache', 'preview cache directory is not writable', [
                 'file' => $rel,
                 'directory' => dirname($cache),
@@ -168,6 +188,7 @@ function video_blur_generate(string $abs, string $rel): bool
         $write_error = $img->getImageFilename();
         $img->clear();
         if (!$ok || !is_file($cache) || @filesize($cache) <= 0) {
+            $error = 'Imagick could not write the blurred JPEG to the cache.';
             video_blur_log('imagick', 'blurred JPEG write failed', [
                 'file' => $rel,
                 'cache' => $cache,
@@ -185,6 +206,7 @@ function video_blur_generate(string $abs, string $rel): bool
         ]);
         return true;
     } catch (Throwable $e) {
+        $error = 'Imagick raised ' . get_class($e) . ': ' . $e->getMessage();
         video_blur_log('imagick', 'exception while generating blurred preview', [
             'file' => $rel,
             'exception' => get_class($e),
