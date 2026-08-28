@@ -68,6 +68,7 @@ define('SITE_DESCRIPTION', 'Automated Folio regression test.');
 define('PUBLISHER_TYPE', 'Person');
 define('PUBLISHER_NAME', '');
 define('PUBLISHER_URL', '');
+define('PUBLISHER_EMAIL', 'smoke-test@example.invalid');
 define('SITE_LANGUAGE', 'en');
 define('FOLIO_AUTH_PEPPER', '');
 define('FOLIO_COOKIE_NAME', 'FOLIO_SMOKE');
@@ -319,6 +320,24 @@ grep -Fq "view=foo-pdf-${HIDDEN_HASH}<" "${TMP}/pdf-sitemap.xml" || fail 'hidden
 curl -sS "${BASE}?action=llms" -o "${TMP}/pdf-llms.txt"
 grep -Fq 'full transcription available' "${TMP}/pdf-llms.txt" || fail 'llms.txt did not note transcription availability for the hidden PDF'
 pass 'pdf_access does not affect sitemap, robots meta, or llms.txt indexability'
+
+# llms.txt Specification (v1.7.0) conformance: Lang: immediately after the H1
+# (before the blockquote), a required # Contact section built from whichever
+# publisher fields are actually configured, and the specification attribution
+# as a footer beneath a horizontal rule rather than an inline link near the
+# top. Reuses the llms.txt already fetched above.
+LLMS_LINE1="$(sed -n '1p' "${TMP}/pdf-llms.txt")"
+LLMS_LINE2="$(sed -n '2p' "${TMP}/pdf-llms.txt")"
+[[ "${LLMS_LINE1}" == '# Folio Smoke Test' && "${LLMS_LINE2}" == 'Lang: en' ]] \
+    || fail 'llms.txt Lang: header is missing or not immediately after the H1'
+grep -Fq '# Contact' "${TMP}/pdf-llms.txt" \
+    || fail 'llms.txt is missing the required # Contact section'
+grep -Fq -- '- Email: smoke-test@example.invalid' "${TMP}/pdf-llms.txt" \
+    || fail 'llms.txt # Contact section is missing the configured publisher email'
+LLMS_LAST4="$(tail -4 "${TMP}/pdf-llms.txt")"
+[[ "${LLMS_LAST4}" == $'---\n\nllms.txt Specification (ADF-001)\nhttps://www.ai-visibility.org.uk/specifications/llms-txt/' ]] \
+    || fail 'llms.txt specification attribution is not the closing footer the spec documents'
+pass 'llms.txt Lang:, # Contact, and specification attribution follow the llms.txt Specification'
 
 # robots.txt is generated live from current settings — unlike every other
 # discovery endpoint, it must never 404: it is what announces
@@ -1007,5 +1026,183 @@ grep -Fq '<urlset' "${TMP}/sitemap-after.xml" || fail 'small library was not ser
 pass 'sitemap partition routing rejects invalid parts'
 
 pass 'stateless sitemap generation'
+
+# ------------------------------------------------------------------
+# FOLIO-REDIR: Redirect Manager and 404 Monitor
+#
+# The redirect layer sits beneath every automatic URL-preservation mechanism
+# (canonical slugs, aliases, page slug history, reconciliation) and is only
+# consulted once all of them have declined and the request would otherwise
+# have been a 404. These tests assert both halves of that: that rules work,
+# and that they cannot shadow anything already resolving correctly.
+# ------------------------------------------------------------------
+
+# An absent store must be completely inert, not an error, on a site that has
+# never opened the Redirects screen.
+[[ ! -f "${APP}/data/redirects.json" ]] || rm -f "${APP}/data/redirects.json"
+[[ "$(status_code "${BASE}?view=no-such-thing")" == '404' ]] \
+    || fail 'a missing redirect store changed 404 behaviour'
+pass 'a missing redirect store leaves routing untouched'
+
+# Seed a store directly, the shape an import or a hand edit would leave.
+cat > "${APP}/data/redirects.json" <<'REDIRJSON'
+[
+ {"id":"t1","source":"old-report.pdf","destination":"reports/annual","code":301,"active":true,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0},
+ {"id":"t2","source":"temp-thing","destination":"about","code":302,"active":true,"query":"discard","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0},
+ {"id":"t3","source":"gone-away","destination":"https://example.com/elsewhere","code":301,"active":true,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0},
+ {"id":"t4","source":"switched-off","destination":"about","code":301,"active":false,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0},
+ {"id":"t5","source":"hop-one","destination":"hop-two","code":301,"active":true,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0},
+ {"id":"t6","source":"hop-two","destination":"reports/annual","code":301,"active":true,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0}
+]
+REDIRJSON
+
+REDIR_HDRS="${TMP}/redir.h"
+
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=old-report.pdf"
+grep -qi '^HTTP/[0-9.]* 301' "${REDIR_HDRS}" || fail '301 rule did not return 301'
+grep -qi '^Location:.*reports/annual' "${REDIR_HDRS}" || fail '301 rule sent the wrong Location'
+pass '301 permanent redirects resolve'
+
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=temp-thing"
+grep -qi '^HTTP/[0-9.]* 302' "${REDIR_HDRS}" || fail '302 rule did not return 302'
+pass '302 temporary redirects resolve and are not converted to 301'
+
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=gone-away"
+grep -qi '^Location: https://example.com/elsewhere' "${REDIR_HDRS}" \
+    || fail 'external destination was not sent verbatim'
+pass 'external destinations resolve'
+
+[[ "$(status_code "${BASE}?view=switched-off")" == '404' ]] \
+    || fail 'an inactive rule still redirected'
+pass 'inactive rules are ignored'
+
+# A chain must cost the visitor one hop, not two.
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=hop-one"
+grep -qi '^Location:.*reports/annual' "${REDIR_HDRS}" \
+    || fail 'a redirect chain was not collapsed to its final destination'
+pass 'redirect chains collapse to one hop'
+
+# Query-string policy.
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=old-report.pdf&utm_source=smoke"
+grep -qi '^Location:.*utm_source=smoke' "${REDIR_HDRS}" \
+    || fail 'preserve policy dropped the query string'
+curl -sS -o /dev/null -D "${REDIR_HDRS}" "${BASE}?view=temp-thing&utm_source=smoke"
+! grep -qi '^Location:.*utm_source' "${REDIR_HDRS}" \
+    || fail 'discard policy carried the query string across'
+pass 'query-string preserve and discard policies both apply'
+
+# The critical guarantee: a rule must never take a live resource off the air.
+# The slug is discovered from the live listing rather than hardcoded, so this
+# keeps testing a genuinely resolving document even if the fixtures change.
+curl -sS -o "${TMP}/redir-listing.html" "${BASE}"
+LIVE_SLUG="$(grep -oE '\?view=[a-z0-9][a-z0-9-]*' "${TMP}/redir-listing.html" | head -1 | sed 's/^?view=//')"
+[[ -n "${LIVE_SLUG}" ]] || fail 'could not find a live document slug to test collision behaviour'
+[[ "$(status_code "${BASE}?view=${LIVE_SLUG}")" == '200' ]] \
+    || fail "discovered slug ${LIVE_SLUG} does not resolve, so the collision test would prove nothing"
+cat > "${APP}/data/redirects.json" <<REDIRJSON
+[
+ {"id":"t7","source":"${LIVE_SLUG}","destination":"about","code":301,"active":true,"query":"preserve","note":"","created":1,"modified":1,"hits":0,"first_hit":0,"last_hit":0}
+]
+REDIRJSON
+[[ "$(status_code "${BASE}?view=${LIVE_SLUG}")" == '200' ]] \
+    || fail 'a redirect rule shadowed a document that still resolves'
+pass 'a live document still wins over a stale redirect rule'
+
+# A corrupt store must cost the feature and nothing else.
+printf 'not json at all {{{' > "${APP}/data/redirects.json"
+[[ "$(status_code "${BASE}")" == '200' ]] || fail 'a corrupt redirect store took the library down'
+[[ "$(status_code "${BASE}?view=old-report.pdf")" == '404' ]] \
+    || fail 'a corrupt redirect store did not fail closed'
+pass 'a corrupt redirect store fails safely'
+
+rm -f "${APP}/data/redirects.json"
+
+# 404 Monitor: unresolved paths are recorded, and the store never exposes an
+# IP address or anything else identifying a visitor.
+rm -f "${APP}/data/notfound.json"
+curl -sS -o /dev/null "${BASE}?view=never-existed-at-all"
+[[ -f "${APP}/data/notfound.json" ]] || fail '404 monitor did not record an unresolved URL'
+grep -Fq 'never-existed-at-all' "${APP}/data/notfound.json" \
+    || fail '404 monitor recorded the wrong path'
+! grep -Eq '"(ip|addr|remote|agent)"' "${APP}/data/notfound.json" \
+    || fail '404 monitor stored identifying information'
+pass '404 monitor records unresolved URLs without identifying visitors'
+
+# The admin screen is gated exactly like every other admin screen.
+REDIR_ADMIN="$(curl -sS -o /dev/null -w '%{http_code}' "${BASE}?action=redirects")"
+[[ "${REDIR_ADMIN}" == '403' || "${REDIR_ADMIN}" == '302' ]] \
+    || fail "anonymous access to the redirects screen was not refused (got ${REDIR_ADMIN})"
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' \
+    --data-urlencode 'op=save' --data-urlencode 'source=x' --data-urlencode 'destination=y' \
+    "${BASE}?action=redirects")" != '200' ]] \
+    || fail 'a redirect was writable without authentication'
+pass 'the redirects screen is authenticated and CSRF-protected'
+
+# ------------------------------------------------------------------
+# FOLIO-CONTACT: public contact page and form
+#
+# The contact page carries a form that emails the site owner. The single
+# most important property is that the recipient address never reaches the
+# browser: it is read from PUBLISHER_EMAIL server-side at the moment the
+# mail is built, and appears in no HTML, no attribute, and no response.
+# ------------------------------------------------------------------
+
+# Publish the contact page. Until it is enabled with content, like every
+# other standalone page, it is simply not there.
+cat > "${APP}/data/pages.json" <<'CONTACTJSON'
+{"contact":{"enabled":true,"title":"Contact","menu":"Contact","body":"Get in touch using the form below.","slug":"","seo_title":"","seo_desc":""}}
+CONTACTJSON
+
+curl -sS "${BASE}?page=contact" -o "${TMP}/contact.html"
+[[ "$(status_code "${BASE}?page=contact")" == '200' ]] \
+    || fail 'the contact page did not resolve through query-string page routing'
+grep -Fq 'contact_send' "${TMP}/contact.html" || fail 'the contact form is missing from the contact page'
+grep -Fq 'name="csrf"' "${TMP}/contact.html" || fail 'the contact form carries no CSRF token'
+pass 'the contact page resolves and carries a CSRF-protected form'
+
+# The whole point of the feature: the address must not be discoverable.
+! grep -Fq 'smoke-test@example.invalid' "${TMP}/contact.html" \
+    || fail 'THE RECIPIENT EMAIL ADDRESS LEAKED INTO THE CONTACT PAGE HTML'
+pass 'the recipient address never reaches the browser'
+
+# A page carrying a session-bound token must not be handed to the next
+# visitor from a shared cache.
+curl -sS -o /dev/null -D "${TMP}/contact.h" "${BASE}?page=contact"
+! grep -qi '^Cache-Control:.*public' "${TMP}/contact.h" \
+    || fail 'the contact page was served with a public cache header despite carrying a CSRF token'
+pass 'the contact page is not publicly cached'
+
+# CSRF: a POST with no token, and one with a wrong token, are both refused.
+for BAD_TOKEN in '' 'not-a-real-token'; do
+    curl -sS -o "${TMP}/contact-csrf.html" \
+        --data-urlencode "op=contact_send" --data-urlencode "csrf=${BAD_TOKEN}" \
+        --data-urlencode 'name=Bot' --data-urlencode 'email=bot@example.invalid' \
+        --data-urlencode 'subject=Hello' --data-urlencode 'message=This is a long enough message body.' \
+        "${BASE}?page=contact"
+    ! grep -Fq 'has been sent' "${TMP}/contact-csrf.html" \
+        || fail 'a contact submission without a valid CSRF token reported success'
+done
+pass 'contact submissions without a valid CSRF token are refused'
+
+# The honeypot must never be presented to a person or to assistive software.
+grep -Fq 'aria-hidden="true"' "${TMP}/contact.html" \
+    || fail 'the honeypot field is not hidden from assistive technology'
+pass 'the honeypot is hidden from assistive technology'
+
+# Attachments must never be able to become library documents. The form posts
+# to the page, not to any upload route, and no upload route exists.
+! grep -Eq 'action=(raw|meta|ocr)' "${TMP}/contact.html" \
+    || fail 'the contact form references a library route'
+pass 'the contact form does not touch the document library'
+
+# Disabling the page removes it entirely, like any other standalone page.
+cat > "${APP}/data/pages.json" <<'CONTACTOFFJSON'
+{"contact":{"enabled":false,"title":"Contact","menu":"Contact","body":"Get in touch.","slug":"","seo_title":"","seo_desc":""}}
+CONTACTOFFJSON
+[[ "$(status_code "${BASE}?page=contact")" == '404' ]] \
+    || fail 'a disabled contact page still resolved'
+pass 'a disabled contact page 404s like any other unpublished page'
+
+rm -f "${APP}/data/pages.json"
 
 printf '\nAll Folio smoke tests passed.\n'

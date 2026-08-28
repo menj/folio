@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.50.24. Update this file in the same commit as any change it describes.
+Version 1.52.1. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.50.24');` |
-| `changelog.md` | `## 1.50.24 — 27 August 2026` |
-| `readme.txt` | `Stable tag: 1.50.24` |
-| `readme.md` | `1.50.24.` under `## Version` |
-| `security.md` | `The current supported release is **1.50.24**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.52.1');` |
+| `changelog.md` | `## 1.52.1 — 27 August 2026` |
+| `readme.txt` | `Stable tag: 1.52.1` |
+| `readme.md` | `1.52.1.` under `## Version` |
+| `security.md` | `The current supported release is **1.52.1**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -95,6 +95,12 @@ lib/vendor/               Google API client and dependencies, MIT/Apache 2.0 —
 lib/video.php             restricted/hidden video blur-preview helpers, Folio's own code — not
                           third-party, kept out of index.php the same way the lib/ vendor
                           folders already are
+lib/redirects.php         Redirect Manager and 404 Monitor — storage, path normalisation,
+                          destination validation, loop and chain detection, resolver.
+                          Folio's own code, kept out of index.php for the same reason
+lib/contact.php           public contact form — validation, anti-spam, rate limiting,
+                          attachment checks, and mail delivery. Folio's own code, kept
+                          out of index.php for the same reason
 
 tests/smoke.sh            regression suite
 tests/readme.md           how to run it
@@ -129,6 +135,15 @@ data/metadata.json        titles, descriptions, categories, tags, document_type,
 data/metadata.lock        write lock
 data/folder-descriptions.json  folder descriptions, keyed by folder path
 data/pages.json           standalone page content
+data/redirects.json       explicit 301/302 rules; absent until the first one is saved
+data/redirects.lock       write lock
+data/notfound.json        404 Monitor counts — path, hits, first and last seen. No IP
+                          address or user agent. Capped and self-trimming; safe to delete
+data/notfound.lock        write lock
+data/contact-rate.json    contact form rate limiting — salted hashes of truncated IP
+                          networks with timestamps, never a raw address. Entries
+                          expire after an hour and prune themselves; safe to delete
+data/contact-rate.json.lock  write lock
 data/aspect.json          cached PDF page shapes; safe to delete
 data/previews/            generated, cached blurred previews for hidden PDFs and
                           restricted/hidden video (distinct hash namespaces, one folder)
@@ -243,6 +258,14 @@ Content-Security-Policy is identical to a build without the feature.
 | `FOLIO_URL_SIGNING_KEY` | empty | no — signs "restricted" pdf_access URLs and, once the video gate is confirmed, video URLs too, deliberately separate from `FOLIO_AUTH_PEPPER` |
 | `PDF_GATE_CONFIRMED` | `false` | Crawlers, via the PDF-routing preflight — never set by hand |
 | `VIDEO_GATE_CONFIRMED` | `false` | Crawlers, via the video-routing preflight — never set by hand |
+| `CONTACT_SENDER_EMAIL` | empty | no — what contact mail is sent *as*; empty means `no-reply@` the site's own domain. Never where it goes |
+| `CONTACT_ATTACHMENTS` | `true` | no |
+| `CONTACT_MAX_ATTACHMENTS` | `3` | no |
+| `CONTACT_MAX_FILE_MB` | `5` | no |
+| `CONTACT_MAX_TOTAL_MB` | `10` | no — capped further by the server's own `upload_max_filesize`/`post_max_size` |
+| `CONTACT_ANTISPAM` | `true` | no |
+| `CONTACT_MIN_SECONDS` | `3` | no |
+| `CONTACT_RATE_PER_HOUR` | `5` | no |
 
 `ADMIN_PASSWORD_HASH` left at `CHANGE_ME` disables login rather than accepting
 anything. **`FOLIO_AUTH_PEPPER` must never change once accounts exist**: it is
@@ -288,6 +311,8 @@ Admin, all requiring a session:
 | `?action=analytics` | Matomo and GA4 |
 | `?action=users` | accounts |
 | `?action=pages` | standalone pages |
+| `?action=redirects` | admin: explicit 301/302 rules and the 404 Monitor (`&tab=notfound`) |
+| `/contact` (`?page=contact`) | public: the contact page and its form; POST submits it |
 | `?action=docs` | documentation viewer |
 | `?action=diagnostics` | environment report |
 | `?action=catalogue` | admin: reconnect records to files |
@@ -481,6 +506,29 @@ Aliases are flattened, never chained. Each alias names the record, and the
 record names its current slug, so A → B → C sends both A and B directly to C.
 A canonical slug always beats a stale alias in the index, or a live page could
 redirect away from itself; this is enforced twice, independently.
+
+### Explicit redirects
+
+`lib/redirects.php` adds a rules layer beneath everything above, consulted
+only after canonical slugs, aliases, path-derived legacy slugs, page slug
+history, and reconciliation have all declined, and the request would
+otherwise have become a 404. That position is the whole design: it is why an
+explicit rule can never shadow a URL Folio already resolves, and why the two
+systems cannot compete. If a document still answers, the redirect layer is
+never reached.
+
+All three public 404s route through it — documents, standalone pages, and
+raw media — so a historical `/uploads/…` address is covered as well as a
+document page. In the media handler only the missing-file branch is hooked,
+never the deliberate refusals beneath it, which would otherwise let a rule be
+used to probe for withheld documents.
+
+Matching is exact, never patterned. Sources reduce to one comparable form:
+slashes trimmed and collapsed, percent-encoding decoded once, both clean and
+query-string URL shapes converging, and anything containing traversal or
+control characters refused rather than sanitised. Destinations are internal
+paths or `http(s)` only. Chains are collapsed at serve time so a visitor
+makes one hop; loops are refused at save time.
 
 ### Reconciliation
 

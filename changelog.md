@@ -3,6 +3,259 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.52.1 — 27 August 2026
+
+### Fixed
+
+- **The contact form shipped without its stylesheet.** 1.52.0 added the
+  contact form's CSS to `assets/css/style.css` but never rebuilt
+  `style.min.css`, and Folio inlines the *minified* stylesheet into every
+  page — so none of it reached a live site. The consequence was not
+  cosmetic: `.contact-hp`, the rule that hides the honeypot field, was
+  among the missing, which would have shown every real visitor a field
+  labelled "leave this field empty" and then silently rejected anyone who
+  filled it in. Assets rebuilt and the rule confirmed present in the
+  inlined output.
+
+### Changed
+
+- **Documentation corrected against the code.** A review found several
+  claims that had drifted: `readme.md` described the Pages screen as
+  "About, FAQ, three custom slots", omitting Contact and the fact that the
+  number of added pages has not been fixed at three for some time; the
+  admin-screens table had no row for Redirects at all; page URLs were
+  documented in the retired `/p/<slug>/` form; `lib/pdfjs/` was listed
+  twice in the file inventory while `assets/js/library-view.js` and all
+  three of Folio's own `lib/*.php` modules were listed not at all; and
+  `readme.md` contradicted itself on mbstring, calling it required at the
+  top and correctly optional further down. `readme.txt`'s summary carried
+  the same stale page list and the same mbstring error. All corrected, and
+  user-facing sections added for the contact form and the Redirect
+  Manager, neither of which had any documentation aimed at someone
+  actually using them rather than reading the changelog.
+
+## 1.52.0 — 27 August 2026
+
+### Added
+
+- **A public contact page and form.** Enable **Contact** under Pages, write
+  an introduction, and a form appears beneath it. A visitor sends a name,
+  email, subject, message, and optionally a file or two; it arrives as an
+  email you can reply to directly.
+
+  Built on the existing Pages system rather than beside it: `contact` is a
+  built-in slot alongside `about` and `faq`, carrying the `ContactPage`
+  schema.org type, and inherits routing, slug handling, SEO, the header menu,
+  and the canonical URL from what was already there. `/contact` works with
+  clean URLs and `?page=contact` without them, because both already worked
+  for every other page. `contact` was added to the reserved slug list so no
+  custom page can collide with it.
+
+  **The recipient address never reaches the browser.** It is read from
+  `PUBLISHER_EMAIL` server-side at the moment the mail is built, and appears
+  in no HTML, hidden field, data attribute, or response. `contact_send()`
+  takes no recipient parameter at all, so there is no code path by which a
+  request could redirect a submission elsewhere. A smoke test fails loudly if
+  the address ever appears in the page.
+
+  Deliberately no second "contact email" setting: `PUBLISHER_EMAIL` is
+  already the publisher's address for `vcard.vcf`, `identity.json`, and
+  llms.txt's Contact section, and a site with two of them is a site where one
+  is quietly wrong.
+
+  **Sender identity.** The message is sent as the site — `CONTACT_SENDER_EMAIL`,
+  or `no-reply@` its own domain — with the visitor's address as `Reply-To`.
+  Sending as the visitor would fail SPF and DMARC on any correctly configured
+  domain and get the message rejected or spam-foldered; this way replies still
+  reach them and the mail is legitimately sent. Every header value is stripped
+  of CR and LF first, which is what prevents a newline in a subject from
+  ending the Subject line and adding a `Bcc:` of the submitter's choosing.
+
+  **Transport is PHP's own `mail()`.** No SMTP client, no third-party
+  service, no new dependency — Folio had no mail capability of any kind
+  before this, and a credential-storing SMTP implementation is a large
+  security surface to add speculatively. Where a host has no mail function,
+  or no publisher email is set, the page still renders and both the Pages
+  screen and Diagnostics report **not ready** and say which of the two is
+  missing. A **Send a test email** button confirms delivery before the form
+  is relied on; it has no destination field and can only ever send to the
+  configured recipient, because an authenticated mailer accepting an
+  arbitrary address is an open relay waiting to be found.
+
+  **Attachments** are optional, up to three files at 5 MB each and 10 MB
+  total by default, and never above what the server's own
+  `upload_max_filesize`/`post_max_size` allow. Types are an allowlist, never
+  a blocklist — a blocklist is a promise to have thought of every dangerous
+  extension, and `.phtml`, `.phar`, `.cgi` and their relatives make that a
+  promise nobody keeps. The declared browser MIME type is ignored entirely as
+  visitor input; the content is sniffed with `finfo` and must agree with what
+  the extension claims, so a PHP script renamed `.png` is detected as
+  `text/x-php`, disagrees, and is refused. Files are read from PHP's own
+  temporary upload location, attached, and unlinked on every exit path —
+  success, validation failure, and delivery failure alike. They never enter
+  `uploads/`, never become documents, and never acquire a URL: a contact
+  attachment is an email payload, not a library asset, and Folio's rule that
+  FTP owns the library is untouched.
+
+  **Anti-spam** is layered: a honeypot hidden from people and assistive
+  software alike, a minimum time between page load and submission, crude
+  content checks, and rate limiting at five an hour. Which layer objected is
+  never reported — a bot told "honeypot detected" is a bot that gets fixed —
+  so every anti-spam rejection is worded identically to a delivery failure,
+  while genuine validation errors still name the field so a person can fix
+  it. Rate limiting stores a salted hash of the submitter's truncated network
+  (/24 or /48), never a raw address, expiring after an hour.
+
+  **Nothing submitted is stored.** No inbox, no message log, no retained
+  attachment — the email is the only copy. This is a delivery mechanism, not
+  a CRM. A failure records a one-line diagnostic with no message content, and
+  the visitor sees a generic error that reveals nothing about the mail setup.
+  A successful send redirects rather than re-rendering, so a refresh cannot
+  send the message twice.
+
+  The contact page is the one standalone page excluded from the public cache,
+  because it carries a session-bound CSRF token and a cached copy would hand
+  the next visitor a token that is not theirs.
+
+  Seven tests added, bringing the suite to 53: routing, the CSRF token's
+  presence and its enforcement, the absence of the recipient address from the
+  page, the absence of a public cache header, the honeypot's `aria-hidden`,
+  that the form references no library route, and that a disabled contact page
+  404s like any other. Header injection, filename traversal, dangerous
+  extensions, MIME/extension mismatch, and every anti-spam layer were
+  additionally verified directly against the module.
+
+## 1.51.0 — 27 August 2026
+
+Built on 1.50.26. The llms.txt Specification work from 1.50.25 and the
+roadmap re-audit from 1.50.26 are both included; the redirect feature below
+was developed against 1.50.24 in parallel and merged on top of them.
+
+### Added
+
+- **A Redirect Manager and 404 Monitor**, at Admin → Redirects. Folio already
+  keeps a URL alive through renames and moves on its own — canonical slugs,
+  aliases, path-derived legacy addresses, page slug history, and FTP
+  reconciliation all resolve an old address before anything new here is
+  consulted, and none of that changed. What none of them can do is infer an
+  intention: a folder restructured over FTP, or a document retired
+  deliberately, leaves nothing for reconciliation to match on. Explicit rules
+  cover exactly those cases.
+
+  A rule is consulted at the last possible moment, after every automatic
+  mechanism has declined and the request would otherwise have been a 404.
+  That ordering is the design rather than an implementation detail: it is why
+  a stale rule can never shadow a URL Folio still resolves — if the document
+  answers, the redirect layer is never reached — and why the two systems
+  cannot drift into competing. The admin screen additionally refuses to save
+  an *active* rule whose source resolves today, catching the collision when it
+  is written rather than when it would do harm; the same rule can still be
+  saved inactive when preparing for a move that has not happened yet.
+
+  All three public 404s are hooked — documents, standalone pages, and raw
+  media — so a historical `/uploads/old-report.pdf` is covered as well as a
+  document page. In the media handler only the missing-file branch is hooked,
+  never the deliberate refusals beneath it, which would otherwise let a rule
+  be used to probe for withheld documents or route around `pdf_access`. No
+  `.htaccess` change was needed or made: the catch-all is already guarded by
+  `!-f`, so a request for a file that no longer exists reaches PHP on its own.
+
+  301 and 302 are offered, explained in plain terms, and never silently
+  converted. Matching is exact — no patterns, no wildcards, no rule language —
+  so what a rule does is knowable by reading it. Sources normalise slashes and
+  decode percent-encoding once, and both clean and query-string URL forms
+  reduce to the same shape, so rules survive a `PRETTY_URLS` toggle. Each rule
+  keeps or drops the query string, keeping by default so campaign parameters
+  survive; Folio's own routing parameters are stripped either way. Loops are
+  refused at save time, chains are flagged and collapsed to a single hop at
+  serve time.
+
+  The 404 Monitor records unresolved paths with a hit count and first and last
+  seen times — no IP address, no user agent — capped and self-trimming so it
+  cannot grow without bound. A recorded path becomes a rule in one step, which
+  prefills the source only: the destination is always confirmed by a person.
+
+  Stored as `data/redirects.json` with counts kept separately in
+  `data/notfound.json`, both under an exclusive lock with an atomic replace
+  and a last-known-good backup, in a folder already denied to the web with the
+  PHP engine off. Entirely additive: an existing installation works unchanged
+  with no store present, nothing is migrated, and the store appears on first
+  save. A malformed store disables redirects and leaves the rest of the site
+  running rather than taking it down.
+
+  Logic lives in `lib/redirects.php` rather than adding some six hundred lines
+  to `index.php`, following `lib/video.php` and the direction Phase 5 of the
+  roadmap exists to continue.
+
+  Twelve tests added to `tests/smoke.sh`, which now runs 45: 301 and 302
+  resolution, query-string preserve and discard, external destinations,
+  inactive rules ignored, chain collapsing, a live document still winning over
+  a stale rule, a missing store leaving routing untouched, a corrupt store
+  failing safely, 404 recording without identifying information, and the
+  screen being authenticated and CSRF-protected. Destination validation was
+  additionally checked directly against `javascript:`, `data:`, `vbscript:`,
+  protocol-relative `//host`, CRLF header injection, and plain, encoded, and
+  mixed path traversal.
+
+  Not built in this pass, deliberately, to ship a smaller tested thing rather
+  than a larger half-finished one: destination suggestions, import and export,
+  a standalone tester, and the fuller health dashboard. Each is now tracked in
+  the roadmap at its real cost.
+
+## 1.50.26 — 27 August 2026
+
+### Changed
+
+- **`docs/upgrading.md`'s phased roadmap re-audited against the codebase as
+  it stands now**, rather than assumed current from when it was last
+  written. Every item across all six phases checked directly: catalogue
+  export, a slug history view, caption `<track>` files, bulk metadata
+  editing, a read-only account role, batch OCR, the archive's date fields,
+  image access control and redaction, global search, and the archive's
+  remaining metadata/relationship/timeline phases — all still genuinely
+  absent from the code, zero matches, confirming none of it was touched by
+  the 26 releases since the roadmap was last organised into phases. Nothing
+  needed removing or reordering as a result. The one figure that had
+  drifted — `index.php`'s size, noted under Known issues — is refreshed:
+  13,187 lines and 232 functions now, continuing to grow rather than
+  shrink, which is exactly the trend Phase 5 exists to reverse.
+
+## 1.50.25 — 27 August 2026
+
+### Fixed
+
+- **`llms.txt` was missing a `# Contact` section**, which the llms.txt
+  Specification (v1.7.0) lists as required for every conformance class —
+  and lists "no contact information" as a validation error in its own
+  right. Added, built from whichever of `PUBLISHER_EMAIL`, `PUBLISHER_PHONE`,
+  or `PUBLISHER_URL` are actually configured (the same fields `vcard.vcf`
+  already draws from); genuinely omitted, not filled with placeholder
+  text, when none are set, since a required-but-absent section is more
+  honest than a fabricated one. A new Diagnostics row (`llms.txt Contact
+  section`) surfaces this at the `info`/`NOTE` tier — not `warn` — since a
+  library with no publisher entity configured isn't wrong, just not
+  Essential-conformant yet.
+- **The specification attribution line was an inline Markdown link near
+  the top of the file** (`Specification: [AI Visibility](...)`, added in
+  1.50.20), rather than the two-line footer beneath a horizontal rule the
+  specification's own canonical example shows, and it linked to the site
+  root rather than the specific `/specifications/llms-txt/` page. Moved to
+  match: a closing `---` followed by the plain two-line attribution,
+  linking to the llms.txt spec's own page.
+
+### Added
+
+- **A `Lang:` header**, immediately after the H1 per the specification's
+  own convention — optional, but Folio already tracks `SITE_LANGUAGE` for
+  every other page, so there was no reason not to.
+- **Smoke test coverage** for all three: the `Lang:` header's position,
+  the `# Contact` section's presence and content, and the attribution
+  footer's exact placement. Caught and fixed a bug in the test itself
+  along the way — a `grep -Fq` pattern starting with a literal `-` was
+  being parsed as an invalid option rather than pattern text, a classic
+  shell scripting pitfall; fixed with `--` to mark the end of options,
+  the same way any pattern that might start with `-` should be guarded.
+
 ## 1.50.24 — 27 August 2026
 
 ### Changed

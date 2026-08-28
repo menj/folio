@@ -1977,6 +1977,38 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     margin: -0.1rem 0 0.6rem;
 }
 .field-note a { color: var(--accent); }
+
+/* A field-level validation message. Colour alone never carries the meaning:
+   the message says what is wrong in words, and the input itself is marked
+   aria-invalid, so this is emphasis rather than the only signal. */
+.field-bad {
+    color: var(--accent);
+    font-weight: 600;
+}
+
+/* The contact form's honeypot. Genuinely removed from the page rather than
+   merely made transparent or moved off-screen: a bot that reads the CSS
+   should still find nothing suggesting this field is special, while a person
+   and a screen reader alike never encounter it at all. The container also
+   carries aria-hidden, so assistive software cannot land on it by accident
+   and fill it in — which would wrongly mark a real visitor as a bot. */
+.contact-hp {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+}
+
+/* The form sits in the reading column like the page text above it, rather
+   than stretching to the full page width, so the two read as one thing. */
+.contact-form {
+    max-width: 34rem;
+    margin-top: 1.5rem;
+}
+.contact-form textarea { min-height: 9rem; }
 /* The one field-note used inline, inside a label's text flow rather than
    as its own paragraph, needs the block margin above reset — a <span>
    defaults to display:inline already, so this only needs to cancel the

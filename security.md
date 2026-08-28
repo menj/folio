@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.50.24**.
+The current supported release is **1.52.1**.
 
 ## Security controls
 
@@ -254,6 +254,65 @@ trusted, so it cannot be used to poison a cached page or a structured-data
 identifier. `X-Forwarded-Proto` is honoured only when `TRUST_PROXY_HEADERS`
 is explicitly enabled, which should only be done behind a proxy that
 overwrites that header.
+
+### Contact form
+
+The contact page emails a visitor's message to `PUBLISHER_EMAIL`. The
+recipient address is read from server-side configuration at the moment the
+message is built and is never rendered into HTML, never placed in a hidden
+field or data attribute, never sent to JavaScript, and never accepted as
+input — so there is no request that can redirect a submission to a different
+address. `contact_send()` takes no recipient parameter for exactly that
+reason.
+
+The visitor's own address is used as `Reply-To`, never as `From`. Sending as
+the visitor would fail SPF and DMARC on any correctly configured domain and
+get the message rejected or spam-foldered; the site sends as itself
+(`CONTACT_SENDER_EMAIL`, or `no-reply@` its own domain) so replies still
+reach the visitor while the mail is legitimately sent.
+
+Every value that reaches a mail header passes through `contact_header_safe()`,
+which strips CR, LF, and other control characters. This is what prevents
+header injection: a newline in a subject would otherwise end the Subject line
+and let a submitter add `Bcc:` of their own.
+
+Attachments are read from PHP's own temporary upload file, attached, and
+unlinked on every exit path — success, validation failure, and delivery
+failure alike. They are never moved into `uploads/`, never become documents,
+and never acquire a URL. Type checking is an allowlist by extension *and* a
+content sniff via `finfo`, which must agree: a PHP script renamed `.png` is
+detected as `text/x-php`, disagrees with what `.png` should be, and is
+refused. `$_FILES['type']` is visitor input and is ignored entirely.
+`is_uploaded_file()` guards against a crafted request naming an arbitrary
+server path as its temporary file, and the visitor's filename is used only as
+a label inside the email, never as a path.
+
+Anti-spam is layered: a honeypot field hidden from both people and assistive
+software, a minimum time between page load and submission, crude content
+checks (a message that is nothing but a URL, or carries a wall of them), and
+per-submitter rate limiting. Which layer objected is never reported —
+a bot told "honeypot detected" is a bot that gets fixed — so every anti-spam
+rejection is worded identically to a delivery failure.
+
+Rate limiting never stores a raw IP address. The address is truncated to its
+network (/24 for IPv4, /48 for IPv6), then salted with the install's own
+private key and hashed, so the stored value cannot be reversed or matched
+against addresses from anywhere else. Entries expire after an hour and the
+file prunes itself.
+
+Nothing a visitor submits is stored. There is no inbox, no log of message
+contents, and no retained attachment: the email is the only copy. A delivery
+failure is recorded in the server error log as a one-line diagnostic with no
+message content, and the visitor sees a generic failure that reveals nothing
+about the mail configuration.
+
+The page carries a session-bound CSRF token, so it is deliberately excluded
+from the public cache that every other standalone page uses — a cached copy
+would hand the next visitor a token that is not theirs.
+
+The administrator's test-email function sends only to the configured
+recipient. It has no destination field, deliberately: an authenticated mailer
+that accepts an arbitrary address is an open relay waiting to be found.
 
 ### Hover-preview path obscuring
 

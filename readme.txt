@@ -6,22 +6,23 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.50.24
+Stable tag: 1.52.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
 Folio turns a web folder into a small public document library with crawlable
 file pages, previews, metadata, categories, accounts, sitemap, and llms.txt.
 Files remain managed over FTP and no database is required. Optional standalone
-pages (About, FAQ, custom) sit alongside the library. Hover preview cards give
-each row a real thumbnail on desktop — a short moving clip for video, where
-ffmpeg is available — and the layout holds up cleanly at desktop, tablet, and
-mobile widths.
+pages (About, FAQ, Contact, and your own) sit alongside the library, with a
+secure contact form on the Contact page and a Redirect Manager that keeps old
+addresses working. Hover preview cards give each row a real thumbnail on
+desktop — a short moving clip for video, where ffmpeg is available — and the
+layout holds up cleanly at desktop, tablet, and mobile widths.
 
 == Requirements ==
 
 * PHP 8.4 or newer
-* JSON, password, random and mbstring support
+* JSON, password and random support; mbstring optional (Markdown pages need it)
 * PHP read access to uploads/ and write access to data/
 * Apache/LiteSpeed using the supplied .htaccess with mod_mime and mod_headers;
   mod_rewrite is optional
@@ -220,6 +221,51 @@ Poppler. Without Tesseract there is no OCR but nothing else changes. Without
 any of them Folio behaves exactly as it did before the feature existed.
 
 PDF pages are rendered with Poppler where it is installed.
+
+= 1.52.1 =
+
+Fixes the contact form shipping without its styles, which left the hidden
+anti-spam field visible to real visitors. Also corrects several outdated
+descriptions in the documentation and adds proper guides for the contact form
+and the Redirect Manager.
+
+= 1.52.0 =
+
+Adds a public Contact page with a working contact form. Enable Contact under
+Pages and write an introduction; the form appears beneath it. Messages are
+emailed to your publisher address, which visitors never see. Optional
+attachments are forwarded with the email and deleted immediately, never
+entering your library. Includes honeypot, timing and rate-limit spam
+protection, and a test-email button so you can confirm delivery works before
+relying on it. Nothing visitors send is stored on the site.
+
+= 1.51.0 =
+
+Adds a Redirect Manager and 404 Monitor at Admin > Redirects. Folio already
+keeps URLs alive through renames and moves on its own; these are explicit
+301/302 rules for the cases no automatic mechanism can infer, such as a
+folder restructured over FTP. A rule is only ever consulted after every
+existing mechanism has declined, so it can never shadow a URL that still
+works. The 404 Monitor records unresolved addresses (counts only, no visitor
+information) and turns one into a rule in a step. Entirely additive: nothing
+changes until you create a rule.
+
+= 1.50.26 =
+
+Re-audits docs/upgrading.md's phased roadmap against the current codebase,
+item by item across all six phases: everything listed is confirmed still
+genuinely absent from the code. Nothing needed reordering. Refreshes the
+one figure that had drifted (index.php's line/function count under Known
+issues).
+
+= 1.50.25 =
+
+llms.txt now includes the required # Contact section (built from your
+configured publisher email, phone, and/or URL) and a Lang: header, per
+the llms.txt Specification v1.7.0. The specification attribution moved
+from an inline link near the top to the closing footer the spec's own
+example shows. A new Diagnostics row flags a missing Contact section as
+informational, not an error.
 
 = 1.50.24 =
 

@@ -124,12 +124,14 @@ if (is_file(__DIR__ . '/config.php')) {
 
 // Media helpers live in /lib; /lib/vendor remains third-party and unmodified.
 require_once __DIR__ . '/lib/video.php';
+require_once __DIR__ . '/lib/redirects.php';
+require_once __DIR__ . '/lib/contact.php';
 
 defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.50.24');
+define('FOLIO_VERSION', '1.52.1');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -163,6 +165,26 @@ defined('PUBLISHER_AFFILIATION') || define('PUBLISHER_AFFILIATION', '');
 // the one canonical link; this is specifically "also see," named.
 defined('PUBLISHER_RELATED_SITE_URL')   || define('PUBLISHER_RELATED_SITE_URL', '');
 defined('PUBLISHER_RELATED_SITE_LABEL') || define('PUBLISHER_RELATED_SITE_LABEL', '');
+
+/**
+ * Contact form. Every one of these has a working default, so a fresh install
+ * needs no configuration beyond having PUBLISHER_EMAIL set — which a site
+ * publishing a vCard or an llms.txt Contact section already does.
+ *
+ * CONTACT_SENDER_EMAIL is what the message is sent *as*, not where it goes.
+ * Left empty, Folio uses no-reply@ the site's own domain, which is far more
+ * likely to pass SPF and DMARC than sending as the visitor would. Where a
+ * message goes is always PUBLISHER_EMAIL and is never configurable from a
+ * request.
+ */
+defined('CONTACT_SENDER_EMAIL')  || define('CONTACT_SENDER_EMAIL', '');
+defined('CONTACT_ATTACHMENTS')   || define('CONTACT_ATTACHMENTS', true);
+defined('CONTACT_MAX_ATTACHMENTS') || define('CONTACT_MAX_ATTACHMENTS', 3);
+defined('CONTACT_MAX_FILE_MB')   || define('CONTACT_MAX_FILE_MB', 5);
+defined('CONTACT_MAX_TOTAL_MB')  || define('CONTACT_MAX_TOTAL_MB', 10);
+defined('CONTACT_ANTISPAM')      || define('CONTACT_ANTISPAM', true);
+defined('CONTACT_MIN_SECONDS')   || define('CONTACT_MIN_SECONDS', 3);
+defined('CONTACT_RATE_PER_HOUR') || define('CONTACT_RATE_PER_HOUR', 5);
 defined('SITE_LANGUAGE')        || define('SITE_LANGUAGE', 'en');
 defined('SITE_SAMEAS')          || define('SITE_SAMEAS', '');
 /**
@@ -1914,7 +1936,7 @@ if (PRETTY_URLS) {
         $_GET['file'] = rawurldecode($m[1]);
     } elseif (preg_match('#^category/([^/]+)/?$#', $route, $m)) {
         $_GET['cat'] = rawurldecode($m[1]);
-    } elseif ($route === 'about' || $route === 'faq') {
+    } elseif ($route === 'about' || $route === 'faq' || $route === 'contact') {
         $_GET['page'] = $route;
     } elseif (preg_match('#^p/([a-z0-9-]+)/?$#', $route, $m)) {
         // The old prefixed form. Still routed so existing links survive; the
@@ -3540,7 +3562,7 @@ function reserved_slugs(): array
 {
     return [
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
-        'diagnostics', 'pages', 'page', 'about', 'faq', 'category', 'categories',
+        'diagnostics', 'pages', 'page', 'about', 'faq', 'contact', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
         'yaml', 'library.yaml', 'yaml_view', 'library.html', 'sitemap_html', 'sitemap.html',
         'identity', 'identity.json', 'vcard', 'vcard.vcf',
@@ -4877,6 +4899,11 @@ function page_slots_builtin(): array
     return [
         'about' => ['type' => 'AboutPage', 'default_title' => 'About', 'builtin' => true],
         'faq'   => ['type' => 'FAQPage',   'default_title' => 'FAQ',   'builtin' => true],
+        // Built in rather than a custom page because the form itself is code:
+        // the slot name is what the handler keys on to know a page carries a
+        // contact form, and ContactPage is the schema.org type search engines
+        // already understand for one.
+        'contact' => ['type' => 'ContactPage', 'default_title' => 'Contact', 'builtin' => true],
     ];
 }
 
@@ -8049,6 +8076,398 @@ if (isset($_GET['action']) && $_GET['action'] === 'docs') {
 }
 
 /* ------------------------------------------------------------------ */
+/* Redirect Manager and 404 Monitor (admin only)                       */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
+    if (!is_admin()) {
+        http_response_code(403);
+        header('Location: ' . BASE_URL);
+        exit;
+    }
+    $notice = '';
+    $error  = '';
+    $warnings = [];
+    $writable = is_writable(dirname(redirects_file())) || is_writable(redirects_file());
+    $tab = (($_GET['tab'] ?? '') === 'notfound') ? 'notfound' : 'rules';
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!csrf_valid()) {
+            $error = 'That form had expired. Please try again.';
+        } else {
+            $op = (string) ($_POST['op'] ?? '');
+
+            if ($op === 'save') {
+                $edit_id = (string) ($_POST['id'] ?? '');
+                $source  = redirect_normalise_source((string) ($_POST['source'] ?? ''));
+                $dest_err = null;
+                $dest    = redirect_validate_destination((string) ($_POST['destination'] ?? ''), $dest_err);
+                $code    = ((int) ($_POST['code'] ?? 301) === 302) ? 302 : 301;
+                $query   = (($_POST['query'] ?? 'preserve') === 'discard') ? 'discard' : 'preserve';
+                $note    = str_clip(trim((string) ($_POST['note'] ?? '')), 300);
+                $active  = !empty($_POST['active']);
+
+                $problems = [];
+                if ($source === '') {
+                    $problems[] = 'That source path is not valid. Write it as it appears after the site address, for example old-folder/report.pdf';
+                }
+                if ($dest === '' && $dest_err !== null) {
+                    $problems[] = $dest_err;
+                }
+                if (!$problems) {
+                    $problems = redirect_problems($source, $dest, $edit_id !== '' ? $edit_id : null);
+                }
+                // A rule must never shadow a URL that currently works: if the
+                // source resolves to a real document, folder, or page today,
+                // the redirect would take a live resource off the air.
+                if (!$problems && $active) {
+                    $collision = '';
+                    if (resolve_path($source) !== null) {
+                        $collision = 'a file or folder';
+                    } elseif (document_resolve_slug($source) !== null) {
+                        $collision = 'a document';
+                    } elseif (page_slot_for_slug($source) !== null) {
+                        $collision = 'a standalone page';
+                    }
+                    if ($collision !== '') {
+                        $problems[] = 'That source is currently ' . $collision
+                            . ' on this site, so an active redirect would take a working URL off the air. '
+                            . 'Save it inactive if you are preparing for a move that has not happened yet.';
+                    }
+                }
+
+                if ($problems) {
+                    $error = implode(' ', $problems);
+                } else {
+                    $warnings = redirect_warnings($source, $dest, $edit_id !== '' ? $edit_id : null);
+                    $saved = redirects_update(static function (array $rules) use (
+                        $edit_id, $source, $dest, $code, $query, $note, $active
+                    ): array {
+                        $now = time();
+                        if ($edit_id !== '' && isset($rules[$edit_id])) {
+                            $rules[$edit_id] = array_merge($rules[$edit_id], [
+                                'source' => $source,
+                                'destination' => $dest,
+                                'code' => $code,
+                                'query' => $query,
+                                'note' => $note,
+                                'active' => $active,
+                                'modified' => $now,
+                            ]);
+                            return $rules;
+                        }
+                        $id = bin2hex(random_bytes(8));
+                        $rules[$id] = [
+                            'id' => $id,
+                            'source' => $source,
+                            'destination' => $dest,
+                            'code' => $code,
+                            'query' => $query,
+                            'note' => $note,
+                            'active' => $active,
+                            'created' => $now,
+                            'modified' => $now,
+                            'hits' => 0,
+                            'first_hit' => 0,
+                            'last_hit' => 0,
+                        ];
+                        return $rules;
+                    });
+                    if ($saved === false) {
+                        $error = 'Could not save. Check that data/ is writable.';
+                    } else {
+                        // Once saved, the source is answered by a rule and is
+                        // no longer unresolved; drop it from the monitor so the
+                        // list shows only what still needs attention.
+                        notfound_update(static function (array $log) use ($source): array {
+                            unset($log[$source]);
+                            return $log;
+                        });
+                        $msg = $warnings ? '&warn=' . rawurlencode(implode(' ', $warnings)) : '';
+                        header('Location: ' . BASE_URL . '?action=redirects&saved=1' . $msg);
+                        exit;
+                    }
+                }
+
+            } elseif ($op === 'toggle' || $op === 'delete') {
+                $id = (string) ($_POST['id'] ?? '');
+                $saved = redirects_update(static function (array $rules) use ($id, $op): array {
+                    if (!isset($rules[$id])) {
+                        return $rules;
+                    }
+                    if ($op === 'delete') {
+                        unset($rules[$id]);
+                    } else {
+                        $rules[$id]['active'] = empty($rules[$id]['active']);
+                        $rules[$id]['modified'] = time();
+                    }
+                    return $rules;
+                });
+                if ($saved === false) {
+                    $error = 'Could not save. Check that data/ is writable.';
+                } else {
+                    header('Location: ' . BASE_URL . '?action=redirects&saved=1');
+                    exit;
+                }
+
+            } elseif ($op === 'forget_404') {
+                $path = (string) ($_POST['path'] ?? '');
+                notfound_update(static function (array $log) use ($path): array {
+                    unset($log[$path]);
+                    return $log;
+                });
+                header('Location: ' . BASE_URL . '?action=redirects&tab=notfound&saved=1');
+                exit;
+
+            } elseif ($op === 'clear_404') {
+                notfound_update(static fn(array $log): array => []);
+                header('Location: ' . BASE_URL . '?action=redirects&tab=notfound&saved=1');
+                exit;
+            }
+        }
+    }
+
+    if (isset($_GET['saved'])) {
+        $notice = 'Saved.';
+    }
+    if (isset($_GET['warn']) && (string) $_GET['warn'] !== '') {
+        $warnings[] = str_clip((string) $_GET['warn'], 500);
+    }
+
+    $rules = redirects_all();
+    uasort($rules, static fn($a, $b) => strcmp((string) $a['source'], (string) $b['source']));
+    $log = notfound_load();
+    uasort($log, static fn($a, $b) => ($b['last'] ?? 0) <=> ($a['last'] ?? 0));
+
+    // Editing loads one rule back into the form above the table.
+    $editing = null;
+    $edit_id = (string) ($_GET['edit'] ?? '');
+    if ($edit_id !== '' && isset($rules[$edit_id])) {
+        $editing = $rules[$edit_id];
+    }
+    // Creating a rule from a 404 prefills the source only; the destination is
+    // always the administrator's decision, never inferred.
+    $prefill_source = redirect_normalise_source((string) ($_GET['from404'] ?? ''));
+
+    $count_active = 0;
+    $count_302 = 0;
+    $count_external = 0;
+    $count_chain = 0;
+    foreach ($rules as $r) {
+        if (!empty($r['active'])) {
+            $count_active++;
+        }
+        if ((int) $r['code'] === 302) {
+            $count_302++;
+        }
+        if (redirect_destination_is_external($r['destination'])) {
+            $count_external++;
+        } elseif (redirect_match($r['destination']) !== null) {
+            $count_chain++;
+        }
+    }
+
+    header('Content-Type: text/html; charset=UTF-8');
+    send_security_headers();
+    ?>
+<!DOCTYPE html>
+<html lang="<?= e(SITE_LANGUAGE) ?>" data-theme="folio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redirects &ndash; <?= e(SITE_NAME) ?></title>
+<meta name="robots" content="noindex, nofollow">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
+</head>
+<body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
+<header class="topbar">
+    <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
+    <span class="running-head">Redirects</span>
+    <nav class="crumbs">
+        <a href="<?= e(BASE_URL) ?>?action=settings">Settings</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>">Back to the library</a>
+    </nav>
+</header>
+<main class="detail" id="folio-main" tabindex="-1">
+    <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
+    <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
+    <?php foreach ($warnings as $w): ?><p class="msg msg-bad"><?= e($w) ?></p><?php endforeach; ?>
+    <?php if (!$writable): ?>
+        <p class="msg msg-bad">The <code>data/</code> folder is not writable, so redirects cannot be saved.</p>
+    <?php endif; ?>
+
+    <h2 class="detail-title">Redirects</h2>
+    <p class="detail-desc">
+        Folio already keeps a document&rsquo;s address working through renames and moves on its own:
+        canonical slugs, aliases, and FTP reconciliation all resolve an old URL before anything here
+        is consulted. These rules are the layer beneath that &mdash; for historical addresses no
+        automatic mechanism can work out, such as a folder restructure or a document retired
+        deliberately. A rule is only ever used when a request would otherwise have been a 404.
+    </p>
+
+    <p class="field-note">
+        <strong><?= (int) $count_active ?></strong> active
+        &middot; <strong><?= count($rules) - $count_active ?></strong> inactive
+        &middot; <strong><?= (int) $count_302 ?></strong> temporary (302)
+        &middot; <strong><?= (int) $count_external ?></strong> external
+        &middot; <strong><?= (int) $count_chain ?></strong> chained
+        &middot; <strong><?= count($log) ?></strong> unresolved URLs seen
+    </p>
+
+    <nav class="crumbs">
+        <a href="<?= e(BASE_URL) ?>?action=redirects"<?= $tab === 'rules' ? ' aria-current="page"' : '' ?>>Rules</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>?action=redirects&amp;tab=notfound"<?= $tab === 'notfound' ? ' aria-current="page"' : '' ?>>404 Monitor</a>
+    </nav>
+
+    <?php if ($tab === 'rules'): ?>
+
+    <h3><?= $editing ? 'Edit redirect' : 'Add a redirect' ?></h3>
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="save">
+        <?php if ($editing): ?><input type="hidden" name="id" value="<?= e($editing['id']) ?>"><?php endif; ?>
+        <label class="meta-form-label" for="r-source">Old address
+            <input type="text" id="r-source" name="source" maxlength="600" required
+                   placeholder="old-folder/report.pdf"
+                   value="<?= e($editing['source'] ?? $prefill_source) ?>">
+        </label>
+        <p class="field-note">The path as it appears after your site address, without the leading slash.</p>
+        <label class="meta-form-label" for="r-dest">New destination
+            <input type="text" id="r-dest" name="destination" maxlength="600" required
+                   placeholder="reports/annual-report or https://example.com/page"
+                   value="<?= e($editing['destination'] ?? '') ?>">
+        </label>
+        <p class="field-note">An internal path, or a full <code>https://</code> address to send visitors to another site.</p>
+        <label class="meta-form-label" for="r-code">Type
+            <select id="r-code" name="code">
+                <option value="301" <?= (int) ($editing['code'] ?? 301) === 301 ? 'selected' : '' ?>>301 &mdash; permanent move (search engines update their index)</option>
+                <option value="302" <?= (int) ($editing['code'] ?? 301) === 302 ? 'selected' : '' ?>>302 &mdash; temporary move (search engines keep the old address)</option>
+            </select>
+        </label>
+        <label class="meta-form-label" for="r-query">Query string
+            <select id="r-query" name="query">
+                <option value="preserve" <?= ($editing['query'] ?? 'preserve') === 'preserve' ? 'selected' : '' ?>>Keep it &mdash; ?utm_source=… is carried across</option>
+                <option value="discard" <?= ($editing['query'] ?? 'preserve') === 'discard' ? 'selected' : '' ?>>Drop it &mdash; send visitors to the clean address</option>
+            </select>
+        </label>
+        <label class="meta-form-label" for="r-note">Note (optional)
+            <input type="text" id="r-note" name="note" maxlength="300"
+                   value="<?= e($editing['note'] ?? '') ?>">
+        </label>
+        <label class="meta-form-label">
+            <input type="checkbox" name="active" value="1" <?= ($editing === null || !empty($editing['active'])) ? 'checked' : '' ?>>
+            Active
+        </label>
+        <div class="meta-form-actions">
+            <button type="submit" class="btn"><?= $editing ? 'Save changes' : 'Add redirect' ?></button>
+            <?php if ($editing): ?>
+                <a class="btn btn-ghost" href="<?= e(BASE_URL) ?>?action=redirects">Cancel</a>
+            <?php endif; ?>
+        </div>
+    </form>
+
+    <h3>Rules</h3>
+    <?php if (!$rules): ?>
+        <p class="detail-desc">No redirects yet. Anything Folio can already resolve on its own does not need one.</p>
+    <?php else: ?>
+    <table class="diag-table">
+                <thead>
+            <tr><th scope="col">Old address</th><th scope="col">Destination</th><th scope="col">Type</th>
+                <th scope="col">Status</th><th scope="col">Hits</th><th scope="col">Actions</th></tr>
+        </thead>
+        <tbody>
+        <?php foreach ($rules as $r): ?>
+            <tr>
+                <td><code><?= e($r['source']) ?></code>
+                    <?php if (($r['note'] ?? '') !== ''): ?><br><span class="field-note"><?= e($r['note']) ?></span><?php endif; ?>
+                </td>
+                <td><code><?= e($r['destination']) ?></code>
+                    <?php if (redirect_destination_is_external($r['destination'])): ?>
+                        <span class="chip chip-mini">External</span>
+                    <?php elseif (redirect_match($r['destination']) !== null): ?>
+                        <span class="chip chip-mini diag-warn">Chain</span>
+                    <?php endif; ?>
+                </td>
+                <td><?= (int) $r['code'] ?></td>
+                <td><?= !empty($r['active']) ? '<span class="chip chip-mini diag-ok">Active</span>' : '<span class="chip chip-mini">Inactive</span>' ?></td>
+                <td><?= (int) $r['hits'] ?><?php if (!empty($r['last_hit'])): ?><br><span class="field-note"><?= e(date('j M Y', (int) $r['last_hit'])) ?></span><?php endif; ?></td>
+                <td class="row-actions">
+                    <a class="btn-small btn-ghost" href="<?= e(BASE_URL) ?>?action=redirects&amp;edit=<?= e($r['id']) ?>">Edit</a>
+                    <form method="post" class="inline-form">
+                        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                        <input type="hidden" name="op" value="toggle">
+                        <input type="hidden" name="id" value="<?= e($r['id']) ?>">
+                        <button type="submit" class="btn-small btn-ghost"><?= !empty($r['active']) ? 'Deactivate' : 'Activate' ?></button>
+                    </form>
+                    <form method="post" class="inline-form" onsubmit="return confirm('Delete this redirect?');">
+                        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                        <input type="hidden" name="op" value="delete">
+                        <input type="hidden" name="id" value="<?= e($r['id']) ?>">
+                        <button type="submit" class="btn-small btn-ghost">Delete</button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <?php endif; ?>
+
+    <?php else: ?>
+
+    <h3>Unresolved URLs</h3>
+    <p class="detail-desc">
+        Addresses that reached Folio, could not be resolved by any means, and had no redirect rule.
+        Counts only &mdash; no visitor addresses are stored. The list keeps the most recently seen
+        <?= (int) FOLIO_NOTFOUND_MAX ?> paths and trims itself, so it cannot grow without bound.
+    </p>
+    <?php if (!$log): ?>
+        <p class="detail-desc">Nothing unresolved has been requested yet.</p>
+    <?php else: ?>
+    <table class="diag-table">
+                <thead>
+            <tr><th scope="col">Address</th><th scope="col">Hits</th><th scope="col">First seen</th>
+                <th scope="col">Last seen</th><th scope="col">Actions</th></tr>
+        </thead>
+        <tbody>
+        <?php foreach ($log as $path => $row): ?>
+            <tr>
+                <td><code><?= e((string) $path) ?></code></td>
+                <td><?= (int) ($row['hits'] ?? 0) ?></td>
+                <td><?= e(date('j M Y', (int) ($row['first'] ?? 0))) ?></td>
+                <td><?= e(date('j M Y', (int) ($row['last'] ?? 0))) ?></td>
+                <td class="row-actions">
+                    <a class="btn-small" href="<?= e(BASE_URL) ?>?action=redirects&amp;from404=<?= e(rawurlencode((string) $path)) ?>">Create redirect</a>
+                    <form method="post" class="inline-form">
+                        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                        <input type="hidden" name="op" value="forget_404">
+                        <input type="hidden" name="path" value="<?= e((string) $path) ?>">
+                        <button type="submit" class="btn-small btn-ghost">Dismiss</button>
+                    </form>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <form method="post" class="stack-form" onsubmit="return confirm('Clear every recorded unresolved URL?');">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="clear_404">
+        <div><button type="submit" class="btn btn-ghost">Clear the list</button></div>
+    </form>
+    <?php endif; ?>
+
+    <?php endif; ?>
+</main>
+</body>
+</html>
+    <?php
+    exit;
+}
+
+/* ------------------------------------------------------------------ */
 /* Pages editor (admin only)                                           */
 /* ------------------------------------------------------------------ */
 if (isset($_GET['action']) && $_GET['action'] === 'pages') {
@@ -8065,6 +8484,34 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_valid()) {
             $error = 'Security token expired. Reload the page and try again.';
+        } elseif (($_POST['op'] ?? '') === 'contact_test') {
+            // Sends only to the configured recipient. There is deliberately
+            // no field for a destination: an admin-triggered mailer that
+            // accepts an arbitrary address is an open relay waiting to be
+            // found, and the only address worth testing is the one real
+            // messages go to anyway.
+            if (contact_recipient() === '') {
+                $error = 'No publisher email is set, so there is nowhere to send a test. Add one under Settings.';
+            } elseif (!function_exists('mail')) {
+                $error = 'This server has no PHP mail function available, so Folio cannot send email at all. Ask your host about this.';
+            } else {
+                $sent = contact_send([
+                    'name'    => 'Folio',
+                    'email'   => contact_recipient(),
+                    'subject' => 'Test message',
+                    'message' => "This is a test from your Folio contact form.\n\n"
+                               . "If you are reading this, mail delivery works and messages sent "
+                               . "through your contact page will reach you at this address.",
+                ], []);
+                if ($sent) {
+                    $notice = 'Test email sent to your publisher address. If it does not arrive within '
+                        . 'a few minutes, check the spam folder — that is the usual reason.';
+                } else {
+                    $error = 'The server refused to send the test email. Your host can say why; '
+                        . 'Folio has recorded a note in the server error log.';
+                    error_log('Folio contact form: test email failed — mail() returned false.');
+                }
+            }
         } else {
             $next = [];
             foreach ($slots as $slot => $_meta) {
@@ -8147,6 +8594,48 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
         raw HTML is escaped for safety. A page appears publicly only when it is enabled and has
         content. About and FAQ carry matching structured data; the numbered slots are general pages.
     </p>
+
+    <?php
+    $c_rec = $pages['contact'] ?? null;
+    $c_on  = $c_rec !== null && !empty($c_rec['enabled']) && trim((string) ($c_rec['body'] ?? '')) !== '';
+    ?>
+    <h3>Contact form</h3>
+    <p class="detail-desc">
+        The Contact page below carries a working contact form under whatever you write in it.
+        Messages are emailed to your publisher address; visitors never see that address, and
+        nothing they send is stored on the site.
+    </p>
+    <?php if (!$c_on): ?>
+        <p class="field-note">
+            The Contact page is not published yet. Enable it below and give it some content —
+            an invitation to get in touch is enough — and the form appears beneath it.
+        </p>
+    <?php endif; ?>
+    <p class="field-note">
+        <?php if (contact_ready()): ?>
+            <strong>Ready.</strong> Messages will be delivered to your publisher email.
+            <?= CONTACT_ATTACHMENTS ? 'Attachments are on (up to ' . (int) CONTACT_MAX_ATTACHMENTS . ' files, '
+                . (int) round(contact_effective_max_bytes() / 1048576) . ' MB total).' : 'Attachments are off.' ?>
+            <?= CONTACT_ANTISPAM ? 'Spam protection is on.' : 'Spam protection is off.' ?>
+        <?php elseif (contact_recipient() === ''): ?>
+            <strong>Not ready.</strong> No publisher email is set, so there is nowhere to deliver
+            messages. Add one under <a href="<?= e(BASE_URL) ?>?action=settings">Settings</a>.
+        <?php else: ?>
+            <strong>Not ready.</strong> This server has no PHP mail function, so Folio cannot send
+            email. Your host can tell you whether it can be enabled.
+        <?php endif; ?>
+    </p>
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="contact_test">
+        <div><button type="submit" class="btn btn-ghost"<?= contact_ready() ? '' : ' disabled' ?>>Send a test email</button></div>
+    </form>
+    <p class="field-note">
+        Sends a short test to your own publisher address, so you can confirm delivery works before
+        relying on it. It can only ever send to that address.
+    </p>
+
+    <h3>Pages</h3>
 
     <form method="post" class="pages-form">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -8266,6 +8755,9 @@ if (isset($_GET['page'])) {
     $rec = $pages[$slot] ?? null;
 
     if (!isset($slots[$slot]) || $rec === null || !$rec['enabled'] || trim($rec['body']) === '') {
+        // Page slug history (above) has already had its chance to redirect.
+        redirect_dispatch(redirect_current_path());
+        notfound_record(redirect_current_path());
         http_response_code(404);
         header('Content-Type: text/html; charset=UTF-8');
         send_security_headers();
@@ -8284,6 +8776,92 @@ if (isset($_GET['page'])) {
     if (!function_exists('mb_strlen')) {
         http_response_code(500);
         exit('The mbstring PHP extension is required for Markdown rendering.');
+    }
+
+    /* ----------------------------------------------------------------
+       Contact form. Only the built-in 'contact' slot carries one, so
+       every other page is untouched by any of this.
+       ---------------------------------------------------------------- */
+    $contact_errors = [];
+    $contact_failed = false;
+    $contact_old    = ['name' => '', 'email' => '', 'subject' => '', 'message' => ''];
+    $contact_sent   = $slot === 'contact' && isset($_GET['sent']);
+
+    if ($slot === 'contact') {
+        // This one page cannot be publicly cached: it carries a CSRF token
+        // tied to the visitor's own session, and a cached copy would hand the
+        // next visitor a token that is not theirs. Every other page keeps the
+        // shared cache it had.
+        ensure_session_started();
+        if (empty($_SESSION['contact_started'])) {
+            $_SESSION['contact_started'] = time();
+        }
+
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['op'] ?? '') === 'contact_send') {
+            $attachments = [];
+            $generic = 'We could not send your message. Please try again in a moment.';
+
+            if (!csrf_valid()) {
+                // An expired token is the common case here — someone left the
+                // page open a long time — so this reads as a retry rather
+                // than an accusation.
+                $contact_failed = true;
+                $contact_errors['form'] = 'That form had expired. Please send it again.';
+            } elseif (!contact_ready()) {
+                // Nothing the visitor can do about this, and the reason is a
+                // configuration detail they should not be shown.
+                $contact_failed = true;
+                $contact_errors['form'] = $generic;
+                error_log('Folio contact form: cannot send — '
+                    . (contact_recipient() === '' ? 'PUBLISHER_EMAIL is not set or not a valid address'
+                                                  : 'PHP mail() is unavailable on this server'));
+            } else {
+                $in = [
+                    'name'    => (string) ($_POST['name'] ?? ''),
+                    'email'   => (string) ($_POST['email'] ?? ''),
+                    'subject' => (string) ($_POST['subject'] ?? ''),
+                    'message' => (string) ($_POST['message'] ?? ''),
+                    'website' => (string) ($_POST['website'] ?? ''),
+                ];
+                $contact_old = [
+                    'name' => $in['name'], 'email' => $in['email'],
+                    'subject' => $in['subject'], 'message' => $in['message'],
+                ];
+
+                if (contact_spam_check($in) || contact_rate_exceeded()) {
+                    // Deliberately identical to a delivery failure, and
+                    // deliberately silent about which layer objected: telling
+                    // a bot what it tripped tells whoever wrote it what to
+                    // change. A person who somehow hits this can simply wait
+                    // and try again.
+                    $contact_failed = true;
+                    $contact_errors['form'] = $generic;
+                } else {
+                    $contact_errors = contact_validate($in);
+                    $attachments = contact_collect_attachments($_FILES['attachments'] ?? null, $contact_errors);
+
+                    if (!$contact_errors) {
+                        $ok = contact_send($in, $attachments);
+                        contact_cleanup($attachments);
+                        if ($ok) {
+                            contact_rate_record();
+                            // Reset the timing seed so a second, genuine
+                            // message is not judged against the first load.
+                            unset($_SESSION['contact_started']);
+                            // POST/Redirect/GET: a refresh after this lands
+                            // on a plain GET and cannot resend the message.
+                            header('Location: ' . url_page('contact') . '?sent=1', true, 303);
+                            exit;
+                        }
+                        $contact_failed = true;
+                        $contact_errors['form'] = $generic;
+                        error_log('Folio contact form: mail() returned false — the message was not accepted by the transport.');
+                    } else {
+                        contact_cleanup($attachments);
+                    }
+                }
+            }
+        }
     }
 
     $title    = page_title($slot, $rec);
@@ -8382,6 +8960,90 @@ if (isset($_GET['page'])) {
 <main class="detail" id="folio-main" tabindex="-1">
     <h1 class="detail-title page-title"><?= e($title) ?></h1>
     <div class="md-content"><?= $body_html ?></div>
+    <?php if ($slot === 'contact'): ?>
+        <?php if ($contact_sent): ?>
+            <p class="msg msg-ok" role="status">Your message has been sent. Thank you for getting in touch.</p>
+        <?php endif; ?>
+        <?php if (!empty($contact_errors['form'])): ?>
+            <p class="msg msg-bad" role="alert"><?= e($contact_errors['form']) ?></p>
+        <?php elseif ($contact_errors): ?>
+            <p class="msg msg-bad" role="alert">Please check the fields marked below.</p>
+        <?php endif; ?>
+        <?php if (is_admin() && !contact_ready()): ?>
+            <p class="msg msg-bad">
+                Only you can see this. The contact form cannot send yet
+                <?php if (contact_recipient() === ''): ?>
+                    because no publisher email is set — add one under Settings and the form starts working.
+                <?php else: ?>
+                    because this server has no mail function available. Ask your host about PHP mail.
+                <?php endif; ?>
+            </p>
+        <?php endif; ?>
+        <?php if (!$contact_sent): ?>
+        <form method="post" class="stack-form contact-form"<?= CONTACT_ATTACHMENTS ? ' enctype="multipart/form-data"' : '' ?>>
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="contact_send">
+            <?php if (CONTACT_ANTISPAM): ?>
+            <?php /* Hidden from people and from screen readers alike, so it
+                     cannot be filled in by mistake or by assistive software —
+                     only by a bot filling every field it finds. */ ?>
+            <div class="contact-hp" aria-hidden="true">
+                <label for="c-website">Leave this field empty</label>
+                <input type="text" id="c-website" name="website" tabindex="-1" autocomplete="off">
+            </div>
+            <?php endif; ?>
+            <label class="meta-form-label" for="c-name">Your name
+                <input type="text" id="c-name" name="name" maxlength="100" required autocomplete="name"
+                       value="<?= e($contact_old['name']) ?>"
+                       <?= isset($contact_errors['name']) ? 'aria-describedby="c-name-err" aria-invalid="true"' : '' ?>>
+            </label>
+            <?php if (isset($contact_errors['name'])): ?><p class="field-note field-bad" id="c-name-err"><?= e($contact_errors['name']) ?></p><?php endif; ?>
+
+            <label class="meta-form-label" for="c-email">Your email
+                <input type="email" id="c-email" name="email" maxlength="254" required autocomplete="email"
+                       value="<?= e($contact_old['email']) ?>"
+                       <?= isset($contact_errors['email']) ? 'aria-describedby="c-email-err" aria-invalid="true"' : '' ?>>
+            </label>
+            <?php if (isset($contact_errors['email'])): ?><p class="field-note field-bad" id="c-email-err"><?= e($contact_errors['email']) ?></p><?php endif; ?>
+            <p class="field-note">So a reply can reach you. It is not published anywhere.</p>
+
+            <label class="meta-form-label" for="c-subject">Subject
+                <input type="text" id="c-subject" name="subject" maxlength="150" required
+                       value="<?= e($contact_old['subject']) ?>"
+                       <?= isset($contact_errors['subject']) ? 'aria-describedby="c-subject-err" aria-invalid="true"' : '' ?>>
+            </label>
+            <?php if (isset($contact_errors['subject'])): ?><p class="field-note field-bad" id="c-subject-err"><?= e($contact_errors['subject']) ?></p><?php endif; ?>
+
+            <label class="meta-form-label" for="c-message">Message
+                <textarea id="c-message" name="message" rows="8" maxlength="5000" required
+                          <?= isset($contact_errors['message']) ? 'aria-describedby="c-message-err" aria-invalid="true"' : '' ?>><?= e($contact_old['message']) ?></textarea>
+            </label>
+            <?php if (isset($contact_errors['message'])): ?><p class="field-note field-bad" id="c-message-err"><?= e($contact_errors['message']) ?></p><?php endif; ?>
+
+            <?php if (CONTACT_ATTACHMENTS): ?>
+            <label class="meta-form-label" for="c-files">Attachments (optional)
+                <input type="file" id="c-files" name="attachments[]" multiple
+                       <?= isset($contact_errors['attachments']) ? 'aria-describedby="c-files-err" aria-invalid="true"' : '' ?>>
+            </label>
+            <?php if (isset($contact_errors['attachments'])): ?><p class="field-note field-bad" id="c-files-err"><?= e($contact_errors['attachments']) ?></p><?php endif; ?>
+            <p class="field-note">
+                Up to <?= (int) CONTACT_MAX_ATTACHMENTS ?> files,
+                <?= (int) CONTACT_MAX_FILE_MB ?> MB each and
+                <?= (int) round(contact_effective_max_bytes() / 1048576) ?> MB in total.
+                Accepted: <?= e(implode(', ', array_keys(contact_allowed_types()))) ?>.
+            </p>
+            <?php endif; ?>
+
+            <div class="meta-form-actions">
+                <button type="submit" class="btn">Send message</button>
+            </div>
+            <p class="field-note">
+                Your message is emailed to the site owner and is not stored on this site.
+                Attachments are forwarded with the email and deleted immediately afterwards.
+            </p>
+        </form>
+        <?php endif; ?>
+    <?php endif; ?>
 </main>
 <?php render_footer(); ?>
 <script src="<?= e(asset_url('assets/js/media.js')) ?>" defer></script>
@@ -8893,6 +9555,58 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
               . 'automatically and survives upgrades. Replacing the file inside assets/ '
               . 'would be overwritten by the next update.',
     ];
+
+    // The llms.txt Specification (v1.7.0) lists # Contact as a required
+    // section for every conformance class. Folio omits it rather than
+    // fabricate contact details, so a library with none of
+    // PUBLISHER_EMAIL/PUBLISHER_PHONE/PUBLISHER_URL set publishes a
+    // llms.txt that's missing a required section — worth surfacing, but
+    // not a problem the admin necessarily needs to fix (a library with no
+    // llms.txt readers care about, or no publisher entity at all, has
+    // nothing wrong with it), hence 'info' rather than 'warn': see the
+    // Video access control check above for why that distinction exists.
+    if (LLMS_ENABLED) {
+        $llms_has_contact = (PUBLISHER_EMAIL !== '' && filter_var(PUBLISHER_EMAIL, FILTER_VALIDATE_EMAIL))
+            || PUBLISHER_PHONE !== ''
+            || PUBLISHER_URL !== '';
+        $cfg_checks[] = [
+            'label'  => 'llms.txt Contact section',
+            'status' => $llms_has_contact ? 'ok' : 'info',
+            'note'   => $llms_has_contact
+                ? 'Present, built from the configured publisher email, phone, and/or URL.'
+                : 'Not present — none of PUBLISHER_EMAIL, PUBLISHER_PHONE, or PUBLISHER_URL is '
+                  . 'set under Settings. The llms.txt Specification lists a # Contact section as '
+                  . 'required for every conformance class; Folio omits it rather than publish '
+                  . 'fabricated contact details, so llms.txt is not Essential-conformant until '
+                  . 'at least one of those three is set.',
+        ];
+    }
+
+    // Contact form readiness. Deliberately does not print the recipient
+    // address — an admin who needs to check it can look at Settings, and
+    // Diagnostics output gets pasted into support threads.
+    $contact_page_rec = pages_load()['contact'] ?? null;
+    $contact_page_on = $contact_page_rec !== null && !empty($contact_page_rec['enabled'])
+        && trim((string) ($contact_page_rec['body'] ?? '')) !== '';
+    if ($contact_page_on) {
+        $contact_bits = [];
+        $contact_bits[] = contact_recipient() !== '' ? 'recipient configured' : 'NO RECIPIENT';
+        $contact_bits[] = function_exists('mail') ? 'mail transport available' : 'NO MAIL TRANSPORT';
+        $contact_bits[] = CONTACT_ATTACHMENTS
+            ? 'attachments on (max ' . (int) CONTACT_MAX_ATTACHMENTS . ', '
+              . round(contact_effective_max_bytes() / 1048576) . ' MB total)'
+            : 'attachments off';
+        $contact_bits[] = CONTACT_ANTISPAM ? 'anti-spam on' : 'ANTI-SPAM OFF';
+        $cfg_checks[] = [
+            'label'  => 'contact form',
+            'status' => contact_ready() ? 'ok' : 'warn',
+            'note'   => (contact_ready() ? 'Ready. ' : 'Not ready — the page renders but cannot send. ')
+                . implode(', ', $contact_bits) . '.'
+                . (contact_recipient() === ''
+                    ? ' Set a publisher email under Settings; it is the address messages are sent to.'
+                    : ''),
+        ];
+    }
 
     $cfg_checks[] = [
         'label'  => 'external utilities',
@@ -9847,6 +10561,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
 
     $abs = resolve_path((string) ($_GET['file'] ?? ''));
     if ($abs === null || !is_file($abs)) {
+        // A historical media URL — /uploads/old-report.pdf — reaches here
+        // once the file is gone, which is exactly the case explicit rules
+        // exist for. Only this branch is hooked: the refusals below it are
+        // for files that do exist and are being withheld deliberately, and
+        // redirecting those would turn a rule into a way to probe for hidden
+        // documents or route around pdf_access.
+        redirect_dispatch(redirect_current_path());
+        notfound_record(redirect_current_path());
         http_response_code(404);
         exit('Not found');
     }
@@ -11279,8 +12001,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     header('Content-Type: text/plain; charset=UTF-8');
     send_public_cache_headers(900);
     $all = index_all_files($mime_map);
-    $out = '# ' . SITE_NAME . "\n\n> " . SITE_DESCRIPTION . "\n\n";
-    $out .= 'Specification: [AI Visibility](https://www.ai-visibility.org.uk/)' . "\n\n";
+    $out = '# ' . SITE_NAME . "\n";
+    // Per the llms.txt Specification (v1.7.0) §3: optional, but placed
+    // immediately after the H1 when present, before the blockquote.
+    if (SITE_LANGUAGE !== '') {
+        $out .= 'Lang: ' . SITE_LANGUAGE . "\n";
+    }
+    $out .= "\n> " . SITE_DESCRIPTION . "\n\n";
     if (LLMS_INTRO !== '') {
         $out .= LLMS_INTRO . "\n\n";
     }
@@ -11317,6 +12044,27 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         if ($altNames_llms || $alumniOf_llms || $affiliation_llms || PUBLISHER_RELATED_SITE_URL !== '') {
             $out .= "\n";
         }
+    }
+    // The llms.txt Specification (v1.7.0) §4 lists # Contact as a required
+    // section for every conformance class, and §5 lists "no contact
+    // information" as a validation error. Built from whichever of
+    // PUBLISHER_EMAIL/PUBLISHER_PHONE/PUBLISHER_URL are actually configured
+    // (the same fields vcard.vcf already draws from) — never fabricated, so
+    // the section is simply omitted, not conformant, until at least one is
+    // set. Deliberately not gated on PUBLISHER_NAME being set: a library
+    // can have contact details without a named publisher entity.
+    $contact_lines = [];
+    if (PUBLISHER_EMAIL !== '' && filter_var(PUBLISHER_EMAIL, FILTER_VALIDATE_EMAIL)) {
+        $contact_lines[] = '- Email: ' . PUBLISHER_EMAIL;
+    }
+    if (PUBLISHER_PHONE !== '') {
+        $contact_lines[] = '- Phone: ' . PUBLISHER_PHONE;
+    }
+    if (PUBLISHER_URL !== '') {
+        $contact_lines[] = '- Website: ' . PUBLISHER_URL;
+    }
+    if ($contact_lines) {
+        $out .= "# Contact\n\n" . implode("\n", $contact_lines) . "\n\n";
     }
     $by_cat = [];
     foreach ($all as $f) {
@@ -11371,6 +12119,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     }
     $out .= '- [robots.txt](' . rtrim(BASE_URL, '/') . '/robots.txt'
           . "): crawler directives and links to these files.\n";
+    // The llms.txt Specification (v1.7.0) §7's canonical example carries
+    // this as a footer beneath a horizontal rule for Markdown files (its
+    // own §7 "Specification Attribution" note), not as an inline link near
+    // the top — moved here, and pointed at the specification's own page
+    // for this file rather than the site root, to match.
+    $out .= "\n---\n\nllms.txt Specification (ADF-001)\nhttps://www.ai-visibility.org.uk/specifications/llms-txt/\n";
     exit($out);
 }
 
@@ -12065,6 +12819,14 @@ if (isset($_GET['view'])) {
         }
     }
     if ($found === null) {
+        // Every automatic mechanism has now declined: canonical slugs,
+        // aliases, path-derived legacy slugs, and reconciliation all ran
+        // above and would have redirected already. Only now is an explicit
+        // rule consulted, so a redirect can never shadow a URL Folio already
+        // resolves correctly. If none matches, the unresolved path is noted
+        // for the 404 Monitor and the ordinary page renders unchanged.
+        redirect_dispatch(redirect_current_path());
+        notfound_record(redirect_current_path());
         http_response_code(404);
         header('Content-Type: text/html; charset=UTF-8');
         send_security_headers();
@@ -12709,6 +13471,7 @@ $listing_ld = [
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=catalogue">Catalogue</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=redirects">Redirects</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
         </div>
         <form method="post" action="<?= e(BASE_URL) ?>" class="logout-form">

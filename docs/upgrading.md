@@ -750,12 +750,12 @@ today.
   search, rather than tracked separately from it.
 
 - **`index.php` is past the size the single-file design serves well, and has
-  grown rather than shrunk.** 12,909 lines and 229 functions now, up from
+  grown rather than shrunk.** 13,658 lines and 232 functions now, up from
   9,311 and 170 when this was first noted — every feature shipped since has
-  added to one file rather than being weighed against it. A first, small
-  step the other direction: video preview helpers (`video_blur_cache_path()`,
-  `video_blur_available()`, `video_blur_generate()`, plus new diagnostic
-  logging) now live in `lib/video.php` rather than `index.php`, the same
+  added to one file rather than being weighed against it. Two steps the
+  other direction so far: the video preview helpers (`video_blur_*`) and the
+  whole Redirect Manager (`lib/redirects.php`, some six hundred lines that
+  would otherwise have landed here) both live in `lib/` instead, the same
   shape `lib/parsedown/` and `lib/pdfjs/` already use for vendor code, just
   applied to Folio's own. Moving the admin screens into `admin/` includes
   the same way would cut the main file roughly in half while keeping the
@@ -780,6 +780,168 @@ today.
   always, not only when the opt-in webserver guard is on — a bigger change to
   the default model than this release makes on its own. Tracked as Phase 3.
 
+### The contact form
+
+Folio gained a public contact page. It is a standalone page like About and
+FAQ — same routing, same Pages screen, same slug and SEO handling — with a
+form rendered beneath whatever you write in it. Turn it on by enabling
+**Contact** under Pages and giving it some content.
+
+**Where messages go.** To `PUBLISHER_EMAIL`, the address already used for
+`vcard.vcf`, `identity.json`, and llms.txt's Contact section. Deliberately
+not a second setting: a site with two different "the owner's email" values is
+a site where one of them is quietly wrong. Visitors never see the address —
+it is read server-side when the mail is built and appears nowhere in the
+page, so there is no request that can send a message somewhere else.
+
+**How it sends.** PHP's own `mail()`, which is what almost every shared host
+provides. No SMTP client, no third-party service, no new dependency. If the
+host has no mail function, or no publisher email is set, the page still
+renders normally but the Pages screen and Diagnostics both say **not ready**
+and explain which of the two is missing. A **Send a test email** button on
+the Pages screen confirms delivery works before you rely on it; it can only
+ever send to your own address.
+
+**Sender identity.** The message is sent *as the site* and carries the
+visitor's address as `Reply-To`, so hitting reply answers them. Sending as
+the visitor would fail the sender checks most mail providers now apply and
+would land the message in spam or get it rejected.
+
+**Attachments.** Up to three files, 5 MB each and 10 MB in total by default,
+and never more than the server itself accepts. Accepted types are an
+allowlist — documents, images, and archives — so anything executable is
+refused, and the file's actual content must match what its extension claims.
+An attachment is read from PHP's temporary upload file, attached to the
+email, and deleted immediately. It never enters `uploads/`, never becomes a
+document, and never gets a URL. A contact attachment is an email payload, not
+a library asset, and Folio's rule that FTP owns the library is unaffected.
+
+**Spam.** A honeypot field, a minimum time before a submission is accepted,
+simple content checks, and rate limiting at five messages an hour. None of
+the rejections say which check objected, because telling a bot what it tripped
+tells whoever wrote it what to change. Rate limiting stores a salted hash of
+the submitter's network, never a raw address, and forgets it after an hour.
+
+**Nothing is stored.** No inbox, no message log, no retained attachments. The
+email is the only copy — this is a delivery mechanism, not a CRM.
+
+**Upgrade behaviour.** Entirely additive. Existing installations are
+unaffected until the Contact page is enabled, no configuration is required
+beyond the publisher email you may already have set, and no existing vCard,
+identity, or llms.txt behaviour changes.
+
+### The Redirect Manager
+
+Folio already works hard to keep a URL alive on its own. A document carries a
+canonical slug and a list of aliases; an older path-derived address still
+resolves and redirects forward; a page keeps its slug history; the legacy
+category map still answers; and FTP reconciliation reattaches a record to a
+file that was renamed or moved underneath it. All of that runs first and is
+unchanged by this feature.
+
+What none of it can do is infer an intention. If a whole folder is
+restructured over FTP, or a document is deliberately retired and its readers
+should be sent somewhere related rather than to a dead end, there is nothing
+for reconciliation to match on. The Redirect Manager is the explicit layer
+for exactly those cases, and only those.
+
+**Routing order.** A rule is consulted at the last possible moment, after
+every automatic mechanism has declined and the request would otherwise have
+become a 404:
+
+```text
+request
+  → .htaccess  (unchanged; real files are still served directly)
+  → Folio URL mapping
+  → canonical slug / alias / legacy path / page slug history / reconciliation
+        ├─ resolved → served or redirected by the existing mechanism
+        └─ not resolved
+              → Redirect Manager
+                    ├─ active rule → 301 or 302
+                    └─ no rule
+                          → normal 404, and the path is noted by the 404 Monitor
+```
+
+Placing it last is what guarantees a stale rule can never shadow a URL Folio
+already resolves correctly: if the document, folder, or page still answers,
+the redirect layer is never reached at all. The admin screen additionally
+refuses to save an *active* rule whose source currently resolves, so the
+collision is caught at the point it is written rather than only at the point
+it would have done harm. A rule may still be saved inactive, which is the
+sensible thing when preparing for a move that has not happened yet.
+
+There are three public 404s in Folio — documents, standalone pages, and raw
+media — and all three are hooked. Media matters: `/uploads/old-report.pdf` is
+a historical URL like any other, and a redirect layer that only covered
+document pages would miss the case the feature is most often wanted for. In
+the media handler only the genuinely-missing-file branch is hooked. The
+refusals beneath it are for files that exist and are being withheld on
+purpose, and redirecting those would turn a rule into a way to probe for
+hidden documents or route around `pdf_access`.
+
+**No `.htaccess` change was needed and none was made.** The catch-all rule is
+already guarded by `!-f`, so a request for a file that no longer exists
+reaches PHP on its own; PDFs are routed to PHP unconditionally regardless.
+
+**Storage.** `data/redirects.json`, with the unresolved-URL counts kept
+separately in `data/notfound.json` so a busy 404 log can never block or
+corrupt a rule write. Both follow the same discipline as the metadata store:
+an exclusive lock, a read inside that lock, and an atomic replace with a
+last-known-good backup, so a write is either complete or has not happened.
+`data/` is already denied to the web and has the PHP engine switched off, so
+the store inherits both protections without a new mechanism. An absent store
+is normal and completely inert. A malformed one disables redirects, logs once,
+and leaves the rest of the site running.
+
+**301 versus 302.** Stated plainly in the interface, and never silently
+converted: 301 is a permanent move and search engines update their index; 302
+is temporary and they keep the old address. Choosing correctly is the
+administrator's call, so Folio does not make it for them.
+
+**Query strings.** Each rule chooses to keep or drop the query string, and
+keeping is the default, so campaign parameters survive a move. Folio's own
+internal routing parameters are stripped either way — they describe how the
+request reached PHP, not what the visitor asked for. Fragments (`#section`)
+are never sent to a server by any browser and so cannot be handled.
+
+**Matching.** Exact paths only. No patterns, no wildcards, no rule language:
+what a rule does should be knowable by reading it. Sources normalise the
+leading and trailing slash, collapse duplicate slashes, and decode
+percent-encoding once, so `/old/report.pdf` and `old%2Freport.pdf` are the
+same rule. Anything that cannot be reduced safely — traversal, control
+characters — is refused outright rather than quietly cleaned, because a rule
+whose stored text does not describe what it matches is worse than no rule.
+Both clean and query-string URL forms reduce to the same shape, so rules keep
+working if `PRETTY_URLS` is ever toggled.
+
+**Loops and chains.** A rule pointing at itself is refused, as is one that
+would close a cycle of any length. A chain — A to B where B also redirects —
+is allowed but flagged, and visitors are sent straight to the final
+destination in a single hop rather than walked along it.
+
+**404 Monitor.** Unresolved paths are recorded with a hit count and first and
+last seen times. No IP address, no user agent, nothing identifying a visitor.
+The list is capped and trims its least-recently-seen half when full, so it
+cannot grow without bound. A recorded path can be turned into a rule in one
+step, which prefills the source only — the destination is always confirmed by
+a person, never inferred and applied automatically.
+
+**Security.** The screen uses Folio's existing authentication and CSRF
+protection; no new mechanism was introduced. Destinations must be internal
+paths or `http(s)` URLs, so `javascript:`, `data:`, `vbscript:` and
+protocol-relative `//host` forms are all refused, and a value containing CR
+or LF is refused both on save and again at the moment the header is written.
+
+**Upgrade compatibility.** Entirely additive. An existing installation works
+unchanged with no store present, nothing is migrated, and the store is
+created on first save.
+
+**Not yet built,** and deliberately so, to ship a smaller tested thing rather
+than a larger half-finished one: destination suggestions from existing
+catalogue metadata, import and export, a standalone redirect tester, and the
+fuller health dashboard. The summary counters on the Rules tab cover part of
+the last of those already.
+
 ### A phased plan
 
 Ordered by what each phase costs to implement, cheapest first, not by which
@@ -800,9 +962,23 @@ each other unless stated; a later phase may depend on an earlier one.
   any document kind, not only text. What remains is a `<track>` element for
   a caption file (VTT) placed beside a media file. Additive, no new
   dependency, and does not touch the transcript rendering already shipped.
+- **Redirect import and export.** The store is already plain JSON, so export
+  is close to a download button; import is the larger half, since a bad file
+  must be parsed, validated, and reported on in full *before* anything is
+  written, never partially applied.
+- **A redirect tester.** Report the status, `Location`, and final destination
+  for a given source, following any chain. The resolver already collapses
+  chains, so this is largely a read-only view over logic that exists.
 
 **Phase 2 — self-contained, moderate scope, one feature each.**
 
+- **Redirect destination suggestions.** When turning an unresolved URL into a
+  rule, propose likely destinations from what Folio already knows: the old
+  basename, document titles, slugs and aliases, folder names, categories, and
+  recently reconciled records. Bigger than it sounds — the matching has to be
+  good enough to be worth reading, and must run only on the admin screen,
+  never during request routing. A suggestion is always confirmed by a person;
+  nothing is ever applied automatically.
 - **Bulk metadata editing.** Applying a category or tag across a selection,
   rather than one row at a time. Needs a multi-select UI and a batch-apply
   path through the existing single-record save function; no new storage

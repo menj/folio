@@ -48,9 +48,13 @@
   the chip filters
 * `EXCLUDE_PATTERNS` in `config.php` to hide specific files or folders from
   every public surface, including direct URL access
-* Optional **Standalone pages** — About, FAQ, and three custom slots — edited in
+* Optional **Standalone pages** — About, FAQ, Contact, and custom slots — edited in
   the admin, stored privately, with `AboutPage`, `FAQPage` (with parsed Question
-  and Answer entities), and `WebPage` structured data
+  and Answer entities), `ContactPage`, and `WebPage` structured data
+* A **contact form** on the Contact page: messages are emailed to your publisher
+  address, which visitors never see. Optional attachments are forwarded with the
+  email and deleted immediately, never entering the library. Honeypot, timing,
+  and rate-limit spam protection, and a test-email button to confirm delivery works
 * Direct hotlinks to every file, copied to the clipboard in one click
 * Share menu on every file's detail page: copy-link always available; X,
   Reddit, WhatsApp, and email share links appear only when the page itself
@@ -130,7 +134,8 @@ download link.
 
 ## Requirements
 
-* PHP 8.4 or newer with JSON, password, random and `mbstring` support
+* PHP 8.4 or newer with JSON, password and random support; `mbstring` is
+  optional and only affects Markdown rendering
 * Apache or LiteSpeed using the supplied `.htaccess` with `mod_mime` and
   `mod_headers`; `mod_rewrite` is needed only for optional clean URLs
 * Read permission for PHP on `uploads/` and write permission on `data/`
@@ -153,12 +158,15 @@ assets/js/media.js     Themed audio and video transport, plus colour-scheme
                        switching on the standalone playlist pages; listing and detail
 assets/js/admin.js     Admin-only: delete/remove confirmations, rewrite preflight
 assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
+assets/js/library-view.js  Renders sitemap.html in the browser from library.yaml
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
 lib/parsedown/         Parsedown 1.8.0 (MIT), renders Markdown files
-lib/pdfjs/             PDF.js (Apache 2.0), powers both PDF readers
+lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), powers both PDF readers
 lib/js-yaml/           js-yaml 5.3.0 (MIT), renders sitemap.html in the browser
-lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), with its licences
 lib/vendor/            Google API client and dependencies (MIT/Apache 2.0), used by Google Indexing API
+lib/video.php          Folio's own: blurred previews for restricted video
+lib/redirects.php      Folio's own: the Redirect Manager and 404 Monitor
+lib/contact.php        Folio's own: the contact form and its mail delivery
 changelog.md           Version history
 .htaccess              Apache rules, active as shipped
 tests/                 Isolated integration smoke test
@@ -340,7 +348,8 @@ outside what it does:
 | Crawlers | `?action=crawlers` | Sitemap, llms.txt, indexability, robots.txt, sitemap preview, Bing ping, IndexNow, clean-URL preflight |
 | Accounts | `?action=users` | Change your password, add, reset, delete accounts |
 | Docs | `?action=docs` | Read the Readme, Upgrading guide, and Changelog |
-| Pages | `?action=pages` | Optional standalone pages (About, FAQ, three custom slots) |
+| Pages | `?action=pages` | Optional standalone pages (About, FAQ, Contact, and pages you add), plus contact-form status and the test-email button |
+| Redirects | `?action=redirects` | Explicit 301/302 rules for old addresses, and the 404 Monitor |
 | Log in | `?action=login` | Direct sign-in page, works with the Admin link hidden |
 | Diagnostics | `?action=diagnostics` | Environment, addressing, and configuration health |
 
@@ -368,7 +377,13 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
 * **llms.txt.** Folio generates a curated Markdown map of the library for AI
   crawlers at `/llms.txt` (or `?action=llms`), built live from your titles,
   descriptions, and categories, with an optional introduction paragraph you
-  write on this screen. Toggle it off to return 404. It also returns 404 while the whole site is non-indexable.
+  write on this screen. Follows the llms.txt Specification (v1.7.0): a
+  `Lang:` header after the H1, a `# Contact` section built from whichever
+  publisher email, phone, or URL you have configured (genuinely omitted,
+  not filled with placeholder text, when none are set — Diagnostics flags
+  this as informational rather than an error), and the specification
+  attribution as a closing footer. Toggle it off to return 404. It also
+  returns 404 while the whole site is non-indexable.
 * **identity.json.** A Schema.org identity document at `/identity.json` (or
   `?action=identity`) describing who the site is and who it is about: a `Person`
   (the subject the library documents) and the `WebSite` itself, in a linked
@@ -905,8 +920,9 @@ nothing.
 
 ## Standalone pages
 
-Folio can optionally publish a few informational pages alongside the library:
-an **About** slot, a **FAQ** slot, and three general **custom** slots. All are
+Folio can optionally publish informational pages alongside the library: an
+**About** slot, a **FAQ** slot, a **Contact** slot that carries a working
+contact form, and as many general **custom** slots as you add. All are
 disabled on a fresh install, so the site stays a pure library until you fill
 one in.
 
@@ -915,13 +931,13 @@ enabled toggle, a title, an optional shorter menu label, and a Markdown body.
 Content is written in Markdown; raw HTML in the body is escaped for safety.
 
 Enabled pages appear in the header nav for public visitors and in the XML
-sitemap when the site is indexable. URLs are `/about/`, `/faq/`, and
-`/p/<slug>/` under clean URLs, or `?page=<slot>` otherwise. Disabled or unknown
-slugs return a real 404.
+sitemap when the site is indexable. URLs are `/about/`, `/faq/`, `/contact/`,
+and `/<slug>/` for pages you add, under clean URLs — or `?page=<slot>`
+otherwise. Disabled or unknown slugs return a real 404.
 
 Each page emits the correct schema.org type: `AboutPage` for About, `FAQPage`
-for FAQ (with `Question` and `Answer` entities parsed from `##` headings), and
-`WebPage` for the custom slots. Pages are stored privately in `data/pages.json`
+for FAQ (with `Question` and `Answer` entities parsed from `##` headings),
+`ContactPage` for Contact, and `WebPage` for pages you add. Pages are stored privately in `data/pages.json`
 through the same atomic transaction as settings and metadata.
 
 ### Page addresses
@@ -937,6 +953,70 @@ page, a document, or a Folio route already uses it. About and FAQ default to
 Changing a slug leaves the old address redirecting permanently, and the
 original `/p/slot/` form keeps working too, so nothing you have already linked
 to breaks.
+
+## The contact form
+
+Enabling the **Contact** page under Pages puts a working contact form beneath
+whatever you write there. A visitor supplies their name, email, subject and
+message, and optionally attaches a file or two; you receive it as an ordinary
+email and can reply to it directly.
+
+Messages go to your **publisher email**, the same address `vcard.vcf` and
+`identity.json` already use. There is deliberately no second setting for it: a
+site with two different owner addresses is a site where one of them is quietly
+wrong. Visitors never see the address. It is read on the server at the moment
+the message is built and appears nowhere in the page, so there is no way for a
+request to redirect a message somewhere else.
+
+The email is sent *as your site*, with the visitor's address as the reply
+address. Sending it as the visitor would look like forgery to most mail
+providers and land it in spam.
+
+Before relying on the form, click **Send a test email** on the Pages screen. It
+sends only to your own address and confirms delivery works. If it is greyed
+out, the text beside it says why — either no publisher email is set, or the
+host provides no mail function. Diagnostics reports the same. The first test
+may land in spam, which is normal for a new sender rather than a fault.
+
+**Attachments** are optional: up to three files, 5 MB each and 10 MB in total
+by default, and never more than your server itself accepts. Accepted types are
+an allowlist of documents, images and archives, and a file's actual content
+must match what its extension claims — so anything executable, or disguised, is
+refused. Attachments are forwarded with the email and deleted immediately. They
+never enter `uploads/`, never become documents, and never get a URL.
+
+**Spam** is handled by a hidden field bots fill in and people never see, a
+minimum time before a submission is accepted, simple content checks, and a
+limit of five messages an hour. None of the rejections say which check
+objected, since telling a bot what it tripped tells whoever wrote it what to
+change. The rate limit stores a salted, shortened fingerprint of the sender's
+network, never their address, and forgets it after an hour.
+
+Nothing a visitor sends is stored. There is no inbox and no message log — the
+email is the only copy.
+
+## Redirects
+
+Folio already keeps a document's address working through renames and moves on
+its own. When a folder is restructured over FTP, or a document is retired
+deliberately, there is nothing for that to work from — and that is what
+**Redirects** is for.
+
+Log in and click **Redirects**. Add the old address and where it should go, and
+choose whether the move is permanent (301, search engines update their index)
+or temporary (302, they keep the old address). A rule is only ever used when a
+request would otherwise have been a "not found", so it can never take a working
+address off the air — and Folio refuses to save an active rule pointing at an
+address that still works, in case you meant a different one.
+
+Loops are refused outright. If one rule points at another, visitors are sent
+straight to the final destination in a single hop rather than bounced along the
+chain, and the screen flags it so you can tidy it up.
+
+The **404 Monitor** tab lists addresses people actually asked for that led
+nowhere, with how many times and when. Any of them can be turned into a rule in
+one click, which fills in the old address and leaves the destination to you.
+Counts only are kept: no visitor addresses, and the list trims itself.
 
 ## Hiding the admin link
 
@@ -1195,4 +1275,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.50.24. Single-file application with separated CSS and JS assets.
+1.52.1. Single-file application with separated CSS and JS assets.

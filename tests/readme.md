@@ -71,6 +71,7 @@ The fixture library is small but awkward on purpose:
 | `video_access` gate | Hidden is admin-only; viewer requires a valid signed URL and rejects a forged one; public streams with range-request support |
 | Hidden-file indexability | A hidden video is pulled from the folder listing but its record page stays sitemap-indexable, and an admin still sees it in the listing — the same policy a hidden PDF's record page already follows |
 | `pdf_access` and page-level indexing | A `pdf_access` setting never leaks into the record page's sitemap presence, robots meta, or `llms.txt` — it only ever gates the raw file |
+| llms.txt Specification conformance | `Lang:` immediately after the H1, a required `# Contact` section built from configured publisher fields, and the specification attribution as a closing footer rather than an inline link — per the llms.txt Specification (v1.7.0) |
 | Live robots.txt | Served as `text/plain`, always responds (never 404, unlike every other discovery endpoint), reflects `Allow: /` and the current `Sitemap:` references while the site is indexable. Does not yet cover the `Disallow: /` branch, since that needs `SITE_INDEXABLE` toggled at runtime and this suite provisions one static config per run — same gap already noted for the `X-Robots-Tag` fix |
 | JSON-LD injection | Metadata containing `</script>`, mixed-case variants, ampersands, and quotes cannot terminate the structured-data element or create markup |
 | Malformed metadata | A corrupt store is rejected rather than overwritten, and the valid copy survives |
