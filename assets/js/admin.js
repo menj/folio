@@ -119,6 +119,49 @@
         });
     }());
 
+    /* Image access-control preflight (Crawlers screen).
+       Fetches the image probe as the admin and expects Folio's JSON, which
+       only appears if the request reached PHP rather than being served off
+       disk by the webserver. That is the whole question: an image_access
+       setting on a file the webserver hands out directly is a restriction in
+       name only. */
+    (function () {
+        var host = document.getElementById("image-gate-preflight");
+        if (!host) {
+            return;
+        }
+        var btn    = document.getElementById("image-gate-test-btn");
+        var result = document.getElementById("image-gate-result");
+        var form   = document.getElementById("image-gate-form");
+        if (!btn || !result || !form) {
+            return;
+        }
+        btn.addEventListener("click", function () {
+            result.textContent = "Testing\u2026";
+            result.classList.remove("rewrite-ok", "rewrite-bad");
+            btn.disabled = true;
+            fetch(host.dataset.probe, { credentials: "same-origin", cache: "no-store" })
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    if (data && data.ok && data.gate === "image") {
+                        result.textContent = "Image requests reach Folio. Safe to confirm and enforce.";
+                        result.classList.add("rewrite-ok");
+                        form.classList.add("is-visible");
+                        var input = form.querySelector('input[name="probe_result"]');
+                        if (input) { input.value = "ok"; }
+                    } else {
+                        result.textContent = "Image requests are being served straight from disk, so an access setting would not be enforced. Check that the image rule in .htaccess is present and mod_rewrite is active.";
+                        result.classList.add("rewrite-bad");
+                    }
+                })
+                .catch(function () {
+                    result.textContent = "Image requests are not reaching Folio. Check that the image rule in .htaccess is present and mod_rewrite is active.";
+                    result.classList.add("rewrite-bad");
+                })
+                .then(function () { btn.disabled = false; });
+        });
+    }());
+
     /* Video access-control preflight (Crawlers screen).
        Calls the admin-only video_gate_test endpoint, which does a true dry
        run server-side — writes the deny rule, checks whether a direct

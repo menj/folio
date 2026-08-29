@@ -3,6 +3,540 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.60.0 — 28 August 2026
+
+### Added
+
+- **Complete Google structured data coverage.** The PDF uploaded to the admin
+  lists 25 schema types Google Search supports. All 25 are now addressed:
+  13 were not applicable to a document archive (Course, Recipe, Job posting,
+  Vacation rental, and so on); 2 were already complete; and 10 had gaps. All
+  10 are now fixed.
+
+  **ProfilePage** — the About page now uses `ProfilePage` instead of the
+  generic `AboutPage`, with `mainEntity` pointing at the publisher's Person
+  node. This is the correct type for a page primarily about a person.
+
+  **Speakable** — `SpeakableSpecification` is emitted on the About page, the
+  FAQ page, and every Article-type document page, with CSS selectors pointing
+  at the body prose. This makes those pages eligible for text-to-speech on
+  Google Assistant-enabled devices.
+
+  **Organization / Person** — `schema_publisher()` now emits `email`,
+  `telephone`, `address` (PostalAddress with addressCountry), `contactPoint`
+  (ContactPoint with contactType and availableLanguage), `logo` or `image`
+  from the configured site icon, `sameAs`, `alternateName`, `nationality`,
+  and `jobTitle`. The identity.json Person node receives the same enrichment.
+  Without `contactPoint`, the knowledge panel cannot surface a contact action.
+
+  **Image metadata** — ImageObject now carries `creator`, `creditText`,
+  `copyrightHolder`, `copyrightYear`, and optionally `license` and
+  `acquireLicensePage`. These are the fields Google Images uses to show
+  usage-rights badges and attribution. A new `SITE_LICENSE_URL` constant
+  (default empty) accepts a Creative Commons or other licence URL.
+
+  **Video** — VideoObject now carries `uploadDate` (required for Video rich
+  results; uses the document date if set, otherwise the file mtime),
+  `thumbnailUrl` (server-generated frame), `duration` (from stored
+  `video_duration` metadata), and `embedUrl` for public videos. The `Movie`
+  subtype is applied automatically when the document type or category is
+  `film`, adding a `director` reference to the publisher's Person node.
+
+  **Article subtypes** — `document_type_schema_type()` is extended with
+  `ScholarlyArticle` for academic, `Message` for letters, `Periodical` for
+  magazines, `Event` for event/conference documents. HTML files join `.md`
+  as Article. All Article-type nodes now carry `author`, `publisher`,
+  `headline`, `articleSection`, `datePublished`, `dateModified`, and
+  `speakable`.
+
+  **Event** — documents with `document_type` of `event` or `conference` emit
+  a proper `Event` node with `startDate`, `eventStatus`,
+  `eventAttendanceMode`, `organizer`, and `location` where the publisher's
+  country is known.
+
+  **Dataset** — every folder listing and the root library page now emits a
+  `Dataset` node alongside the existing `CollectionPage` + `ItemList`. This
+  makes the library findable in Google Dataset Search. The node carries
+  `name`, `description`, `numberOfItems`, `isAccessibleForFree`, `creator`,
+  `license`, and a `distribution` entry pointing at the JSON Feed.
+
+  **Subscription and paywalled content** — document pages for restricted or
+  hidden PDFs, videos, and images now emit `isAccessibleForFree: false` on
+  the `ItemPage` node, with a `hasPart` WebPageElement and `cssSelector`
+  pointing at the gated content block. Without this, Google cannot
+  distinguish a legitimately gated archive from cloaking, which violates
+  its spam policies.
+
+  Eight regression tests added, bringing the suite to 87.
+
+### Changed
+
+- `schema_publisher()` is now the single source of truth for the publisher's
+  schema node. The identity.json handler previously built its own copy in
+  parallel; both are now fully enriched, with fields added to both.
+
+## 1.59.0 — 28 August 2026
+
+### Added
+
+- **Image redaction**, completing Phase 3. Draw boxes over anything that
+  should not be published — an identity number, an address, a face — and the
+  public is served a copy with the boxes burned into the pixels, re-encoded,
+  with the original withheld. Follows the PDF redaction model, which was
+  already proven; the editor is the same box-drawing tool the video
+  hover-preview redaction uses.
+
+  The property that matters is not that a box is drawn but that the original
+  becomes unreachable, so `?action=raw` refuses a redacted image outright for
+  anyone not signed in — withholding a URL is not access control, and this is
+  the check that holds when someone guesses the path. Deliberately not
+  conditional on `IMAGE_GATE_CONFIRMED`: a redaction is an explicit
+  instruction to cover something, and honouring it only when a separate
+  preflight happened to be confirmed would be the wrong default.
+
+  Thumbnails are built from the derivative, never the source. A 320px
+  thumbnail is small but perfectly legible for a name or a number.
+
+  Both paths fail closed: if Imagick is missing or the render fails, the
+  route and the thumbnail each return nothing rather than the unredacted
+  file. The failure mode of a redaction feature must never be "publish the
+  original", and the editor says so plainly when the extension is absent.
+
+  The derivative is stripped of every profile and EXIF block, since the
+  original's metadata can describe the very thing the box covers, and an
+  embedded EXIF thumbnail is a small copy of the unredacted picture.
+
+  Verified by sampling actual pixels rather than trusting the code: the
+  centre of the redacted region reads (0,0,0) in both the full derivative and
+  the 320px thumbnail, while a pixel outside the box is unchanged. The
+  derivative carries no EXIF and no embedded thumbnail, and the original
+  returns 404.
+
+### Fixed
+
+- **`video_redact` was never exposed to the metadata editor.** The listing's
+  per-file array did not carry it, so the video redaction editor always read
+  an empty region set and showed "0 regions" no matter what was stored.
+  Found while adding the image equivalent alongside it.
+
+  Four tests added, bringing the suite to 79.
+
+## 1.58.1 — 28 August 2026
+
+### Changed
+
+- **The roadmap's phase numbers are stable again.** As each phase completed
+  it was deleted and everything below renumbered upward, so "Phase 2" meant
+  something different depending on when it was written — the plan quietly
+  detached from every conversation and commit message referring to it, and
+  work that had been done in the right order looked as though it had been
+  skipped. Numbers are labels, not queue positions.
+
+  Every phase now keeps the number it was first given. Phase 1 stays in the
+  document marked complete with the release each item shipped in, rather than
+  vanishing, and the completed half of Phase 3 is struck through beside the
+  half still outstanding. The three cross-references that pointed at shifted
+  numbers are corrected.
+
+## 1.58.0 — 28 August 2026
+
+### Added
+
+- **Image access control**, the first half of the roadmap's Phase 2. Images
+  now have the same three tiers as PDFs and video — public, restricted,
+  hidden — set in the inline editor. Unlike video's delisting-only default,
+  this is genuinely enforced: an image is small enough to serve through Folio
+  without the seeking and bandwidth cost that made video's lighter model the
+  right call. A restricted image is delivered through a short-lived signed
+  URL; a hidden one is not delivered at all, even with a valid token.
+
+  Enforcement requires both `FOLIO_URL_SIGNING_KEY` and a confirmed preflight
+  from the Crawlers screen, the same shape as PDF. Until both hold, every
+  image behaves as public and the editor says so beside the setting — a
+  restriction that might not be enforced is worse than none, because the
+  administrator would believe it held.
+
+  Tokens carry an `image|` prefix so one minted for a PDF cannot be replayed
+  against an image of the same path. Thumbnails follow the tier, since a
+  restricted photo whose 320px version stayed public would not be restricted.
+
+  Verified against a real Apache: gate off changes nothing; gate on refuses a
+  restricted image with no token, a forged token, an expired token, a
+  PDF-namespaced token, a hidden image even with a valid token, and the
+  thumbnail of a gated image — while a public image, a valid signed token and
+  an admin session all succeed. The confirm and disable buttons were exercised
+  through the real form, including the fallback path for hosts that block PHP
+  from making outbound HTTP requests to themselves.
+
+### Fixed
+
+- **The scanner hardening blocked Folio's own preflight probes.** Added in
+  1.55.0, the dotfile rule refused any filename beginning with a dot — which
+  includes `.folio-pdf-probe.pdf` and its siblings, since they are dotfiles
+  precisely so they never clutter a folder listing. The effect was that the
+  PDF, video and image preflights could never succeed on any install. The
+  probes are now exempted by name in both `.htaccess` files, ahead of the
+  block; `.env`, `.git/config` and editor leftovers are still refused,
+  confirmed by test.
+
+- **`og:image` and `twitter:card` were emitted for a gated image**, producing
+  an empty image URL and a large-image social card with nothing behind it.
+  Now omitted when there is no URL to publish.
+
+- **An image access setting on an otherwise-empty record was silently
+  discarded**, because the check that decides whether a record is worth
+  keeping did not know about the new field.
+
+  Five tests added, bringing the suite to 75.
+
+## 1.57.0 — 28 August 2026
+
+### Added
+
+- **The rest of the roadmap's Phase 1**, which is now complete and removed
+  from the plan; the remaining phases are renumbered 1 to 5.
+
+- **A redirect tester.** Enter an address and Folio reports what actually
+  happens to it: whether a rule answers it, which one, the whole chain if
+  there is more than one, and where a visitor lands. It reports the
+  resolution rather than making a real request — an administrator asking
+  "what happens to this URL" wants to know which rule answers it, and a
+  network round trip would add a timeout and a failure mode ("the site could
+  not reach itself") that says nothing about the rule. It also warns when a
+  rule points at something that does not exist, which is how a redirect ends
+  up sending visitors from one dead address to another.
+
+- **Redirect import and export.** Export omits hit counts deliberately: they
+  describe the site the file came from, and carrying them elsewhere would
+  state as fact something that never happened there. Import is
+  all-or-nothing — the whole file is validated before anything is written,
+  because a partly applied import leaves a state the administrator never
+  chose and cannot easily reconstruct. Each problem is reported with its
+  entry number, including loops **between entries in the same file**, which
+  no per-rule check would catch. Hit counts survive an import for any rule
+  whose source is unchanged.
+
+- **A slug history tab.** Read-only: the old document addresses Folio
+  already redirects on its own after a rename. Nothing to maintain, but
+  worth seeing before writing a rule that would duplicate what Folio is
+  already doing.
+
+- **Caption files for audio and video.** A WebVTT file named to match a media
+  file — `interview.vtt` beside `interview.mp4` — becomes a captions track on
+  the player. Discovered on disk rather than configured, the same way the
+  rest of Folio treats files: put it there over FTP and it appears. WebVTT
+  only, since it is the one format browsers accept in a `<track>`, and
+  offering SRT would mean silently converting or silently ignoring it.
+
+  A caption is hidden from the library listing, because it belongs to the
+  media file beside it rather than being a document in its own right — but
+  it is still served, since the track element has to fetch it. A `.vtt` with
+  no matching media stays listed, as hiding a file with nothing to belong to
+  would only make it unreachable.
+
+  Two mistakes caught while testing: the caption initially appeared as its
+  own library document, and the first fix went into the wrong function —
+  `index_all_files()` rather than the separate loop that builds the visible
+  listing. The test still showing the file is what surfaced it.
+
+  Five tests added, bringing the suite to 70.
+
+## 1.56.0 — 28 August 2026
+
+### Added
+
+- **Catalogue export**, the first item of the roadmap's Phase 1. A
+  **Download a copy** button on the Catalogue screen saves
+  `data/metadata.json` — every title, description, category, tag, date,
+  access setting and redaction region entered by hand. It is the only asset
+  in a Folio installation that cannot be rebuilt from the files themselves:
+  thumbnails, extracted text, previews and OCR all regenerate on demand,
+  this does not. Until now the only way to back it up was FTP.
+
+  Sent **verbatim**, not as a filtered subset. Stripping the fields that look
+  internal — redaction regions, access tiers — would produce a file that
+  reads nicely and restores wrong, and a backup that does not restore is not
+  a backup. Restoring is putting the same file back as
+  `data/metadata.json`; nothing needs converting.
+
+  Read under a shared lock, so an export taken while a save is in flight
+  waits for it rather than capturing a half-written file. The screen shows
+  the record count and file size, and the download is named for the site and
+  the date. An empty catalogue exports a valid `{}` rather than failing.
+
+  Four tests added, bringing the suite to 66. The important one asserts the
+  export is **byte-identical** to the stored file, since "a file downloads"
+  would pass while a subtly lossy export sat there looking fine.
+
+## 1.55.1 — 28 August 2026
+
+### Changed
+
+- **Refreshed `index.php`'s size figure under Known issues**, which had gone
+  stale again: 14,467 lines and 237 functions, up from the 13,658 last
+  recorded. The recent security and admin work added roughly 800 lines. The
+  figure is re-measured whenever the list is reviewed, because a number that
+  quietly goes wrong is worse than no number — and the trend it records is
+  exactly what Phase 5 exists to reverse.
+
+## 1.55.0 — 28 August 2026
+
+### Added
+
+- **Hardening against automated vulnerability scans.** 1.54.1 stopped scanner
+  probes reaching PHP and the 404 Monitor; this closes the gaps a scan is
+  actually looking for once it gets a response.
+
+  Now refused at the webserver: dotfiles — `.env` and `.git/config` above all,
+  since both routinely carry credentials; editor and deploy leftovers
+  (`.bak`, `.old`, `~`, `.swp`), which matter more than they look, because
+  `index.php.bak` is source code served as **plain text** — the extension no
+  longer says PHP, so nothing executes it and the whole file is readable;
+  database, log and config extensions; and the `.git`, `.svn`,
+  `node_modules`, `.idea` and `.vscode` directories. Directory listing is now
+  off, so a folder added later cannot hand out an index of itself.
+
+  `X-Powered-By` is unset: PHP announcing its exact build is free
+  reconnaissance, letting a scanner pick the exploits matching that version
+  rather than trying everything.
+
+  Verified against a real Apache 2.4 rather than by reading the rules.
+  `credit.php`, `wp-mails.php`, `adminer.php`, `.env`, `.git/config`,
+  `index.php.bak`, `config.php`, `data/notfound.json` and a bare directory
+  all returned 403; the library, `index.php`, an uploaded file, the
+  stylesheet and `robots.txt` all still returned 200. Let's Encrypt renewal
+  is unaffected, since `FilesMatch` tests the filename alone and an ACME
+  token does not begin with a dot.
+
+  Two things deliberately **not** claimed. The `Server:` header still reports
+  the Apache version — that is `ServerTokens`, which is main-configuration
+  only and cannot be set from `.htaccess`; confirmed by testing, and
+  documented as the host's to change. And no insulting message is served to
+  scanners: it was measured as costing nothing in bandwidth, but a scanner is
+  a script reading a status code with nobody on the other end, and identical
+  distinctive wording across every install would fingerprint the software —
+  the opposite of hardening.
+
+## 1.54.1 — 28 August 2026
+
+### Fixed
+
+- **Automated vulnerability scans were booting the application and filling
+  the 404 Monitor.** Every public site is scanned continuously for a
+  forgotten webshell — `credit.php`, `wp-mails.php`, `adminer.php`,
+  `xamp.php` and a few thousand more. The root `.htaccess` catch-all routed
+  every one of those into `index.php`, which walked the full routing chain,
+  reached its 404, and then took an **exclusive file lock** to write the path
+  into `data/notfound.json`. A scanner firing hundreds of requests a minute
+  therefore caused hundreds of serialised locked writes, and filled a
+  500-entry monitor with noise nobody will ever act on, burying the genuine
+  broken links it exists to surface.
+
+  Two layers now. The webserver refuses any request for an executable
+  extension outright — Folio serves no `.php` a visitor should ever request
+  except `index.php`, which is explicitly exempted — so a probe is answered
+  without PHP starting at all. And `notfound_record()` recognises scanner
+  probes and returns *before* taking the lock, which keeps the monitor
+  honest on a host where `AllowOverride` is off and the rules never load.
+
+  Recognised: executable and config extensions (`.php`, `.env`, `.git`,
+  `.sql` and relatives) and paths belonging to other applications (`wp-`,
+  `phpmyadmin`, `cpanel`, `vendor/` and so on). Tested against the real
+  entries from a live site's monitor: all filtered, with no legitimate path
+  caught.
+
+- **A way to clear the entries already logged.** The 404 Monitor now counts
+  how many recorded paths look like scans and offers to remove just those,
+  leaving genuine broken links in place — the existing "clear the whole
+  list" would have thrown both away together.
+
+## 1.54.0 — 28 August 2026
+
+### Added
+
+- **The publisher identity fields are now editable in Settings.** Occupation,
+  biography, other names, nationality, education, affiliations, and a related
+  site were added in 1.47.0 and feed `identity.json` and `llms.txt`, but the
+  only way to set any of them was to hand-edit `config.php` — which is what
+  the admin exists to avoid. Eight fields added beneath Publisher email, with
+  the related-site URL validated as an http(s) address and the biography
+  capped at 600 characters. Verified end to end: saved values appear in
+  `identity.json`'s Person node as `jobTitle`, `alternateName`, `nationality`,
+  `alumniOf`, and `affiliation`, and in `llms.txt`'s publisher briefing.
+
+  The biography is worth setting: without it `identity.json` falls back to
+  the library's own description for the Person, which answers the wrong
+  question about its own subject.
+
+### Changed
+
+- **An audit of every admin screen and setting.** All nine screens render
+  without a PHP notice; every form field on every screen is read by its
+  handler and persisted; and no handler reads a field that no form provides.
+  `docs/ssot.md` had nine settings still documented as "config.php only"
+  that are now settable from Settings, including `PUBLISHER_EMAIL`, which was
+  additionally described as vCard-only despite also feeding the contact form
+  and llms.txt. All corrected.
+
+  Noted and left alone: a JSON endpoint for reconciliation and relinking
+  (`$_POST['action'] === 'reconcile'`) has no caller — the Catalogue screen
+  uses an ordinary form POST instead. It is admin-authenticated and
+  CSRF-protected, so it is dead rather than dangerous, and removing an API
+  someone may be scripting against is not a call to make inside a review.
+
+## 1.53.2 — 28 August 2026
+
+### Fixed
+
+- **The Search title and Search description fields on the Pages screen ran
+  together as inline text.** Both were plain `<label>` elements while every
+  other field on that screen carries `class="page-field"`, which is what
+  gives a field its block layout, full width, and label styling. Without it
+  they flowed as running prose, with their inputs sitting mid-sentence.
+  Both now carry the class and match the fields above them exactly.
+
+- **Field help text was rendering in uppercase.** A `.field-note` inside a
+  page field is a direct child `<span>`, so it matched the rule styling the
+  field's *label* — small, letter-spaced, and uppercased. Help text was
+  shouting in the same voice as the label it explains, most visibly under
+  the URL slug field. It now keeps ordinary sentence case.
+
+## 1.53.1 — 28 August 2026
+
+### Fixed
+
+- **The Settings screen had no field for the publisher email**, while the
+  Pages screen told you to "add one under Settings" to make the contact form
+  work. The setting existed and was read by the contact form, `vcard.vcf`,
+  and llms.txt's Contact section, but the only way to set it was by editing
+  `config.php` by hand — which is exactly what Folio's admin exists to avoid.
+  Added, with validation, beneath Publisher URL where it belongs.
+
+- **A ghost button turned near-black on hover.** `.btn-ghost:hover` set its
+  border and text colour but no background, so it inherited
+  `background: var(--ink)` from the solid button rule earlier in the sheet:
+  dark text on a dark fill, the one place in the interface where hovering
+  made something harder to read. It now takes a faint wash of the theme
+  accent instead, checked at 4.77:1 or better against its own text in all
+  four colour schemes.
+
+## 1.53.0 — 28 August 2026
+
+### Added
+
+- **robots.txt now names the known AI crawlers and enforces the training
+  policy.** `AI_ALLOW_TRAIN` has been declared in `library.yaml` for some
+  time, but nothing acted on it: robots.txt said `Allow: /` to every crawler
+  regardless of how the setting was left. A policy stated only in a file most
+  crawlers never read is a preference, not a policy. Whichever way it is set,
+  the answer is now written to each training crawler by name, in the file
+  every crawler reads first.
+
+  The default is to permit training. A public library is published to be
+  read, and an administrator who wants to withhold it can say so in one
+  click on the Crawlers screen — at which point every training crawler is
+  refused by name rather than merely asked nicely in a file they do not
+  fetch.
+
+  A named group is written only when it says something the general
+  `User-agent: *` rule does not. With training permitted — the default —
+  every AI crawler is already covered, so none is listed and a comment says
+  so; turning training off adds the explicit refusal, naming each training
+  crawler. Restating `Allow: /` under eighteen agent names that are already
+  allowed would be twenty-odd lines overriding the general rule with an
+  identical one, which reads as a contradiction to anyone auditing the file
+  and is one more thing to fall out of step.
+
+  Agents are grouped by what they are for rather than by company, because
+  that is the actual decision: whether the library may become training data
+  is a different question from whether an assistant may fetch a page to
+  answer someone asking about it, and several companies run one of each under
+  different names. Only the training group follows `AI_ALLOW_TRAIN`; live
+  retrieval and AI search stay allowed, since blocking those only makes the
+  library invisible to someone who is already asking about it.
+
+  Covered: GPTBot, ClaudeBot, Google-Extended, CCBot, Bytespider,
+  meta-externalagent, Applebot-Extended, Amazonbot, cohere-ai, Diffbot and
+  omgili as training crawlers; ChatGPT-User and Claude-User as live
+  retrieval; OAI-SearchBot, Claude-SearchBot, PerplexityBot, YouBot and
+  FacebookBot as AI search. Anthropic's retired `Claude-Web` and
+  `anthropic-ai` are deliberately absent — they no longer appear in
+  Anthropic's own crawler documentation, and listing dead agents makes a
+  file look thorough while doing nothing.
+
+- **`ROBOTS_CRAWL_DELAY`**, off by default. Set it to a number of seconds on
+  a small or shared host that a crawl noticeably strains. Left at 0 the
+  directive is omitted entirely rather than emitted as 0, since Google
+  ignores it either way and asking for a delay mostly slows the crawlers that
+  bother to behave.
+
+- **`AI_ALLOW_TRAIN` now defaults to permitting training.** It had defaulted
+  to off. Only fresh installations and sites that never touched the toggle
+  are affected: a value saved from the Crawlers screen lives in
+  `data/settings.php` and continues to override the default, so an existing
+  choice is not quietly reversed by upgrading.
+
+### Changed
+
+- **robots.txt is readable now.** It opens with what the file is and a short
+  legend for each directive it uses, so someone opening it who does not
+  already know the format can follow it. The AI-discovery files are laid out
+  as an aligned block naming each file and what it is for rather than four
+  cramped comment lines, and each section says in a sentence what it is doing
+  and why. Attribution for each crawler sits in a comment block above its
+  group rather than trailing the `User-agent` line, since a trailing comment
+  there is legal but unevenly supported and a parser that mishandles one
+  would mis-read the agent name itself.
+
+- **`docs/ssot.md` now documents the AI policy settings**, which had never
+  been listed in the settings table despite being live and admin-editable.
+
+## 1.52.2 — 28 August 2026
+
+### Fixed
+
+- **A restricted or hidden video's preview clip and thumbnail were served to
+  anyone who guessed the URL.** The listing has always declined to emit those
+  addresses for a non-public video unless an admin is looking, but that is
+  withholding a link, not access control. Neither `?action=video_preview` nor
+  `?action=thumb` consulted `video_access` at all, so a request naming the
+  path directly returned a playable four-second clip of the real footage, and
+  a real frame of it, to an anonymous visitor. Confirmed by reproducing it
+  before the fix and after.
+
+  Both routes now check the tier. `thumb_permitted()` was extended to cover
+  video, having previously gated PDFs only. An admin, who already watches the
+  video itself at any tier, is unaffected, and public video is untouched. The
+  path obscuring added in 1.48.1 is not a substitute for this and never was:
+  it hides an address in the page's HTML, which does nothing about an address
+  someone guesses.
+
+### Added
+
+- **A cache inventory on the Diagnostics screen.** Every derived cache Folio
+  keeps — thumbnails, video hover previews, blurred previews, extracted text,
+  OCR results, compressed PDF copies, redacted derivatives — is listed with
+  its size and file count, a plain description of what it is and what
+  clearing costs, and a Clear button. Previously there was no way to see any
+  of this or act on it without FTP, and no eviction of any kind: replacing or
+  deleting a video left its old preview orphaned in `data/video-previews/`
+  indefinitely.
+
+  Clearing is a POST behind the same admin authentication and CSRF check as
+  every other write. It takes a key into a fixed list and never a path, so no
+  request can name a directory of its own, and the resolved directory is
+  checked to be genuinely inside `data/` before anything is removed.
+
+  The screen also explains the two-character folder names
+  (`3e/`, `fc/`, and so on) that are visible over FTP: they shard files
+  across 256 buckets so no single directory grows large enough to slow the
+  server or an FTP client, and carry no meaning that has to be understood.
+
+  Four tests added, bringing the suite to 57: that hidden previews and
+  thumbnails are refused to the public, that the route consults the tier at
+  all, that cache clearing is unreachable anonymously, and that a
+  traversal-style key is refused with `uploads/` left intact.
+
 ## 1.52.1 — 27 August 2026
 
 ### Fixed

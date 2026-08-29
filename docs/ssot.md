@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.52.1. Update this file in the same commit as any change it describes.
+Version 1.60.0. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.52.1');` |
-| `changelog.md` | `## 1.52.1 — 27 August 2026` |
-| `readme.txt` | `Stable tag: 1.52.1` |
-| `readme.md` | `1.52.1.` under `## Version` |
-| `security.md` | `The current supported release is **1.52.1**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.60.0');` |
+| `changelog.md` | `## 1.60.0 — 27 August 2026` |
+| `readme.txt` | `Stable tag: 1.60.0` |
+| `readme.md` | `1.60.0.` under `## Version` |
+| `security.md` | `The current supported release is **1.60.0**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -189,17 +189,17 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `SHOW_ADMIN_LINK` | `true` | Settings |
 | `AUDIO_PLAYLIST` | `true` | Settings |
 | `PUBLISHER_NICKNAME` | empty | no — vCard only, never identity.json |
-| `PUBLISHER_EMAIL` | empty | no — vCard only, never identity.json |
+| `PUBLISHER_EMAIL` | empty | Settings — the contact form's recipient, and published in vcard.vcf and llms.txt's Contact section |
 | `PUBLISHER_PHONE` | empty | no — vCard only, never identity.json |
 | `PUBLISHER_COUNTRY` | empty | no — vCard only, never identity.json |
-| `PUBLISHER_BIO` | empty | no — config.php only; identity.json's `Person.description`, replacing the library's own description as the fallback |
-| `PUBLISHER_OCCUPATION` | empty | no — config.php only; identity.json's `Person.jobTitle` |
-| `PUBLISHER_ALT_NAMES` | empty | no — config.php only; identity.json's `Person.alternateName` |
-| `PUBLISHER_NATIONALITY` | empty | no — config.php only; identity.json's `Person.nationality` |
-| `PUBLISHER_ALUMNI_OF` | empty | no — config.php only; identity.json's `Person.alumniOf` |
-| `PUBLISHER_AFFILIATION` | empty | no — config.php only; identity.json's `Person.affiliation` |
-| `PUBLISHER_RELATED_SITE_URL` | empty | no — config.php only; a second site about the same person, as a named `additionalProperty` |
-| `PUBLISHER_RELATED_SITE_LABEL` | empty | no — config.php only; label for the above, defaulting to "Related site" |
+| `PUBLISHER_BIO` | empty | Settings — identity.json's `Person.description`, replacing the library's own description as the fallback |
+| `PUBLISHER_OCCUPATION` | empty | Settings — identity.json's `Person.jobTitle` |
+| `PUBLISHER_ALT_NAMES` | empty | Settings — identity.json's `Person.alternateName` |
+| `PUBLISHER_NATIONALITY` | empty | Settings — identity.json's `Person.nationality` |
+| `PUBLISHER_ALUMNI_OF` | empty | Settings — identity.json's `Person.alumniOf` |
+| `PUBLISHER_AFFILIATION` | empty | Settings — identity.json's `Person.affiliation` |
+| `PUBLISHER_RELATED_SITE_URL` | empty | Settings — a second site about the same person, as a named `additionalProperty` |
+| `PUBLISHER_RELATED_SITE_LABEL` | empty | Settings — label for the above, defaulting to "Related site" |
 
 ### Addressing
 
@@ -259,6 +259,12 @@ Content-Security-Policy is identical to a build without the feature.
 | `PDF_GATE_CONFIRMED` | `false` | Crawlers, via the PDF-routing preflight — never set by hand |
 | `VIDEO_GATE_CONFIRMED` | `false` | Crawlers, via the video-routing preflight — never set by hand |
 | `CONTACT_SENDER_EMAIL` | empty | no — what contact mail is sent *as*; empty means `no-reply@` the site's own domain. Never where it goes |
+| `AI_ALLOW_TRAIN` | `true` | Crawlers — declared in library.yaml *and* enforced in robots.txt, where each known training crawler is named and either allowed or refused to match |
+| `AI_ALLOW_QUOTE` | `true` | Crawlers — declared in library.yaml only; no robots.txt directive expresses it |
+| `AI_ALLOW_SUMMARISE` | `true` | Crawlers — as above |
+| `AI_ALLOW_COMMERCIAL` | `false` | Crawlers — as above |
+| `AI_POLICY_NOTE` | empty | Crawlers — free text, emitted as a one-line comment in robots.txt and in library.yaml |
+| `ROBOTS_CRAWL_DELAY` | `0` | no — seconds between requests; 0 emits no directive at all. Google ignores it regardless |
 | `CONTACT_ATTACHMENTS` | `true` | no |
 | `CONTACT_MAX_ATTACHMENTS` | `3` | no |
 | `CONTACT_MAX_FILE_MB` | `5` | no |
@@ -311,7 +317,8 @@ Admin, all requiring a session:
 | `?action=analytics` | Matomo and GA4 |
 | `?action=users` | accounts |
 | `?action=pages` | standalone pages |
-| `?action=redirects` | admin: explicit 301/302 rules and the 404 Monitor (`&tab=notfound`) |
+| `?action=image_redacted` | public: an image with redaction boxes burned in; the only image served for a file carrying regions |
+| `?action=redirects` | admin: explicit 301/302 rules, the redirect tester, import/export, the 404 Monitor (`&tab=notfound`), and slug history (`&tab=slugs`) |
 | `/contact` (`?page=contact`) | public: the contact page and its form; POST submits it |
 | `?action=docs` | documentation viewer |
 | `?action=diagnostics` | environment report |

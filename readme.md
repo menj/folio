@@ -954,6 +954,39 @@ Changing a slug leaves the old address redirecting permanently, and the
 original `/p/slot/` form keeps working too, so nothing you have already linked
 to breaks.
 
+## Captions for audio and video
+
+Put a WebVTT file next to a media file over FTP, with the same name — 
+`interview.vtt` beside `interview.mp4` — and a captions track appears on the
+player. There is nothing to set in the admin, and the caption file does not
+show up in your library as a document of its own; it belongs to the media file
+beside it.
+
+WebVTT is the only format browsers accept for this, so a `.srt` will not work.
+Most transcription tools export WebVTT directly, and converting is a one-step
+job in any subtitle editor.
+
+A `.vtt` with no matching media file is treated as an ordinary document and
+stays listed, since hiding a file with nothing to belong to would only make it
+unreachable.
+
+## Backing up your catalogue
+
+Everything you type into Folio — titles, descriptions, categories, tags,
+dates, access settings, redaction regions — lives in one file,
+`data/metadata.json`. Everything else Folio keeps is derived: thumbnails,
+extracted text, previews and OCR results all rebuild themselves if lost. This
+one does not. Your documents are safe on FTP; the *catalogue describing them*
+is the part with no second copy.
+
+Log in, click **Catalogue**, and use **Download a copy**. The file is named
+for your site and the date. Keep it somewhere other than the server it came
+from — a backup living on the machine it protects is not a backup.
+
+To restore, put the file back as `data/metadata.json` over FTP. It is the
+same file, unmodified, so nothing needs converting and no import step exists
+to go wrong.
+
 ## The contact form
 
 Enabling the **Contact** page under Pages puts a working contact form beneath
@@ -1012,6 +1045,25 @@ address that still works, in case you meant a different one.
 Loops are refused outright. If one rule points at another, visitors are sent
 straight to the final destination in a single hop rather than bounced along the
 chain, and the screen flags it so you can tidy it up.
+
+**Test an address** before relying on it. Type an old address and Folio reports
+what actually happens: whether a rule answers it, which one, the full chain if
+there is more than one, and where a visitor ends up. It also warns when a rule
+points somewhere that does not exist, so you can catch a redirect sending
+people from one dead address to another. Testing changes nothing.
+
+**Back up and restore.** Download your rules as a file, and import one back.
+Importing replaces every rule, and the whole file is checked before anything is
+written — one bad entry stops the import entirely rather than leaving half of it
+applied, and you are told exactly which entries were wrong and why. Hit counts
+stay with your site: they are not written into the file, since they describe
+where it came from, and they survive an import for any rule whose address has
+not changed.
+
+The **Slug history** tab shows old document addresses Folio already redirects on
+its own, after you rename something. Nothing there needs maintaining — it works
+whether or not you ever look at it — but it is worth a glance before writing a
+rule, in case Folio is already handling the address.
 
 The **404 Monitor** tab lists addresses people actually asked for that led
 nowhere, with how many times and when. Any of them can be turned into a rule in
@@ -1275,4 +1327,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.52.1. Single-file application with separated CSS and JS assets.
+1.60.0. Single-file application with separated CSS and JS assets.

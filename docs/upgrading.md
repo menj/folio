@@ -750,7 +750,7 @@ today.
   search, rather than tracked separately from it.
 
 - **`index.php` is past the size the single-file design serves well, and has
-  grown rather than shrunk.** 13,658 lines and 232 functions now, up from
+  grown rather than shrunk.** 14,467 lines and 237 functions now, up from
   9,311 and 170 when this was first noted — every feature shipped since has
   added to one file rather than being weighed against it. Two steps the
   other direction so far: the video preview helpers (`video_blur_*`) and the
@@ -765,11 +765,6 @@ today.
   makes it the most expensive place for a mistake to hide, regardless of
   how little judgement the work itself calls for.
 
-- **The catalogue cannot be exported from the admin.** `data/metadata.json`
-  holds every title, description, category, tag, and date entered by hand,
-  and is the one asset that cannot be regenerated from the files. Backing it
-  up currently requires FTP. Tracked as Phase 1 below.
-
 - **A restricted or hidden video's own direct URL is still exposed in one
   place: the admin's own "Preview" button.** Its hover-preview thumbnail and
   moving clip no longer carry the file's plain path — obscured in this
@@ -778,7 +773,15 @@ today.
   there is no route there to decode an obscured reference against. Genuinely
   closing it would mean routing a gated video through PHP for the admin too,
   always, not only when the opt-in webserver guard is on — a bigger change to
-  the default model than this release makes on its own. Tracked as Phase 3.
+  the default model than one release should make on its own.
+
+  Phase 3 was expected to resolve this as a side effect, and did not: image
+  access control proved the pattern works, but it is a separate surface and
+  changes nothing about video. What Phase 3 did establish is the shape of the
+  fix — `image_access` routes non-public delivery through a signed PHP URL by
+  default rather than only under an opt-in guard, and video could adopt the
+  same. That is now its own piece of work rather than something expected to
+  fall out of another phase; still open, no longer misattributed.
 
 ### The contact form
 
@@ -949,26 +952,18 @@ would be most valuable — a library gets more from four small, shipped things
 than from one large, half-finished one. A phase's items are independent of
 each other unless stated; a later phase may depend on an earlier one.
 
-**Phase 1 — small, standalone, no new data model.**
+**Phase 1 — small, standalone, no new data model. COMPLETE (1.56.0–1.57.0).**
 
-- **Catalogue export.** A download button on the Catalogue screen for
-  `data/metadata.json` as-is. The one asset that cannot be regenerated from
-  the files currently has no way to be backed up except FTP.
-- **A slug history view.** Previous addresses are already stored and already
-  redirect correctly; there is simply no screen showing them or allowing one
-  to be retired deliberately. Read-only over an existing data structure.
-- **Caption files for audio and video.** The transcript half of this is
-  already done — the transcript field already renders under the player for
-  any document kind, not only text. What remains is a `<track>` element for
-  a caption file (VTT) placed beside a media file. Additive, no new
-  dependency, and does not touch the transcript rendering already shipped.
-- **Redirect import and export.** The store is already plain JSON, so export
-  is close to a download button; import is the larger half, since a bad file
-  must be parsed, validated, and reported on in full *before* anything is
-  written, never partially applied.
-- **A redirect tester.** Report the status, `Location`, and final destination
-  for a given source, following any chain. The resolver already collapses
-  chains, so this is largely a read-only view over logic that exists.
+Kept rather than deleted, and the phases below keep the numbers they were
+first given. Renumbering as phases complete makes every reference to "Phase 2"
+mean something different depending on when it was written, and silently
+detaches the plan from any conversation about it.
+
+- ~~Catalogue export~~ — shipped in 1.56.0.
+- ~~A slug history view~~ — shipped in 1.57.0.
+- ~~Caption files for audio and video~~ — shipped in 1.57.0.
+- ~~Redirect import and export~~ — shipped in 1.57.0.
+- ~~A redirect tester~~ — shipped in 1.57.0.
 
 **Phase 2 — self-contained, moderate scope, one feature each.**
 
@@ -1003,26 +998,10 @@ each other unless stated; a later phase may depend on an earlier one.
   inventing one — and moving the default sort is a shipped-default change,
   which counts as a minor version under this project's own versioning rule.
 
-**Phase 3 — a new access-control surface, mirroring one that already exists.**
+**Phase 3 — a new access-control surface. COMPLETE (1.58.0–1.59.0).**
 
-- **Image access control.** Extend the `pdf_access`/`video_access` shape —
-  public, restricted, hidden, signed delivery through the same
-  `FOLIO_URL_SIGNING_KEY` — to image files. This is the gate the image half
-  of redaction (below) stands on, and closes the admin-preview direct-link
-  exposure noted under Known issues for images the same way it would need
-  to for video: once a file's delivery is already routed and signed rather
-  than a bare static path, obscuring the reference is straightforward,
-  because there is finally a PHP route in the path to decode it against.
-  Extending that same treatment to video's own admin-preview link is the
-  natural companion piece, once this exists to copy.
-- **Image redaction.** Depends on the access control above. Follows the PDF
-  redaction model exactly, since that model is already proven: fractional
-  rectangles marked in the dashboard editor, an image-only rendered copy
-  with the boxes burned into the pixels served to the public, the original
-  gated behind the access control above, fail-closed if the render engine
-  is unavailable. Every serve path — detail view, hover and listing
-  thumbnails, sitemap image, structured-data image — routes through the
-  redacted derivative, audited the same way the PDF paths already were.
+- ~~Image access control~~ — shipped in 1.58.0.
+- ~~Image redaction~~ — shipped in 1.59.0.
 
 **Phase 4 — needs design work before it's safe to start.**
 

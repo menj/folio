@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.52.1
+Stable tag: 1.60.0
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -221,6 +221,115 @@ Poppler. Without Tesseract there is no OCR but nothing else changes. Without
 any of them Folio behaves exactly as it did before the feature existed.
 
 PDF pages are rendered with Poppler where it is installed.
+
+= 1.60.0 =
+
+Completes Google structured data coverage against the full official list.
+Adds ProfilePage for the About page, Speakable for TTS eligibility on
+articles and FAQ, Dataset for Google Dataset Search, paywalled content
+markup for restricted documents, full image creator/copyright fields for
+Google Images, Video rich-result fields (uploadDate required, thumbnailUrl,
+duration, Movie subtype), Organisation contact and logo fields, and Event
+schema for event documents. New SITE_LICENSE_URL constant for image licence
+badges. 8 new tests; suite at 87.
+
+= 1.59.0 =
+
+Adds image redaction. Draw boxes over anything that should not be published
+and visitors get a copy with the boxes burned into the pixels — the original
+is withheld, and what is underneath cannot be recovered by saving the image or
+reading its metadata. Thumbnails use the redacted copy too. If your server
+cannot build the redacted copy, the image is withheld entirely rather than
+risk publishing the original. Also fixes the video redaction editor always
+showing zero regions.
+
+= 1.58.1 =
+
+Documentation only: the roadmap's phase numbers no longer shift when a phase
+completes, so a phase number means the same thing permanently. Completed work
+stays listed and struck through rather than disappearing.
+
+= 1.58.0 =
+
+Adds access control for images: Public, Restricted and Hidden, the same three
+settings PDFs and video already have. Restricted images are delivered through
+a short-lived signed link and hidden ones are not served at all. Turn it on
+under Crawlers, after the preflight confirms your server routes images through
+Folio. Also fixes the 1.55.0 scanner hardening accidentally blocking Folio's
+own preflight test files, which stopped the PDF and video preflights working.
+
+= 1.57.0 =
+
+Completes the roadmap's first phase. Adds a redirect tester that shows what an
+old address actually does before you rely on it, backup and restore for your
+redirect rules, a read-only view of the old document addresses Folio already
+redirects after a rename, and captions for audio and video — put a .vtt file
+next to a media file over FTP and a captions track appears, with nothing to
+configure.
+
+= 1.56.0 =
+
+Adds a Download a copy button to the Catalogue screen, saving everything you
+have typed — titles, descriptions, categories, tags, dates and access settings
+— as a single file. It is the only part of Folio that cannot be rebuilt from
+your files, and previously could only be backed up over FTP. Restore it by
+putting the same file back; nothing needs converting.
+
+= 1.55.1 =
+
+Documentation only: refreshes the index.php size figure in the roadmap's
+Known issues, which had gone stale.
+
+= 1.55.0 =
+
+Hardens the site against automated vulnerability scans. Blocks dotfiles like
+.env and .git/config, editor leftovers like index.php.bak (which would serve
+your source code as plain text), version-control folders, and directory
+listing. Stops PHP announcing its exact version to scanners. Tested against a
+real Apache; certificate renewal is unaffected.
+
+= 1.54.1 =
+
+Stops automated vulnerability scans from loading Folio and filling the 404
+Monitor. Requests for .php files and other applications' admin pages are now
+refused by the webserver before PHP starts, and are no longer recorded. Adds a
+button to remove scan entries already logged, keeping genuine broken links.
+
+= 1.54.0 =
+
+Adds the publisher identity fields to Settings — occupation, biography, other
+names, nationality, education, affiliations and a related site. These feed
+identity.json and llms.txt and previously required hand-editing config.php.
+Also a full audit of every admin screen and setting, and documentation
+corrections where settings were described as config-only.
+
+= 1.53.2 =
+
+Fixes the Search title and Search description fields on the Pages screen,
+which ran together as inline text instead of stacking like every other field,
+and stops field help text being rendered in shouty uppercase.
+
+= 1.53.1 =
+
+Adds the missing publisher email field to Settings — the contact form told you
+to set it there, but there was no field. Also fixes a button that turned dark
+and hard to read when hovered.
+
+= 1.53.0 =
+
+robots.txt is rewritten: it now explains itself, names the known AI crawlers,
+and actually enforces your "no training data" setting by refusing each
+training crawler by name. Crawlers that fetch a page live to answer someone's
+question, or index for AI search, stay allowed. Adds an optional crawl-delay
+setting for small hosts.
+
+= 1.52.2 =
+
+Security fix: a restricted or hidden video's hover preview and thumbnail could
+be fetched by anyone who guessed the address. Both now check the video's access
+setting. Also adds a Stored caches section to Diagnostics showing what each
+cache holds and how much space it uses, with a button to clear any of them —
+previously the only way to remove stale previews was over FTP.
 
 = 1.52.1 =
 

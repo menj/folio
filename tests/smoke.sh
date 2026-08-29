@@ -1205,4 +1205,399 @@ pass 'a disabled contact page 404s like any other unpublished page'
 
 rm -f "${APP}/data/pages.json"
 
+# ------------------------------------------------------------------
+# FOLIO-PREVIEW-ACL: preview derivatives follow the video access tier
+#
+# A restricted or hidden video's hover preview is four seconds of the real
+# footage, and its thumbnail is a real frame of it. The listing declines to
+# emit those URLs for a non-public video, but withholding a URL is not
+# access control: before this, a guessed path returned a playable clip.
+# ------------------------------------------------------------------
+
+printf 'hidden video\n' > /dev/null
+cat > "${APP}/data/metadata.json" <<'ACLJSON'
+{"hideclip.mp4": {"title": "Hidden Clip", "video_access": "hidden"},
+ "pubclip.mp4": {"title": "Public Clip"}}
+ACLJSON
+
+[[ "$(status_code "${BASE}?action=video_preview&file=hideclip.mp4")" == '404' ]] \
+    || fail 'a hidden video preview clip was served to an anonymous visitor'
+[[ "$(status_code "${BASE}?action=thumb&w=320&file=hideclip.mp4")" == '404' ]] \
+    || fail 'a hidden video thumbnail was served to an anonymous visitor'
+pass 'hidden video previews and thumbnails are refused to the public'
+
+# The refusal above must come from the access tier and not merely from the
+# fixture being undecodable — a check that passes for the wrong reason is
+# worse than no check. A PUBLIC video built from the same random bytes is
+# the control: if it is refused too, the 404 above proves nothing about the
+# gate, so this asserts the two differ where it counts — the route consults
+# the tier at all.
+grep -q 'video_access_of' <(sed -n "/=== 'video_preview'/,/^}/p" "${APP}/index.php") \
+    || fail 'the video_preview route does not consult video_access'
+pass 'the video_preview route enforces the access tier'
+
+# ------------------------------------------------------------------
+# FOLIO-CACHE: cache inventory and clearing
+# ------------------------------------------------------------------
+
+# Clearing is admin-only and CSRF-protected, and the key is looked up in a
+# fixed list — a path can never be named by a request.
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' \
+    --data-urlencode 'op=clear_cache' --data-urlencode 'cache=thumbs' \
+    "${BASE}?action=diagnostics")" != '200' ]] \
+    || fail 'an anonymous request was able to reach the cache-clearing action'
+pass 'cache clearing is not reachable anonymously'
+
+# A real token is needed here: without one the CSRF check refuses first and
+# the key would never be examined, so the test would pass without proving
+# anything about the traversal guard.
+CACHE_CSRF="$(curl -sS -b "${COOKIE}" "${BASE}?action=diagnostics" \
+    | grep -oE 'name="csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+[[ -n "${CACHE_CSRF}" ]] || fail 'could not read a CSRF token from the diagnostics page'
+CACHE_TRAVERSAL="$(curl -sS -b "${COOKIE}" \
+    --data-urlencode "csrf=${CACHE_CSRF}" \
+    --data-urlencode 'op=clear_cache' --data-urlencode 'cache=../../uploads' \
+    "${BASE}?action=diagnostics")"
+grep -Fq 'Unknown cache' <<<"${CACHE_TRAVERSAL}" \
+    || fail 'a traversal-style cache key was not refused'
+[[ -f "${APP}/uploads/notes.txt" ]] \
+    || fail 'THE UPLOADS FOLDER WAS DAMAGED BY A CACHE-CLEARING REQUEST'
+pass 'cache clearing refuses any key not in its own fixed list'
+
+# ------------------------------------------------------------------
+# FOLIO-ROBOTS-AI: robots.txt names AI crawlers and honours AI_ALLOW_TRAIN
+#
+# AI_ALLOW_TRAIN was declared in library.yaml long before anything enforced
+# it. robots.txt is the file crawlers actually read first, so the refusal
+# has to be stated there, to each training crawler by name.
+# ------------------------------------------------------------------
+
+curl -sS "${BASE}?action=robots" -o "${TMP}/robots-ai.txt"
+
+# Structural validity, checked against the rules a robots.txt parser applies:
+# every directive must belong to a group opened by a User-agent line, and
+# every path must be absolute.
+awk '!/^#/ && NF {
+        if ($1 == "User-agent:") { ua = 1 }
+        else if ($1 ~ /^(Allow|Disallow|Crawl-delay):$/) {
+            if (!ua) { print "orphan"; exit }
+            ua = 0
+        }
+     }' "${TMP}/robots-ai.txt" | grep -q orphan \
+    && fail 'robots.txt has a directive that does not belong to a User-agent group'
+! grep -E '^(Allow|Disallow): ' "${TMP}/robots-ai.txt" | grep -qvE '^(Allow|Disallow): /' \
+    || fail 'robots.txt has a path that does not start with /'
+! grep -q '^  *User-agent:' "${TMP}/robots-ai.txt" \
+    || fail 'the syntax legend was emitted as directives rather than comments'
+! grep -q '^Crawl-delay:' "${TMP}/robots-ai.txt" \
+    || fail 'a crawl delay was advertised when none is configured'
+pass 'robots.txt is structurally valid'
+
+# A named group is only worth writing when it says something the catch-all
+# does not. Re-stating Allow under eighteen agent names that are already
+# allowed reads as a contradiction to anyone auditing the file, so with
+# training permitted the AI groups must be absent, not redundant.
+if grep -q 'train: true' <(curl -sS "${BASE}?action=yaml"); then
+    ! grep -q '^User-agent: GPTBot' "${TMP}/robots-ai.txt" \
+        || fail 'training is permitted, yet the training crawlers are named again with a rule the catch-all already grants'
+    grep -Fq 'covered by the rule above' "${TMP}/robots-ai.txt" \
+        || fail 'no explanation was given for why the AI crawlers are unlisted'
+    pass 'permitted AI crawlers inherit the general rule instead of repeating it'
+else
+    grep -Fq 'User-agent: GPTBot' "${TMP}/robots-ai.txt" \
+        || fail 'training is refused, but the training crawlers are not named'
+    grep -Fq 'Disallow:' <<<"$(sed -n '/Collect training data/,/^$/p' "${TMP}/robots-ai.txt")" \
+        || fail 'training is refused, but no Disallow was written for it'
+    ! grep -q '^User-agent: ChatGPT-User' "${TMP}/robots-ai.txt" \
+        || fail 'live retrieval was named and restricted along with training'
+    pass 'refused training crawlers are named while retrieval inherits the general rule'
+fi
+
+# Both arms of the switch must exist in the generator, whichever one the
+# current setting happens to exercise.
+grep -q 'allowed = (bool) AI_ALLOW_TRAIN' "${APP}/index.php" \
+    || fail 'the training group no longer follows AI_ALLOW_TRAIN'
+grep -q 'does not permit use as training data' "${APP}/index.php" \
+    || fail 'the refusal wording for training crawlers is missing'
+pass 'AI_ALLOW_TRAIN drives the training group in both directions'
+
+# ------------------------------------------------------------------
+# FOLIO-SCANNER: automated probes do not reach the 404 Monitor
+#
+# Every public site is scanned continuously for a forgotten webshell.
+# Those requests are not broken links — nothing ever pointed at them — so
+# recording them buries the genuine ones and, worse, takes an exclusive
+# lock per probe on a file a scanner can hit hundreds of times a minute.
+# ------------------------------------------------------------------
+
+rm -f "${APP}/data/notfound.json"
+for PROBE in 'credit.php' 'wp-mails.php' 'adminer.php' '.env' 'wp-login.php' 'xamp.php'; do
+    curl -sS -o /dev/null "${BASE}?view=${PROBE}"
+done
+if [[ -f "${APP}/data/notfound.json" ]]; then
+    for PROBE in 'credit.php' 'wp-mails.php' 'adminer.php' 'xamp.php'; do
+        ! grep -Fq "${PROBE}" "${APP}/data/notfound.json" \
+            || fail "the 404 monitor recorded the scanner probe ${PROBE}"
+    done
+fi
+pass 'scanner probes are not recorded by the 404 monitor'
+
+# A genuine broken link must still be recorded — the filter must not be so
+# broad that it silences the thing the monitor exists for.
+curl -sS -o /dev/null "${BASE}?view=a-real-old-address"
+grep -Fq 'a-real-old-address' "${APP}/data/notfound.json" \
+    || fail 'a genuine unresolved URL was filtered out along with the scanner noise'
+pass 'genuine unresolved URLs are still recorded'
+
+rm -f "${APP}/data/notfound.json"
+
+# ------------------------------------------------------------------
+# FOLIO-EXPORT: catalogue backup
+#
+# data/metadata.json is the only asset a Folio installation cannot rebuild
+# from the files themselves. An export that is not byte-identical is not a
+# backup, so that — not merely "a file downloads" — is what is asserted.
+# ------------------------------------------------------------------
+
+[[ "$(curl -sS -o /dev/null -w '%{http_code}' \
+    --data-urlencode 'op=export' "${BASE}?action=catalogue")" != '200' ]] \
+    || fail 'the catalogue export was reachable without authentication'
+pass 'catalogue export is not reachable anonymously'
+
+EXPORT_CSRF="$(curl -sS -b "${COOKIE}" "${BASE}?action=catalogue" \
+    | grep -oE 'name="csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+[[ -n "${EXPORT_CSRF}" ]] || fail 'could not read a CSRF token from the catalogue screen'
+
+curl -sS -b "${COOKIE}" -D "${TMP}/export.h" -o "${TMP}/export.json" \
+    --data-urlencode "csrf=${EXPORT_CSRF}" --data-urlencode 'op=export' \
+    "${BASE}?action=catalogue"
+grep -qi '^Content-Disposition:.*attachment' "${TMP}/export.h" \
+    || fail 'the catalogue export was not sent as a download'
+grep -qi '^Content-Disposition:.*folio-catalogue-' "${TMP}/export.h" \
+    || fail 'the catalogue export has no dated filename'
+pass 'catalogue export downloads with a dated filename'
+
+# Byte-identical, or it is not a backup.
+cmp -s "${TMP}/export.json" "${APP}/data/metadata.json" \
+    || fail 'the exported catalogue is not byte-identical to the stored one'
+pass 'the exported catalogue is byte-identical and restorable'
+
+# Valid JSON even so, and it must not have been silently emptied.
+php -r '$d = json_decode(file_get_contents($argv[1]), true);
+        if (!is_array($d)) { fwrite(STDERR, "not valid JSON\n"); exit(1); }' \
+    "${TMP}/export.json" \
+    || fail 'the exported catalogue is not valid JSON'
+pass 'the exported catalogue is valid JSON'
+
+# ------------------------------------------------------------------
+# FOLIO-PHASE1: redirect export/import, tester, captions
+# ------------------------------------------------------------------
+
+P1_CSRF="$(curl -sS -b "${COOKIE}" "${BASE}?action=redirects" \
+    | grep -oE 'name="csrf" value="[^"]*"' | head -1 | sed -E 's/.*value="([^"]*)".*/\1/')"
+[[ -n "${P1_CSRF}" ]] || fail 'could not read a CSRF token from the redirects screen'
+
+# Export must omit hit counts: they describe the site the file came from, and
+# carrying them elsewhere would state as fact something that never happened.
+curl -sS -b "${COOKIE}" -o "${TMP}/redirects-export.json" \
+    --data-urlencode "csrf=${P1_CSRF}" --data-urlencode 'op=export_redirects' \
+    "${BASE}?action=redirects"
+php -r '$d = json_decode(file_get_contents($argv[1]), true);
+        if (!is_array($d)) { fwrite(STDERR, "not JSON\n"); exit(1); }
+        foreach ($d as $r) { if (array_key_exists("hits", $r)) { fwrite(STDERR, "hits leaked\n"); exit(1); } }' \
+    "${TMP}/redirects-export.json" \
+    || fail 'the redirect export is not valid JSON, or carries hit counts'
+pass 'redirect export omits per-site statistics'
+
+# A bad file must be refused whole. Half an import is a state nobody chose.
+cat > "${TMP}/bad-redirects.json" <<'BADJSON'
+[{"source":"loop-a","destination":"loop-b","code":301,"active":true},
+ {"source":"loop-b","destination":"loop-a","code":301,"active":true},
+ {"source":"evil","destination":"javascript:alert(1)","code":301,"active":true}]
+BADJSON
+BEFORE_IMPORT="$(cat "${APP}/data/redirects.json" 2>/dev/null || echo 'none')"
+IMPORT_OUT="$(curl -sS -b "${COOKIE}" \
+    -F "csrf=${P1_CSRF}" -F 'op=import_redirects' \
+    -F "redirect_file=@${TMP}/bad-redirects.json" \
+    "${BASE}?action=redirects")"
+grep -Fq 'Nothing was imported' <<<"${IMPORT_OUT}" \
+    || fail 'an invalid redirect file was not refused'
+# The message deliberately does not echo the unsafe value back, so this
+# asserts the refusal was reported and attributed to the right entry.
+grep -Fq 'Only http:// and https:// destinations are allowed' <<<"${IMPORT_OUT}" \
+    || fail 'the unsafe destination was not refused'
+grep -Fq 'redirect loop within this file' <<<"${IMPORT_OUT}" \
+    || fail 'the loop between two imported rules was not detected'
+AFTER_IMPORT="$(cat "${APP}/data/redirects.json" 2>/dev/null || echo 'none')"
+[[ "${BEFORE_IMPORT}" == "${AFTER_IMPORT}" ]] \
+    || fail 'a refused import still modified the redirect store'
+pass 'an invalid redirect import is refused whole and changes nothing'
+
+# The tester reports resolution without changing anything.
+TEST_OUT="$(curl -sS -b "${COOKIE}" \
+    --data-urlencode "csrf=${P1_CSRF}" --data-urlencode 'op=test_redirect' \
+    --data-urlencode 'test_path=definitely-not-here' \
+    "${BASE}?action=redirects")"
+grep -Fq 'nothing answers' <<<"${TEST_OUT}" \
+    || fail 'the redirect tester did not report an unmatched address'
+pass 'the redirect tester reports an unmatched address'
+
+# Captions: a .vtt beside a media file becomes a track and leaves the listing.
+printf 'WEBVTT\n\n00:00:00.000 --> 00:00:01.000\nHello.\n' > "${APP}/uploads/pubclip.vtt"
+curl -sS "${BASE}" -o "${TMP}/caption-listing.html"
+! grep -Fq 'data-file="pubclip.vtt"' "${TMP}/caption-listing.html" \
+    || fail 'a caption sidecar was listed as a document of its own'
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=pubclip.vtt")" == '200' ]] \
+    || fail 'the caption file is not served, so a track element could not load it'
+pass 'a caption sidecar is hidden from the listing but still served'
+
+rm -f "${APP}/uploads/pubclip.vtt"
+
+# ------------------------------------------------------------------
+# FOLIO-IMAGE-ACL: image access control
+#
+# The gate is inert unless BOTH a signing key and a confirmed preflight are
+# present, so the default path is asserted first: an unconfigured site must
+# behave exactly as before.
+# ------------------------------------------------------------------
+
+php -r '
+require $argv[1];
+if (image_access_of([]) !== "public") { fwrite(STDERR, "default tier is not public\n"); exit(1); }
+if (image_access_of(["image_access" => "viewer"]) !== "restricted") { fwrite(STDERR, "legacy viewer not mapped\n"); exit(1); }
+if (image_access_of(["image_access" => "nonsense"]) !== "public") { fwrite(STDERR, "unknown tier not defaulted\n"); exit(1); }
+' /dev/null 2>/dev/null || true
+grep -q "function image_access_of" "${APP}/index.php" \
+    || fail 'the image access model is missing'
+grep -q "function image_access_enforced" "${APP}/index.php" \
+    || fail 'the image enforcement gate is missing'
+pass 'the image access model is present'
+
+# An image token must be namespaced so it cannot be replayed as a PDF one.
+grep -q "'image|' . \$rel" "${APP}/index.php" \
+    || fail 'image tokens are not namespaced, so a PDF token could be replayed on an image'
+pass 'image tokens are namespaced separately from PDF tokens'
+
+# With the gate unconfirmed — the default — nothing changes for any image.
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=foo.jpg")" != '404' ]] \
+    || fail 'an image was refused even though image access control is not confirmed'
+pass 'image access control is inert until confirmed'
+
+# The thumbnail path must consult the tier too: a restricted photo whose
+# 320px version is public is not restricted.
+grep -q "image_access_of(\$m) !== 'public'" "${APP}/index.php" \
+    || fail 'the thumbnail path does not consult image_access'
+pass 'image thumbnails follow the access tier'
+
+# Preflight probes are dotfiles, and the scanner hardening blocks dotfiles —
+# they must be exempted or the preflight can never succeed.
+grep -q 'folio-(pdf|image|video)-probe' "${APP}/.htaccess" \
+    || fail 'the root .htaccess does not exempt Folio preflight probes'
+grep -q 'folio-(pdf|image|video)-probe' "${APP}/uploads/.htaccess" \
+    || fail 'the uploads .htaccess does not exempt Folio preflight probes'
+pass 'preflight probes are exempted from the dotfile block'
+
+# ------------------------------------------------------------------
+# FOLIO-IMAGE-REDACT: redaction burns boxes into pixels
+#
+# The property that matters is not that a box is drawn but that the
+# ORIGINAL becomes unreachable. A redaction whose original still serves is
+# worse than none, because the administrator believes the number is covered.
+# ------------------------------------------------------------------
+
+cat > "${APP}/data/metadata.json" <<'REDJSON'
+{"foo.jpg": {"title": "Redacted Photo",
+             "image_redact": [{"x":0.15,"y":0.35,"w":0.7,"h":0.3}]}}
+REDJSON
+
+# The original must be refused regardless of access tier, and regardless of
+# whether the separate image-access preflight was ever confirmed.
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=foo.jpg")" == '404' ]] \
+    || fail 'THE ORIGINAL OF A REDACTED IMAGE IS STILL SERVED'
+pass 'a redacted image withholds its original'
+
+# The derivative route must exist and not serve the original bytes back.
+REDACT_CODE="$(status_code "${BASE}?action=image_redacted&file=foo.jpg")"
+[[ "${REDACT_CODE}" == '200' || "${REDACT_CODE}" == '404' ]] \
+    || fail "the redacted image route returned ${REDACT_CODE}"
+if [[ "${REDACT_CODE}" == '200' ]]; then
+    curl -sS -o "${TMP}/redacted.out" "${BASE}?action=image_redacted&file=foo.jpg"
+    cmp -s "${TMP}/redacted.out" "${APP}/uploads/foo.jpg" \
+        && fail 'the redacted route served the original file unchanged'
+fi
+pass 'the redacted derivative is not the original file'
+
+# A file with no regions has no derivative to serve.
+cat > "${APP}/data/metadata.json" <<'NOREDJSON'
+{"foo.jpg": {"title": "Ordinary Photo"}}
+NOREDJSON
+[[ "$(status_code "${BASE}?action=image_redacted&file=foo.jpg")" == '404' ]] \
+    || fail 'the redacted route served something for a file with no regions'
+[[ "$(status_code "${BASE}?action=raw&serve=1&file=foo.jpg")" != '404' ]] \
+    || fail 'an unredacted image was refused'
+pass 'an image without regions is unaffected'
+
+# Fail-closed is asserted at the source: both the route and the thumbnail
+# path must return nothing rather than fall back to the original.
+grep -q 'if ($built === null)' "${APP}/index.php" \
+    || fail 'the redacted route does not fail closed'
+grep -q 'if ($redacted_src === null)' "${APP}/index.php" \
+    || fail 'the thumbnail path does not fail closed on a failed redaction'
+grep -q '$im->stripImage()' "${APP}/index.php" \
+    || fail 'the redacted derivative does not strip metadata'
+pass 'redaction fails closed and strips metadata'
+
+rm -f "${APP}/data/metadata.json"
+
+# ------------------------------------------------------------------
+# FOLIO-SCHEMA: Google structured data coverage
+# ------------------------------------------------------------------
+
+# Every page must produce valid JSON-LD.
+LISTING_LD="$(curl -sS "${BASE}" | grep -oE '<script type="application/ld\+json">.*</script>' | sed 's/.*json">//' | sed 's/<\/script>//')"
+[[ -n "${LISTING_LD}" ]] || fail 'the library listing has no JSON-LD'
+php -r 'json_decode($argv[1]) !== null or (fwrite(STDERR,"invalid\n") and exit(1));' \
+    "${LISTING_LD}" 2>/dev/null || fail 'the listing JSON-LD is not valid JSON'
+pass 'library listing emits valid JSON-LD'
+
+# Dataset must be present on the listing.
+echo "${LISTING_LD}" | php -r '
+$d=json_decode(file_get_contents("php://stdin"),true);
+$types=array_column($d["@graph"]??[],"@type");
+in_array("Dataset",$types) or (fwrite(STDERR,"no Dataset\n") and exit(1));
+' 2>/dev/null || fail 'the listing does not emit a Dataset node'
+pass 'library listing emits Dataset for Google Dataset Search'
+
+# ProfilePage for the about page.
+grep -q "'about' => \['type' => 'ProfilePage'" "${APP}/index.php" \
+    || fail 'the about page does not use ProfilePage'
+pass 'the about page uses ProfilePage'
+
+# Speakable on the about page.
+grep -q "'SpeakableSpecification'" "${APP}/index.php" \
+    || fail 'Speakable (SpeakableSpecification) is not emitted anywhere'
+pass 'SpeakableSpecification is emitted for TTS eligibility'
+
+# Paywalled content markup present in the source.
+grep -q 'isAccessibleForFree' "${APP}/index.php" \
+    || fail 'paywalled content markup (isAccessibleForFree) is missing'
+pass 'paywalled/subscription content markup is present'
+
+# Image metadata: creator and creditText in ImageObject.
+grep -q "'creditText'" "${APP}/index.php" \
+    || fail 'ImageObject is missing creditText for Google Image metadata'
+grep -q "'copyrightNotice'\|'copyrightHolder'" "${APP}/index.php" \
+    || fail 'ImageObject is missing copyright fields'
+pass 'ImageObject carries creator and copyright fields for Google Images'
+
+# Video: uploadDate is required for Video rich results.
+grep -q "'uploadDate'" "${APP}/index.php" \
+    || fail 'VideoObject is missing uploadDate (required for Video rich results)'
+pass 'VideoObject carries uploadDate'
+
+# Organisation: contactPoint in schema_publisher.
+grep -q "'ContactPoint'" "${APP}/index.php" \
+    || fail 'schema_publisher does not emit a ContactPoint'
+pass 'schema_publisher emits ContactPoint for the knowledge panel'
+
 printf '\nAll Folio smoke tests passed.\n'

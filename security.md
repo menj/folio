@@ -8,7 +8,7 @@ Folio is a small single-file application shipped as a numbered release. Only
 the most recent release receives security fixes. If you are running an older
 release, upgrade before reporting an issue.
 
-The current supported release is **1.52.1**.
+The current supported release is **1.60.0**.
 
 ## Security controls
 
@@ -255,6 +255,113 @@ identifier. `X-Forwarded-Proto` is honoured only when `TRUST_PROXY_HEADERS`
 is explicitly enabled, which should only be done behind a proxy that
 overwrites that header.
 
+### Image redaction
+
+An image carrying redaction regions is never served to the public in its
+original form. The public link points at `?action=image_redacted`, which
+returns a copy with opaque boxes drawn into the pixels and re-encoded as
+JPEG, so nothing of what was underneath survives in the file.
+
+Withholding the original's URL is not on its own access control, so
+`?action=raw` refuses a redacted image outright for anyone who is not signed
+in — that is the check that holds when someone simply guesses the path.
+Deliberately *not* conditional on `IMAGE_GATE_CONFIRMED`: a redaction is an
+explicit instruction to cover something, and honouring it only when a
+separate preflight happens to have been confirmed would be the wrong default.
+
+Thumbnails are generated from the redacted derivative, never the original. A
+320px thumbnail is small but perfectly legible for a name or a number, so a
+thumbnail built from the source would defeat the whole feature.
+
+Both paths fail closed. If Imagick is missing or the render fails, the route
+and the thumbnail each return nothing rather than falling back to the
+unredacted file — the failure mode of a redaction feature must never be
+"publish the original".
+
+The derivative is stripped of every profile and EXIF block. The metadata of
+the original can describe the very thing the box covers — a location, a name,
+a camera serial — and an embedded EXIF thumbnail is a small copy of the
+unredacted picture. Verified: the derivative carries no EXIF and no embedded
+thumbnail.
+
+An administrator still sees the original, since they drew the boxes and need
+to check the boxes cover what they meant.
+
+### Image access control
+
+Images have the same three tiers as PDFs and video — public, restricted,
+hidden — and, like PDF, this is genuinely enforced rather than
+delisting-only: an image is small enough to serve through Folio without the
+seeking and bandwidth cost that made video's lighter model the right call.
+
+Enforcement requires both a non-empty `FOLIO_URL_SIGNING_KEY` and
+`IMAGE_GATE_CONFIRMED`, set only after the Crawlers screen's preflight proves
+a request for an image actually reaches PHP on this host. Until both hold,
+every image behaves as public and the editor says so beside the setting — a
+restriction that might not be enforced is worse than none, because the
+administrator would believe it held.
+
+A restricted image is delivered through a short-lived signed URL; a hidden one
+is not delivered at all, even with a valid token. Tokens are namespaced with
+an `image|` prefix, so a token minted for a PDF cannot be replayed against an
+image of the same path, and vice versa. Thumbnails follow the tier: a
+restricted photo whose 320px version was public would not be restricted.
+
+Verified against a real Apache: with the gate off nothing changes; with it on,
+a restricted image with no token, a forged token, an expired token, a
+PDF-namespaced token, a hidden image with a valid token, and a thumbnail of a
+gated image all return 404, while a public image, a valid signed token, and an
+admin session all return 200.
+
+Folio's preflight probe files are dotfiles, so they never clutter a folder
+listing — but the scanner hardening blocks dotfiles, which would have left
+every preflight permanently unable to test the thing it exists to test. The
+probes are exempted by name in both `.htaccess` files. `.env`, `.git/config`
+and editor leftovers remain blocked.
+
+### Hardening against automated scans
+
+Every public site is scanned continuously for a forgotten webshell or another
+application's admin panel. The root `.htaccess` refuses these before PHP
+starts, and `lib/redirects.php` declines to record them so the 404 Monitor
+keeps showing genuine broken links rather than attack noise.
+
+Refused at the webserver: any executable extension (`index.php` explicitly
+exempted, since it is the application); dotfiles, with `.env` and `.git/config`
+the ones that matter, as both routinely carry credentials; editor and deploy
+debris (`.bak`, `.old`, `~`, `.swp`), which is worse than it sounds because
+`index.php.bak` is source code served as plain text — the extension no longer
+says PHP, so nothing executes it; database and config extensions; and the
+`.git`, `.svn`, `node_modules`, `.idea` and `.vscode` directories. Directory
+listing is off, so a folder added later cannot hand out an index of itself.
+
+Verified against a real Apache 2.4 rather than by reading the rules:
+`credit.php`, `wp-mails.php`, `adminer.php`, `.env`, `.git/config`,
+`index.php.bak`, `config.php`, `data/notfound.json` and a bare directory all
+returned 403, while the library, `index.php`, an uploaded file, the stylesheet
+and `robots.txt` all still returned 200.
+
+Let's Encrypt is unaffected. `FilesMatch` tests the filename alone, never the
+path, and an ACME challenge token does not begin with a dot, so renewal
+through `/.well-known/acme-challenge/` still works.
+
+`X-Powered-By` is unset, since PHP announcing its exact build tells a scanner
+which exploits to try. The `Server:` header is **not** something `.htaccess`
+can change — that is `ServerTokens`, which Apache reads only from its main
+configuration. Confirmed by testing: the header still reports the version.
+Ask your host for `ServerTokens Prod` if that matters to you; Folio does not
+claim to have closed it.
+
+**On answering scanners with a message.** Technically possible with
+`ErrorDocument`, and measured: an insulting page is actually *smaller* than
+Apache's default 403 body, so it costs nothing in bandwidth. It is still not
+shipped, for a better reason — a scanner is a script that reads a status code
+and moves on. Nothing is on the other end to read the message. What a custom
+body does change is that a distinctive one makes a site fingerprintable:
+identical wording across every Folio install is a signature saying which
+software is running, which is the opposite of what hardening is for. A plain
+refusal tells an attacker nothing.
+
 ### Contact form
 
 The contact page emails a visitor's message to `PUBLISHER_EMAIL`. The
@@ -314,6 +421,37 @@ The administrator's test-email function sends only to the configured
 recipient. It has no destination field, deliberately: an authenticated mailer
 that accepts an arbitrary address is an open relay waiting to be found.
 
+### Preview derivatives follow the access tier
+
+A video's hover preview is roughly four seconds of the actual footage and its
+thumbnail is a real frame of it, so both are as revealing as the video. Until
+1.52.2 neither `?action=video_preview` nor `?action=thumb` consulted
+`video_access` at all: the listing declined to *emit* those URLs for a
+restricted or hidden video unless an admin was looking, but withholding a URL
+is not access control, and a guessed path returned a playable clip to anyone.
+
+Both routes now check the tier, refusing a non-public video's preview and
+thumbnail to anyone who is not signed in. An admin, who already watches the
+video itself at any tier, is unaffected. Note that this is enforced regardless
+of the opt-in webserver guard: video's delisting-only default still means the
+public is not meant to see these frames, and a URL that returns one anyway is
+a leak rather than a delisting.
+
+The path obscuring described below remains useful but was never a substitute
+for this: it hides the address in the page's HTML, which does nothing about an
+address someone guesses.
+
+### Cache clearing
+
+`data/` holds several disposable caches. Clearing one is a POST behind the
+same admin authentication and CSRF check as every other write. The action
+takes a *key* into a fixed list (`folio_caches()`) and never a path, so no
+request can name a directory of its own; an unknown key is refused rather than
+interpreted. The resolved directory is additionally checked to be genuinely
+inside `data/` before anything is removed, which a symlink could otherwise
+arrange, and symlinks encountered during the walk are unlinked rather than
+followed.
+
 ### Hover-preview path obscuring
 
 A restricted or hidden video's hover-preview thumbnail and moving clip are
@@ -344,7 +482,7 @@ the right file).
 Not fixed by this: the admin's own "Preview" button still links to the
 file's bare direct URL, because it points at a file Apache serves directly,
 with no PHP route in the path to decode an obscured reference against.
-Tracked in `docs/upgrading.md`'s roadmap, Phase 3.
+Tracked in `docs/upgrading.md`'s roadmap, under Known issues.
 
 ### Video access control
 

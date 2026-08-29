@@ -2273,6 +2273,16 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     margin-bottom: 0.25rem;
 }
 .page-field > span em { text-transform: none; letter-spacing: 0; font-style: italic; }
+/* A field note is a direct child span too, so it matched the label rule above
+   and came out uppercase and letter-spaced — help text shouting at the reader
+   in the same voice as the label it explains. It keeps the ordinary
+   .field-note appearance instead: sentence case, normal spacing. */
+.page-field > span.field-note {
+    text-transform: none;
+    letter-spacing: normal;
+    font-size: 0.78rem;
+    margin: 0.25rem 0 0;
+}
 .page-field input,
 .page-field textarea {
     width: 100%;
@@ -2858,7 +2868,15 @@ th[aria-sort="descending"] .col-sort { color: var(--accent); }
     transform: translateY(0);
     box-shadow: var(--shadow);
 }
-.btn-ghost:hover {
+/* A ghost button keeps its transparent background on hover. Without this it
+   inherits the solid button's `background: var(--ink)` from earlier in the
+   sheet, putting near-black behind accent-coloured text — dark on dark, and
+   the one place in the interface where a hover made something harder to read
+   rather than easier. The accent tint is carried by a faint wash instead,
+   which reads on both light and dark schemes. */
+.btn-ghost:hover,
+.btn-small.btn-ghost:hover {
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
     border-color: var(--accent);
     color: var(--accent);
 }

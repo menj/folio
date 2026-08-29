@@ -92,6 +92,21 @@ Header always set Content-Security-Policy "default-src 'none'; style-src 'unsafe
 
 # Any format outside Folio's explicit inline allowlist is a download. This
 # includes HTML, XML, MHTML, and future unknown formats.
+# Folio's preflight probes live here so they are tested exactly where real
+# files are served from, and are dotfiles so they never clutter a listing.
+# Granted explicitly before the catch-all below, which would otherwise refuse
+# them for not looking like a media file — leaving the preflight unable to
+# test the very thing it exists to test.
+<FilesMatch "(?i)^\.folio-(pdf|image|video)-probe\.">
+    <IfModule mod_authz_core.c>
+        Require all granted
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Allow from all
+    </IfModule>
+</FilesMatch>
+
 <FilesMatch "(?i)^(?!.*\.(?:pdf|png|jpe?g|gif|webp|svg|bmp|txt|md|mp3|m4a|aac|wav|flac|ogg|oga|opus|weba|mp4|m4v|webm|ogv|mov)$).+$">
 Header always set Content-Disposition "attachment"
 Header always set Content-Security-Policy "default-src 'none'; sandbox"

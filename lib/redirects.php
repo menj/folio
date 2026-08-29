@@ -486,10 +486,61 @@ function notfound_update(callable $mutator): bool
  * nothing that identifies a visitor. Best effort throughout: the 404 page
  * renders whether or not this succeeds.
  */
+/**
+ * Whether a path is an automated scanner's probe rather than a real visitor
+ * following a real link.
+ *
+ * Scanners walk every site continuously looking for a forgotten webshell or
+ * an admin panel from some other application. Those requests are not broken
+ * links: nothing ever pointed at them, so no redirect will ever be wanted,
+ * and recording them buries the handful of genuine broken addresses the
+ * monitor exists to surface under hundreds of entries nobody will act on.
+ *
+ * The webserver refuses most of these before PHP starts (see the root
+ * .htaccess), so this is the second line: it keeps the monitor honest on a
+ * host where AllowOverride is off and those rules never load.
+ */
+function notfound_is_scanner_probe(string $path): bool
+{
+    $lower = strtolower($path);
+
+    // An executable extension. Folio serves no .php a visitor should ever
+    // request except index.php, so anything else asking for one is probing.
+    if (preg_match('/\.(phtml|phar|php[0-9]?|cgi|pl|py|sh|shtml|fcgi|asp|aspx|jsp|env|bak|old|sql|ini|conf|yml|yaml|git)$/i', $lower)) {
+        return true;
+    }
+    // Well-known paths belonging to other applications. Folio is not
+    // WordPress, and a request for its login page is never a broken link.
+    static $prefixes = [
+        'wp-', 'wordpress/', 'xmlrpc', 'admin/', 'administrator/', 'phpmyadmin',
+        'pma/', 'cpanel', 'webmail', 'autodiscover', 'owa/', 'vendor/',
+        '.git', '.env', '.aws', '.well-known/acme', 'cgi-bin/', 'shell',
+        'backup', 'wallet.dat', 'config.', 'telescope/', 'actuator',
+    ];
+    foreach ($prefixes as $p) {
+        if (strpos($lower, $p) === 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Note one unresolved URL. Counts only — no IP address, no full user agent,
+ * nothing that identifies a visitor. Best effort throughout: the 404 page
+ * renders whether or not this succeeds.
+ */
 function notfound_record(string $requested_path): void
 {
     $normalised = redirect_normalise_source($requested_path);
     if ($normalised === '') {
+        return;
+    }
+    // Scanner traffic is dropped before the lock is taken, not after: the
+    // expensive part of recording is the exclusive write, and a scanner
+    // firing hundreds of requests a minute would otherwise serialise
+    // hundreds of locked rewrites of this file for entries nobody wants.
+    if (notfound_is_scanner_probe($normalised)) {
         return;
     }
     // Never record a path that an active rule already answers: the monitor
@@ -604,4 +655,242 @@ function redirect_warnings(string $source, string $dest, ?string $ignore_id = nu
     }
 
     return $warnings;
+}
+
+/* ------------------------------------------------------------------ */
+/* Import and export                                                   */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The rules as a portable file: source, destination, code, active state,
+ * query policy, and note.
+ *
+ * Hit counts and timestamps are deliberately left out. They describe what
+ * happened on the site the file came from, and carrying them into another
+ * install — or back into this one after a rebuild — would state as fact
+ * something that never happened there. The rules are the portable part; the
+ * statistics are not.
+ */
+function redirects_export(): string
+{
+    $out = [];
+    foreach (redirects_all() as $r) {
+        $out[] = [
+            'source'      => $r['source'],
+            'destination' => $r['destination'],
+            'code'        => (int) $r['code'],
+            'active'      => !empty($r['active']),
+            'query'       => $r['query'] ?? 'preserve',
+            'note'        => (string) ($r['note'] ?? ''),
+        ];
+    }
+    $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return is_string($json) ? $json . "\n" : "[]\n";
+}
+
+/**
+ * Parse and check an uploaded rule file without writing anything.
+ *
+ * Returns [rules, errors]. A non-empty errors list means nothing should be
+ * written: a partly-applied import would leave the site in a state the
+ * administrator never chose and cannot easily reconstruct, which is worse
+ * than refusing the whole file and saying why.
+ *
+ * Every rule is checked against the same validation the admin form uses, and
+ * additionally against the others in the same file — an import that is
+ * internally consistent can still contain a loop between two of its own
+ * entries, which no per-rule check would catch.
+ */
+function redirects_import_check(string $raw, array &$errors): array
+{
+    $errors = [];
+    $data = json_decode($raw, true);
+    if (!is_array($data)) {
+        $errors[] = 'That file is not valid JSON.';
+        return [];
+    }
+    if (!$data) {
+        $errors[] = 'That file contains no redirects.';
+        return [];
+    }
+
+    $seen = [];
+    $rules = [];
+    foreach ($data as $i => $row) {
+        $n = $i + 1;
+        if (!is_array($row)) {
+            $errors[] = "Entry {$n} is not a redirect.";
+            continue;
+        }
+        $source = redirect_normalise_source((string) ($row['source'] ?? ''));
+        if ($source === '') {
+            $errors[] = "Entry {$n}: the source path is missing or not valid.";
+            continue;
+        }
+        $derr = null;
+        $dest = redirect_validate_destination((string) ($row['destination'] ?? ''), $derr);
+        if ($dest === '') {
+            $errors[] = "Entry {$n} ({$source}): " . ($derr ?? 'the destination is not valid.');
+            continue;
+        }
+        if (isset($seen[$source])) {
+            $errors[] = "Entry {$n}: two rules in this file both redirect {$source}.";
+            continue;
+        }
+        if (!redirect_destination_is_external($dest) && $dest === $source) {
+            $errors[] = "Entry {$n} ({$source}): a redirect cannot point at itself.";
+            continue;
+        }
+        $seen[$source] = $dest;
+
+        $code = (int) ($row['code'] ?? 301);
+        if ($code !== 301 && $code !== 302) {
+            $errors[] = "Entry {$n} ({$source}): the type must be 301 or 302.";
+            continue;
+        }
+        $rules[] = [
+            'source'      => $source,
+            'destination' => $dest,
+            'code'        => $code,
+            'active'      => !empty($row['active']),
+            'query'       => (($row['query'] ?? 'preserve') === 'discard') ? 'discard' : 'preserve',
+            'note'        => str_replace(["\r", "\n"], ' ', (string) ($row['note'] ?? '')),
+        ];
+    }
+
+    // Cycles among the file's own entries. Checked after the whole set is
+    // known, because a loop is a property of the collection rather than of
+    // any single rule in it.
+    foreach ($seen as $src => $dst) {
+        $cursor = $dst;
+        $steps = 0;
+        while (isset($seen[$cursor]) && $steps++ < 32) {
+            if ($cursor === $src) {
+                $errors[] = "The rule for {$src} is part of a redirect loop within this file.";
+                break;
+            }
+            $cursor = $seen[$cursor];
+        }
+    }
+
+    return $rules;
+}
+
+/**
+ * Replace the rule set with an imported one, atomically.
+ *
+ * Existing hit counts are carried across for any source that survives the
+ * import, so re-importing an edited export does not silently reset the
+ * statistics of rules that did not change.
+ */
+function redirects_import_apply(array $rules): bool
+{
+    $result = redirects_update(static function (array $current) use ($rules): array {
+        $by_source = [];
+        foreach ($current as $r) {
+            $by_source[$r['source']] = $r;
+        }
+        $now = time();
+        $next = [];
+        foreach ($rules as $r) {
+            $old = $by_source[$r['source']] ?? null;
+            $id = $old['id'] ?? bin2hex(random_bytes(8));
+            $next[$id] = $r + [
+                'id'        => $id,
+                'created'   => $old['created'] ?? $now,
+                'modified'  => $now,
+                'hits'      => (int) ($old['hits'] ?? 0),
+                'first_hit' => (int) ($old['first_hit'] ?? 0),
+                'last_hit'  => (int) ($old['last_hit'] ?? 0),
+            ];
+        }
+        return $next;
+    });
+    return $result !== false;
+}
+
+/* ------------------------------------------------------------------ */
+/* Tester                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Report what a given address would actually do, without following it.
+ *
+ * Deliberately reports the resolution rather than the outcome of a request:
+ * an administrator asking "what happens to this old URL" wants to know which
+ * rule answers it and where it lands, and making a real HTTP call to find
+ * out would add a network round trip, a timeout to handle, and a failure
+ * mode ("the site could not reach itself") that says nothing about the rule.
+ */
+function redirect_explain(string $path): array
+{
+    $normalised = redirect_normalise_source($path);
+    if ($normalised === '') {
+        return ['ok' => false, 'reason' => 'That is not a path this site could receive.'];
+    }
+
+    // A redirect is only ever consulted once everything else has declined,
+    // so the honest answer for a live address is that no rule applies.
+    $live = '';
+    if (resolve_path($normalised) !== null) {
+        $live = 'a file or folder';
+    } elseif (document_resolve_slug($normalised) !== null) {
+        $live = 'a document';
+    } elseif (page_slot_for_slug($normalised) !== null) {
+        $live = 'a standalone page';
+    }
+
+    $row = redirect_match($normalised);
+    if ($row === null) {
+        return [
+            'ok'         => true,
+            'normalised' => $normalised,
+            'status'     => $live !== '' ? 200 : 404,
+            'live'       => $live,
+            'chain'      => [],
+            'final'      => '',
+        ];
+    }
+
+    // Walk the chain the way redirect_dispatch() does, recording each step so
+    // the administrator can see a chain rather than just its endpoint.
+    $chain = [];
+    $seen = [$row['source'] => true];
+    $cursor = $row;
+    for ($i = 0; $i < 8; $i++) {
+        $chain[] = ['source' => $cursor['source'], 'destination' => $cursor['destination'], 'code' => (int) $cursor['code']];
+        if (redirect_destination_is_external($cursor['destination'])) {
+            break;
+        }
+        $next = redirect_match($cursor['destination']);
+        if ($next === null || isset($seen[$next['source']])) {
+            break;
+        }
+        $seen[$next['source']] = true;
+        $cursor = $next;
+    }
+
+    $final = $cursor['destination'];
+    $final_live = '';
+    if (!redirect_destination_is_external($final)) {
+        if (resolve_path($final) !== null) {
+            $final_live = 'a file or folder';
+        } elseif (document_resolve_slug($final) !== null) {
+            $final_live = 'a document';
+        } elseif (page_slot_for_slug($final) !== null) {
+            $final_live = 'a standalone page';
+        }
+    }
+
+    return [
+        'ok'         => true,
+        'normalised' => $normalised,
+        'status'     => (int) $row['code'],
+        'live'       => $live,
+        'chain'      => $chain,
+        'final'      => $final,
+        'final_url'  => redirect_destination_url($final),
+        'final_live' => $final_live,
+        'external'   => redirect_destination_is_external($final),
+    ];
 }

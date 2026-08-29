@@ -131,7 +131,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.52.1');
+define('FOLIO_VERSION', '1.60.0');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -165,6 +165,11 @@ defined('PUBLISHER_AFFILIATION') || define('PUBLISHER_AFFILIATION', '');
 // the one canonical link; this is specifically "also see," named.
 defined('PUBLISHER_RELATED_SITE_URL')   || define('PUBLISHER_RELATED_SITE_URL', '');
 defined('PUBLISHER_RELATED_SITE_LABEL') || define('PUBLISHER_RELATED_SITE_LABEL', '');
+// Optional: a Creative Commons or other licence URL, emitted in ImageObject
+// structured data so Google Images can show a usage-rights badge. E.g.:
+//   define('SITE_LICENSE_URL', 'https://creativecommons.org/licenses/by/4.0/');
+// Absent or empty means no licence claim is published — safer than a wrong one.
+defined('SITE_LICENSE_URL') || define('SITE_LICENSE_URL', '');
 
 /**
  * Contact form. Every one of these has a working default, so a fresh install
@@ -211,6 +216,17 @@ defined('SHOW_ADMIN_LINK')      || define('SHOW_ADMIN_LINK', true);
  * anything. See pdf_access_enforced().
  */
 defined('PDF_GATE_CONFIRMED')   || define('PDF_GATE_CONFIRMED', false);
+/**
+ * Whether image access control has been confirmed enforceable on this host.
+ *
+ * Same shape and same reason as PDF_GATE_CONFIRMED: an image marked
+ * restricted that is still served directly by the webserver would be a
+ * restriction in name only, which is worse than none because the
+ * administrator would believe it held. Set from the Crawlers screen after a
+ * preflight proves a request for an image actually reaches PHP on this
+ * server, never by hand.
+ */
+defined('IMAGE_GATE_CONFIRMED') || define('IMAGE_GATE_CONFIRMED', false);
 /* Deprecated as of 1.38.0. The video access model no longer uses a webserver
    guard or preflight: every video is served directly (fast), and restricted or
    hidden video withholds the link and shows a notice to the public instead of
@@ -237,9 +253,16 @@ defined('VCARD_ENABLED')        || define('VCARD_ENABLED', true);
 defined('FOOTER_LINKS')         || define('FOOTER_LINKS', 'llms,yaml,vcard,json,html,xml');
 defined('AI_ALLOW_QUOTE')       || define('AI_ALLOW_QUOTE', true);
 defined('AI_ALLOW_SUMMARISE')   || define('AI_ALLOW_SUMMARISE', true);
-defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', false);
+defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', true);
 defined('AI_ALLOW_COMMERCIAL')  || define('AI_ALLOW_COMMERCIAL', false);
 defined('AI_POLICY_NOTE')       || define('AI_POLICY_NOTE', '');
+/**
+ * Seconds a crawler is asked to wait between requests, or 0 to say nothing.
+ * Off by default: Google ignores it outright, and asking for a delay that is
+ * honoured only by some crawlers mostly just slows down the ones that behave.
+ * Worth setting on a small or shared host that a crawl noticeably strains.
+ */
+defined('ROBOTS_CRAWL_DELAY')   || define('ROBOTS_CRAWL_DELAY', 0);
 defined('LLMS_INTRO')           || define('LLMS_INTRO', '');
 defined('SITE_INDEXABLE')       || define('SITE_INDEXABLE', true);
 defined('INDEXNOW_KEY')         || define('INDEXNOW_KEY', '');
@@ -1024,6 +1047,7 @@ function url_raw(string $rel): string
  * fallback only ever triggers for paths that do NOT exist on disk.
  */
 define('FOLIO_PDF_PROBE_NAME', '.folio-pdf-probe.pdf');
+define('FOLIO_IMAGE_PROBE_NAME', '.folio-image-probe.png');
 
 /**
  * Reserved dotfile used to test whether the video access-control deny rule
@@ -1093,6 +1117,130 @@ function video_gate_probe_status(): int
  * every install by default, not only ones that have opted into the PDF or
  * video access-control gate.
  */
+/**
+ * The derived caches Folio maintains, as key => [label, absolute path].
+ *
+ * Every one is disposable: deleting it costs rebuild time on the next
+ * request and nothing else. This list is the single place that fact is
+ * written down, so the admin screen, the size report, and the clear action
+ * cannot disagree about which directories are safe to remove.
+ *
+ * Deliberately a fixed allowlist rather than anything derived from a
+ * request: the clear action takes a key from this array and never a path,
+ * so there is no input by which it could be pointed somewhere else.
+ */
+function folio_caches(): array
+{
+    $d = __DIR__ . '/data/';
+    return [
+        'thumbs'   => ['label' => 'Image and video thumbnails',
+                       'path'  => $d . 'thumbs',
+                       'note'  => 'Rebuilt the next time a listing or a document page is viewed.'],
+        'video-previews' => ['label' => 'Video hover previews',
+                       'path'  => $d . 'video-previews',
+                       'note'  => 'Short silent clips shown on hover. Rebuilt on next hover; needs ffmpeg.'],
+        'previews' => ['label' => 'Blurred previews',
+                       'path'  => $d . 'previews',
+                       'note'  => 'Obscured stand-ins for restricted PDFs and video.'],
+        'text'     => ['label' => 'Extracted text',
+                       'path'  => $d . 'text',
+                       'note'  => 'Text pulled from PDFs for search and llms.txt. Re-extracted on demand.'],
+        'ocr'      => ['label' => 'OCR results',
+                       'path'  => $d . 'ocr',
+                       'note'  => 'Text recognised from scanned pages. Expensive to rebuild — clearing means running OCR again.'],
+        'compressed' => ['label' => 'Compressed PDF copies',
+                       'path'  => $d . 'compressed',
+                       'note'  => 'Smaller copies you prepared by hand. Clearing means preparing them again.'],
+        'redacted' => ['label' => 'Redacted derivatives',
+                       'path'  => $d . 'redacted',
+                       'note'  => 'Flattened copies with redaction boxes burned in. Rebuilt on next view.'],
+    ];
+}
+
+/** Total bytes and file count under one directory. Returns [0, 0] for a
+ *  directory that was never created, which is the normal state for a cache
+ *  whose feature has not been used. */
+function folio_cache_usage(string $path): array
+{
+    if (!is_dir($path)) {
+        return [0, 0];
+    }
+    $bytes = 0;
+    $files = 0;
+    $it = @new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($path, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::LEAVES_ONLY
+    );
+    if ($it === false) {
+        return [0, 0];
+    }
+    foreach ($it as $f) {
+        if ($f->isFile()) {
+            $bytes += (int) $f->getSize();
+            $files++;
+        }
+    }
+    return [$bytes, $files];
+}
+
+/**
+ * Delete everything inside one cache directory, leaving the directory
+ * itself. Takes a key from folio_caches(), never a path — an unknown key
+ * is refused rather than interpreted.
+ */
+function folio_cache_clear(string $key): bool
+{
+    $caches = folio_caches();
+    if (!isset($caches[$key])) {
+        return false;
+    }
+    $root = $caches[$key]['path'];
+    if (!is_dir($root)) {
+        return true;   // nothing to clear is success, not failure
+    }
+    $real = realpath($root);
+    $base = realpath(__DIR__ . '/data');
+    // Containment check: refuse if the resolved path is not genuinely inside
+    // data/, which a symlink could otherwise arrange.
+    if ($real === false || $base === false || strpos($real, $base . DIRECTORY_SEPARATOR) !== 0) {
+        return false;
+    }
+    $ok = true;
+    $it = @new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($real, FilesystemIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::CHILD_FIRST
+    );
+    if ($it === false) {
+        return false;
+    }
+    foreach ($it as $f) {
+        // Never follow a symlink out of the cache; remove the link itself.
+        if ($f->isLink()) {
+            $ok = @unlink($f->getPathname()) && $ok;
+        } elseif ($f->isDir()) {
+            $ok = @rmdir($f->getPathname()) && $ok;
+        } else {
+            $ok = @unlink($f->getPathname()) && $ok;
+        }
+    }
+    return $ok;
+}
+
+/** Bytes as something a person reads, for the admin screen. */
+function folio_bytes_human(int $bytes): string
+{
+    if ($bytes <= 0) {
+        return '0 KB';
+    }
+    if ($bytes < 1048576) {
+        return round($bytes / 1024) . ' KB';
+    }
+    if ($bytes < 1073741824) {
+        return round($bytes / 1048576, 1) . ' MB';
+    }
+    return round($bytes / 1073741824, 2) . ' GB';
+}
+
 function video_obscure_key(): string
 {
     static $key = null;
@@ -1162,6 +1310,29 @@ function video_unobscure_path(string $token): ?string
     $key = hex2bin(video_obscure_key());
     $plain = openssl_decrypt($cipher, 'aes-256-gcm', $key, OPENSSL_RAW_DATA, $iv, $tag);
     return $plain === false ? null : $plain;
+}
+
+/** Absolute path to the image-gate preflight probe file. */
+function image_gate_probe_path(): string
+{
+    return rtrim(BASE_DIR, '/\\') . DIRECTORY_SEPARATOR . FOLIO_IMAGE_PROBE_NAME;
+}
+
+/** Create the probe file if absent. A real, minimal PNG: the routing rule
+ *  matches on extension, but a file that is not a valid image would fail for
+ *  a reason unrelated to what is being tested. */
+function image_gate_ensure_probe_file(): bool
+{
+    $path = image_gate_probe_path();
+    if (is_file($path)) {
+        return true;
+    }
+    if (!is_dir(BASE_DIR) && !@mkdir(BASE_DIR, 0750, true)) {
+        return false;
+    }
+    // 1x1 transparent PNG.
+    $png = base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=');
+    return $png !== false && @file_put_contents($path, $png) !== false;
 }
 
 /** Absolute path to the PDF-gate preflight probe file. */
@@ -1349,6 +1520,63 @@ function video_htaccess_block(bool $on): bool
 
 /** Normalise a stored video_access value, defaulting unknown/missing to public.
  *  Legacy "viewer" is migrated to "restricted" (the renamed tier). */
+/**
+ * An image's access tier: public, restricted, or hidden.
+ *
+ * Same three tiers and same normalisation as pdf_access and video_access,
+ * including the legacy "viewer" spelling, so a record written by any of the
+ * three is read the same way and an administrator learns one model rather
+ * than three.
+ */
+function image_access_of(array $m): string
+{
+    $v = (string) ($m['image_access'] ?? 'public');
+    if ($v === 'viewer') {
+        $v = 'restricted';
+    }
+    return in_array($v, ['public', 'restricted', 'hidden'], true) ? $v : 'public';
+}
+
+/**
+ * Whether a non-public image_access can actually be enforced right now.
+ *
+ * Both halves must hold, exactly as for PDF: a signing key, so a restricted
+ * image's URL cannot be forged, and a confirmed preflight, so Folio knows
+ * requests for an image genuinely reach PHP on this host rather than being
+ * served straight off disk by the webserver. Without both, every image
+ * behaves as public — and says so in Diagnostics, rather than quietly
+ * pretending the setting is in force.
+ */
+function image_access_enforced(): bool
+{
+    return FOLIO_URL_SIGNING_KEY !== '' && !empty(IMAGE_GATE_CONFIRMED);
+}
+
+/** HMAC for a short-lived signed image URL. Namespaced with its own prefix so
+ *  an image token can never be replayed as a PDF or video one for the same
+ *  path, and vice versa. */
+function image_sign(string $rel, int $expires): string
+{
+    return hash_hmac('sha256', 'image|' . $rel . '|' . $expires, FOLIO_URL_SIGNING_KEY);
+}
+
+/** A signed, time-limited URL through ?action=raw for a restricted image. */
+function image_signed_url(string $rel, int $ttl = 900): string
+{
+    $expires = time() + $ttl;
+    return BASE_URL . '?action=raw&serve=1&file=' . rawurlencode($rel)
+        . '&expires=' . $expires . '&token=' . image_sign($rel, $expires);
+}
+
+/** Verify a signed image URL's expiry and signature. Timing-safe. */
+function image_signed_url_valid(string $rel, int $expires, string $token): bool
+{
+    if ($expires < time()) {
+        return false;
+    }
+    return hash_equals(image_sign($rel, $expires), $token);
+}
+
 function video_access_of(array $m): string
 {
     $v = (string) ($m['video_access'] ?? 'public');
@@ -1391,6 +1619,34 @@ function url_raw_effective(string $rel, array $m): string
         }
         if ($access === 'restricted') {
             return pdf_signed_url($rel);
+        }
+        return '';
+    }
+
+    if (file_kind($ext) === 'image') {
+        // Redaction first: a redacted image is a different file from the
+        // original, and the public must never be offered the original's URL
+        // regardless of what tier it carries. An admin still gets the
+        // original, since they drew the boxes and need to see what is under
+        // them; that is the same rule the PDF redaction path applies.
+        if (image_redact_is_on($m) && !$admin) {
+            return BASE_URL . '?action=image_redacted&file=' . rawurlencode($rel);
+        }
+        // Mirrors the PDF branch above rather than video's: an image is small
+        // enough to stream through PHP without the seeking and bandwidth
+        // concerns that made video's delisting-only default the right call,
+        // so a restricted image can be genuinely gated rather than merely
+        // unlisted. Public images stay a direct static URL, which is what
+        // keeps ordinary galleries fast and cacheable.
+        if ($admin || !image_access_enforced()) {
+            return url_raw($rel);
+        }
+        $iaccess = image_access_of($m);
+        if ($iaccess === 'public') {
+            return url_raw($rel);
+        }
+        if ($iaccess === 'restricted') {
+            return image_signed_url($rel);
         }
         return '';
     }
@@ -1547,24 +1803,166 @@ function url_robots(): string
  * including (especially) while non-indexable, when it is the thing saying
  * "Disallow: /" rather than nothing at all.
  */
+/**
+ * The AI crawler user agents Folio knows about, grouped by what they are for.
+ *
+ * Grouped by purpose rather than by company because that is what an
+ * administrator is actually deciding: whether the library may be used as
+ * training data is a different question from whether an assistant may fetch
+ * a page to answer someone's question about it, and the same company often
+ * operates one of each under different names. AI_ALLOW_TRAIN governs the
+ * first group only.
+ *
+ * Each agent is controlled independently by its operator: allowing one never
+ * implies the others, which is why every one is listed by name rather than
+ * assumed to follow a company-wide rule.
+ */
+function ai_crawlers(): array
+{
+    return [
+        'training' => [
+            'label' => 'Collect training data',
+            'agents' => [
+                'GPTBot'               => 'OpenAI',
+                'ClaudeBot'            => 'Anthropic',
+                'Google-Extended'      => 'Google — Gemini and Vertex AI',
+                'CCBot'                => 'Common Crawl — feeds many training sets',
+                'Bytespider'           => 'ByteDance',
+                'meta-externalagent'   => 'Meta',
+                'Applebot-Extended'    => 'Apple Intelligence',
+                'Amazonbot'            => 'Amazon',
+                'cohere-ai'            => 'Cohere',
+                'Diffbot'              => 'Diffbot — web data extraction',
+                'omgili'               => 'Omgili — news aggregation',
+            ],
+        ],
+        'assistant' => [
+            'label' => 'Fetch a page live, to answer a question about it',
+            'agents' => [
+                'ChatGPT-User'     => 'OpenAI — ChatGPT retrieval',
+                'Claude-User'      => 'Anthropic — Claude retrieval',
+            ],
+        ],
+        'search' => [
+            'label' => 'Index for an AI-powered search product',
+            'agents' => [
+                'OAI-SearchBot'    => 'OpenAI — SearchGPT',
+                'Claude-SearchBot' => 'Anthropic — Claude search',
+                'PerplexityBot'    => 'Perplexity',
+                'YouBot'           => 'You.com',
+                'FacebookBot'      => 'Meta — content previews',
+            ],
+        ],
+    ];
+}
+
 function robots_txt_generate(): string
 {
     $sitemap_url = PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap';
-    $robots  = "User-agent: *\n";
-    $robots .= SITE_INDEXABLE ? "Allow: /\n" : "Disallow: " . parse_url(BASE_URL, PHP_URL_PATH) . "\n";
-    $robots .= "\n";
+    $host = (string) parse_url(BASE_URL, PHP_URL_HOST);
+    $path = (string) parse_url(BASE_URL, PHP_URL_PATH);
+    $path = $path === '' ? '/' : $path;
+
+    $r  = "# robots.txt for " . ($host !== '' ? $host : SITE_NAME) . "\n";
+    $r .= "# Generated by Folio. Edit the settings in the admin, not this file:\n";
+    $r .= "# it is produced on request and any changes made here are not read.\n";
+    $r .= "#\n";
+    $r .= "# Syntax:\n";
+    $r .= "#   User-agent:   which crawler the following rules apply to\n";
+    $r .= "#   Allow:        a path the crawler may fetch\n";
+    $r .= "#   Disallow:     a path the crawler may not fetch\n";
+    $r .= "#   Crawl-delay:  seconds a crawler is asked to wait between requests\n";
+    $r .= "#   Sitemap:      an XML sitemap listing what is here\n";
+    $r .= "#   #             a comment; ignored by crawlers\n";
+    $r .= "\n";
+
+    // The general rule first: a crawler applies the most specific matching
+    // User-agent group and ignores the rest, so the catch-all belongs at the
+    // top where it reads as the default rather than as an override.
+    $r .= "# Everything else: ordinary search engines, archivers, and\n";
+    $r .= "# anything not named below.\n";
+    $r .= "User-agent: *\n";
+    $r .= SITE_INDEXABLE ? "Allow: /\n" : "Disallow: " . $path . "\n";
+    if (SITE_INDEXABLE && (int) ROBOTS_CRAWL_DELAY > 0) {
+        $r .= 'Crawl-delay: ' . (int) ROBOTS_CRAWL_DELAY . "\n";
+    }
+    $r .= "\n";
+
+    if (SITE_INDEXABLE) {
+        // AI_ALLOW_TRAIN is declared in library.yaml, but a policy nothing
+        // enforces is only a preference — so where the answer differs from
+        // what everything else is already granted, it is stated to each
+        // crawler by name here, in the file crawlers actually read first.
+        // Permitted by default: a public library is published to be read,
+        // and an administrator who wants to withhold it from training can
+        // say so in one click.
+        //
+        // A group is only written out when its rule differs from the
+        // catch-all above. Re-stating "Allow: /" under eighteen names a
+        // crawler has already been granted adds twenty-odd lines that
+        // override the general rule with an identical one — noise that
+        // reads like a contradiction to anyone auditing the file, and one
+        // more place to get out of step. Where the policy is simply "yes to
+        // everyone", a comment records that rather than a rule.
+        $named_groups = '';
+        foreach (ai_crawlers() as $group) {
+            $allowed = true;
+            $why = '';
+            if ($group['label'] === 'Collect training data') {
+                $allowed = (bool) AI_ALLOW_TRAIN;
+                $why = $allowed
+                    ? "# This library permits use as training data.\n"
+                    : "# This library does not permit use as training data.\n";
+            }
+            if ($allowed) {
+                continue;   // already covered by User-agent: * above
+            }
+            $named_groups .= '# ' . $group['label'] . "\n" . $why;
+            // Attribution goes in a comment block above the directives
+            // rather than trailing each line: a trailing comment after a
+            // User-agent value is legal but unevenly supported, and a parser
+            // that mishandles one would mis-parse the agent name itself.
+            foreach ($group['agents'] as $agent => $who) {
+                $named_groups .= '#   ' . str_pad($agent, 22) . $who . "\n";
+            }
+            foreach (array_keys($group['agents']) as $agent) {
+                $named_groups .= 'User-agent: ' . $agent . "\n";
+            }
+            $named_groups .= 'Disallow: ' . $path . "\n\n";
+        }
+        if ($named_groups !== '') {
+            $r .= $named_groups;
+        } else {
+            $r .= "# AI crawlers are covered by the rule above: this library\n"
+                . "# permits training, live retrieval, and AI search alike.\n"
+                . "# Turning off \"allow training\" in the admin adds an explicit\n"
+                . "# refusal here, naming each training crawler.\n\n";
+        }
+        if (trim((string) AI_POLICY_NOTE) !== '') {
+            // One line, comment-safe: a note with a newline in it would
+            // otherwise become an uncommented directive.
+            $r .= '# Note: ' . str_replace(["\r", "\n"], ' ', trim((string) AI_POLICY_NOTE)) . "\n\n";
+        }
+        $r .= "# The full machine-readable terms, including whether quoting\n";
+        $r .= "# and summarising are permitted, are in library.yaml, listed\n";
+        $r .= "# at the end of this file.\n\n";
+    }
+
     if (SITEMAP_ENABLED && SITE_INDEXABLE) {
-        $robots .= 'Sitemap: ' . $sitemap_url . "\n";
+        $r .= "# Sitemaps\n";
+        $r .= 'Sitemap: ' . $sitemap_url . "\n";
         // Announced separately so crawlers find the documents themselves, not
         // only the pages describing them.
-        $robots .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
+        $r .= 'Sitemap: ' . url_sitemap_pdf() . "\n";
         // Likewise for video: content_loc is the raw video file, distinct
         // from the page sitemap's record-page URLs.
-        $robots .= 'Sitemap: ' . url_sitemap_video() . "\n";
+        $r .= 'Sitemap: ' . url_sitemap_video() . "\n";
         // Category archive pages have their own sitemap, kept apart from the
         // main one so the two never duplicate each other.
-        $robots .= 'Sitemap: ' . url_sitemap_categories() . "\n";
+        $r .= 'Sitemap: ' . url_sitemap_categories() . "\n";
+        $r .= "\n";
     }
+
     // The AI-discovery files have no standard robots.txt directive the way
     // sitemaps do, so they are named in comments — universally safe to parse,
     // and they close the reference loop: robots.txt (read first by every
@@ -1572,25 +1970,35 @@ function robots_txt_generate(): string
     if (SITE_INDEXABLE) {
         $related = [];
         if (LLMS_ENABLED) {
-            $related[] = 'llms.txt (reading map for AI): ' . url_llms();
+            $related[] = ['llms.txt', 'a reading map of this library, written for AI', url_llms()];
         }
         if (IDENTITY_ENABLED) {
-            $related[] = 'identity.json (who the site is): ' . url_identity();
+            $related[] = ['identity.json', 'who this site is and who it is about', url_identity()];
         }
         if (VCARD_ENABLED && IDENTITY_ENABLED) {
-            $related[] = 'vcard.vcf (downloadable contact card): ' . url_vcard();
+            $related[] = ['vcard.vcf', 'the publisher as a downloadable contact card', url_vcard()];
         }
         if (YAML_ENABLED) {
-            $related[] = 'library.yaml (full index + AI usage policy): ' . url_yaml();
+            $related[] = ['library.yaml', 'the full index, with machine-readable AI usage terms', url_yaml()];
         }
         if ($related) {
-            $robots .= "\n# AI-discovery files:\n";
-            foreach ($related as $line) {
-                $robots .= '# ' . str_replace(["\r", "\n"], '', $line) . "\n";
+            $r .= "# Machine-readable descriptions of this library.\n";
+            $r .= "# These have no robots.txt directive of their own, so they are\n";
+            $r .= "# named here where a crawler already looks.\n";
+            foreach ($related as [$name, $what, $url]) {
+                $r .= '#   ' . str_pad($name, 14) . str_replace(["\r", "\n"], '', $what) . "\n";
+                $r .= '#   ' . str_repeat(' ', 14) . str_replace(["\r", "\n"], '', $url) . "\n";
             }
+            $r .= "\n";
         }
     }
-    return $robots;
+
+    if (!SITE_INDEXABLE) {
+        $r .= "# This library is currently set to non-indexable, so everything\n";
+        $r .= "# above is disallowed and no sitemaps are advertised.\n";
+    }
+
+    return $r;
 }
 
 /** URL of the YAML library index. */
@@ -2125,6 +2533,9 @@ function video_types(): array
         'episode'     => 'Episode',
         'recording'   => 'Recording',
         'trailer'     => 'Trailer',
+        'event'       => 'Event',
+        'conference'  => 'Conference',
+        'film'        => 'Film',
         'other'       => 'Other',
     ];
 }
@@ -2152,11 +2563,22 @@ function document_types(): array
 /** Conservative Schema.org type per document_type. Not every archival label needs its own class. */
 function document_type_schema_type(string $document_type): string
 {
+    // Schema.org and Google-recognised subtypes, chosen to maximise rich
+    // results eligibility without overstating what the document actually is.
     $map = [
-        'article'  => 'Article',
-        'magazine' => 'Periodical',
-        'report'   => 'Report',
-        'letter'   => 'Message',
+        'article'     => 'Article',
+        'tract'       => 'Article',           // pamphlets, tracts — best fit is Article
+        'booklet'     => 'Article',
+        'magazine'    => 'Periodical',
+        'report'      => 'Report',
+        'letter'      => 'Message',
+        'transcript'  => 'Transcript',
+        'certificate' => 'CertificationRequest', // closest; DigitalDocument is the fallback
+        'form'        => 'GovernmentPermit',
+        'academic'    => 'ScholarlyArticle',
+        'film'        => 'Movie',             // VideoObject pages override to Movie when kind=video
+        'event'       => 'Event',
+        'conference'  => 'Event',
     ];
     return $map[$document_type] ?? 'DigitalDocument';
 }
@@ -2985,6 +3407,18 @@ function thumb_build(string $rel, string $abs, int $width): ?string
         $video_regions = video_redact_sanitise_regions($meta_thumb[$rel]['video_redact'] ?? []);
         $extra = $video_regions ? hash('sha256', json_encode($video_regions)) : '';
     }
+    // The same for a redacted image: a thumbnail generated from the original
+    // would show through the boxes at 320px, which is small but perfectly
+    // legible for a name or a number. The key folds in the regions so
+    // editing them rebuilds rather than serving the previous crop.
+    $image_regions = [];
+    if (file_kind($ext) === 'image') {
+        $meta_thumb_i = meta_load();
+        $image_regions = image_redact_sanitise_regions($meta_thumb_i[$rel]['image_redact'] ?? []);
+        if ($image_regions) {
+            $extra = hash('sha256', 'imgredact|' . json_encode($image_regions));
+        }
+    }
     $cache = thumb_cache_path($rel, $abs, $width, $extra);
     if (is_file($cache)) {
         return $cache;
@@ -3003,6 +3437,16 @@ function thumb_build(string $rel, string $abs, int $width): ?string
     // cache key computed above from it) stays the original video file.
     $source_abs = $abs;
     $frame_tmp = null;
+    if ($image_regions) {
+        // Resize from the redacted derivative, never the original. Fails
+        // closed: no derivative means no thumbnail, rather than a thumbnail
+        // of the unredacted picture.
+        $redacted_src = image_redact_build($abs, $rel, $image_regions);
+        if ($redacted_src === null) {
+            return null;
+        }
+        $source_abs = $redacted_src;
+    }
     if ($is_video) {
         $frame_tmp = video_rasterise_frame($abs, max($width, 640), $video_regions);
         if ($frame_tmp === null) {
@@ -3418,6 +3862,58 @@ function thumb_build_gd(string $abs, string $ext, int $width, string $out): bool
  * protect. The blurred preview in pdf_blur_generate() is the only derivative
  * a restricted PDF gets.
  */
+/**
+ * A caption file sitting beside a media file, or '' if there is none.
+ *
+ * Discovered on disk rather than configured, because that is how the rest of
+ * Folio works: you put `interview.vtt` next to `interview.mp4` over FTP and
+ * it appears, with nothing to enter in the admin. WebVTT only — it is the
+ * one caption format browsers accept in a <track>, so offering SRT would
+ * mean silently converting or silently ignoring it.
+ *
+ * Returns a URL, and only for a file the visitor may already have: captions
+ * follow the media's own access, never their own.
+ */
+/**
+ * If this file is a caption sitting beside a media file, the media file it
+ * belongs to; otherwise ''. A .vtt with no matching media is an ordinary
+ * document and stays listed, since hiding a file whose companion does not
+ * exist would make it unreachable for no reason.
+ */
+function caption_sidecar_owner(string $rel): string
+{
+    if (strtolower((string) pathinfo($rel, PATHINFO_EXTENSION)) !== 'vtt') {
+        return '';
+    }
+    $base = substr($rel, 0, strlen($rel) - 4);
+    foreach (array_merge(folio_video_exts(), folio_audio_exts()) as $mext) {
+        foreach ([$mext, strtoupper($mext)] as $variant) {
+            $abs = resolve_path($base . '.' . $variant);
+            if ($abs !== null && is_file($abs)) {
+                return $base . '.' . $variant;
+            }
+        }
+    }
+    return '';
+}
+
+function caption_url_for(string $rel): string
+{
+    $ext = strtolower((string) pathinfo($rel, PATHINFO_EXTENSION));
+    if (!in_array($ext, array_merge(folio_video_exts(), folio_audio_exts()), true)) {
+        return '';
+    }
+    $base = substr($rel, 0, strlen($rel) - strlen($ext) - 1);
+    foreach (['vtt', 'VTT'] as $cext) {
+        $candidate = $base . '.' . $cext;
+        $abs = resolve_path($candidate);
+        if ($abs !== null && is_file($abs) && !is_excluded(basename($candidate), $candidate)) {
+            return url_raw($candidate);
+        }
+    }
+    return '';
+}
+
 function thumb_permitted(string $rel, array $m = []): bool
 {
     $ext = strtolower(pathinfo($rel, PATHINFO_EXTENSION));
@@ -3427,6 +3923,34 @@ function thumb_permitted(string $rel, array $m = []): bool
             $m = $meta[$rel] ?? [];
         }
         if (pdf_access_of($m) !== 'public') {
+            return false;
+        }
+    }
+    // An image's thumbnail is the image, just smaller — a restricted photo
+    // whose 320px version is public is not restricted. Gated the same way
+    // its full-size delivery is.
+    if (file_kind($ext) === 'image' && image_access_enforced()) {
+        if ($m === []) {
+            $meta = meta_load();
+            $m = $meta[$rel] ?? [];
+        }
+        if (image_access_of($m) !== 'public' && !is_admin()) {
+            return false;
+        }
+    }
+    // A video's thumbnail is a real frame of the footage, so a restricted or
+    // hidden video's frame is withheld from the public for the same reason
+    // its moving preview is. Unlike the PDF branch above this is not gated
+    // on an opt-in setting: video's delisting-only default still means the
+    // public is never meant to see this frame, and a guessable URL that
+    // returns one regardless is not a delisting, it is a leak. An admin,
+    // who already sees the video itself at any tier, is unaffected.
+    if (in_array($ext, folio_video_exts(), true)) {
+        if ($m === []) {
+            $meta = meta_load();
+            $m = $meta[$rel] ?? [];
+        }
+        if (video_access_of($m) !== 'public' && !is_admin()) {
             return false;
         }
     }
@@ -4897,7 +5421,7 @@ define('PAGES_FILE', __DIR__ . '/data/pages.json');
 function page_slots_builtin(): array
 {
     return [
-        'about' => ['type' => 'AboutPage', 'default_title' => 'About', 'builtin' => true],
+        'about' => ['type' => 'ProfilePage', 'default_title' => 'About', 'builtin' => true],
         'faq'   => ['type' => 'FAQPage',   'default_title' => 'FAQ',   'builtin' => true],
         // Built in rather than a custom page because the form itself is code:
         // the slot name is what the handler keys on to know a page carries a
@@ -5793,6 +6317,131 @@ function redact_build(string $abs_pdf, string $rel, array $regions): ?string
     }
 }
 
+/**
+ * Whether an image carries redaction regions.
+ *
+ * Stored under its own key rather than reusing `redact`: a document is one
+ * kind or the other, but keeping them separate means a file that somehow
+ * carries both never has a PDF's page-numbered regions applied to a flat
+ * image, where page 1 would be the only meaningful value anyway.
+ */
+function image_redact_is_on(array $m): bool
+{
+    return !empty($m['image_redact']) && is_array($m['image_redact']);
+}
+
+/**
+ * Normalise stored image redaction regions. Same {x,y,w,h} fractions as the
+ * video hover-preview regions and validated identically, since an image is a
+ * single flat surface with no page to address.
+ */
+function image_redact_sanitise_regions($raw): array
+{
+    return video_redact_sanitise_regions($raw);
+}
+
+/** Where an image's redacted derivative is cached. */
+function image_redact_cache_path(string $rel): string
+{
+    return dirname(SETTINGS_FILE) . DIRECTORY_SEPARATOR . 'redacted'
+        . DIRECTORY_SEPARATOR . 'img-' . sha1($rel) . '.jpg';
+}
+
+/** Whether the redaction pipeline can run here. Imagick only: GD could do
+ *  the drawing, but Imagick is what the PDF path already requires and
+ *  supporting two engines doubles the surface where a box could silently
+ *  fail to land. */
+function image_redact_available(): bool
+{
+    return extension_loaded('imagick') && class_exists('Imagick');
+}
+
+/**
+ * Build (or reuse) a redacted copy of an image: the original rasterised with
+ * opaque boxes burned into the pixels, re-encoded as JPEG so no original
+ * data survives in the file.
+ *
+ * Returns the cache path, or null on any failure. Null means the caller must
+ * serve nothing — never the original. That is the whole safety property: a
+ * redaction that falls back to the unredacted file when the renderer is
+ * missing is worse than no redaction, because the administrator believes the
+ * box is there.
+ */
+function image_redact_build(string $abs, string $rel, array $regions): ?string
+{
+    if (!image_redact_available() || !$regions) {
+        return null;
+    }
+    $cache = image_redact_cache_path($rel);
+    $stamp = $cache . '.stamp';
+    $sig = sha1(json_encode($regions));
+    // Valid only if newer than the source AND built from these exact
+    // regions, so editing a box or replacing the file rebuilds rather than
+    // serving a stale copy with the boxes in the wrong place.
+    if (is_file($cache) && is_file($stamp)
+        && filemtime($cache) >= filemtime($abs)
+        && trim((string) @file_get_contents($stamp)) === $sig) {
+        return $cache;
+    }
+
+    try {
+        $im = new Imagick();
+        image_apply_limits($im);
+        $im->readImage($abs);
+        // Strip any orientation flag by baking it in first: a box is stored
+        // against what the viewer sees, so drawing before the rotation is
+        // applied would place it somewhere else entirely.
+        if (method_exists($im, 'autoOrient')) {
+            $im->autoOrient();
+        }
+        $w = (int) $im->getImageWidth();
+        $h = (int) $im->getImageHeight();
+        if ($w < 1 || $h < 1) {
+            $im->clear();
+            return null;
+        }
+        $draw = new ImagickDraw();
+        $draw->setFillColor(new ImagickPixel('#000000'));
+        foreach ($regions as $r) {
+            $x1 = (int) floor($r['x'] * $w);
+            $y1 = (int) floor($r['y'] * $h);
+            $x2 = (int) ceil(($r['x'] + $r['w']) * $w);
+            $y2 = (int) ceil(($r['y'] + $r['h']) * $h);
+            $draw->rectangle($x1, $y1, $x2, $y2);
+        }
+        $im->drawImage($draw);
+        $draw->destroy();
+
+        // Flatten alpha, drop every profile and EXIF block, and re-encode.
+        // A redacted copy that still carried the original's metadata could
+        // give away the very thing the box covers — a location, a name, a
+        // camera serial — and an embedded thumbnail is a small copy of the
+        // unredacted picture.
+        $im->setImageAlphaChannel(Imagick::ALPHACHANNEL_REMOVE);
+        $im->stripImage();
+        $im->setImageFormat('jpeg');
+        $im->setImageCompressionQuality(85);
+
+        $dir = dirname($cache);
+        if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+            $im->clear();
+            return null;
+        }
+        $ok = $im->writeImage($cache);
+        $im->clear();
+        if (!$ok || !is_file($cache)) {
+            return null;
+        }
+        @chmod($cache, 0640);
+        @file_put_contents($stamp, $sig);
+        @chmod($stamp, 0640);
+        return $cache;
+    } catch (Throwable $e) {
+        error_log('Folio image redact: failed for ' . $rel . ' — ' . $e->getMessage());
+        return null;
+    }
+}
+
 function render_markdown(string $abs): string
 {
     return render_markdown_text((string) file_get_contents($abs));
@@ -5857,6 +6506,8 @@ function schema_type(string $ext): string
         case 'pdf':
             return 'DigitalDocument';
         case 'md':
+        case 'html':
+        case 'htm':
             return 'Article';
         case 'txt':
             return 'TextDigitalDocument';
@@ -5886,11 +6537,78 @@ function schema_publisher(): array
     }
     $node = [
         '@type' => PUBLISHER_TYPE,
-        '@id' => BASE_URL . '#person',
-        'name' => PUBLISHER_NAME,
+        '@id'   => BASE_URL . '#person',
+        'name'  => PUBLISHER_NAME,
     ];
     if (PUBLISHER_URL !== '') {
         $node['url'] = PUBLISHER_URL;
+    }
+    // Bio / description — the person's record, not the library's.
+    $bio = PUBLISHER_BIO !== '' ? PUBLISHER_BIO : SITE_DESCRIPTION;
+    if ($bio !== '') {
+        $node['description'] = $bio;
+    }
+    // Occupation / jobTitle
+    if (PUBLISHER_OCCUPATION !== '') {
+        $node['jobTitle'] = PUBLISHER_OCCUPATION;
+    }
+    // Email and phone — appear in the Organization/Person panel.
+    if (PUBLISHER_EMAIL !== '') {
+        $node['email'] = PUBLISHER_EMAIL;
+    }
+    if (PUBLISHER_PHONE !== '') {
+        $node['telephone'] = PUBLISHER_PHONE;
+    }
+    // Country of residence / headquarters.
+    if (PUBLISHER_COUNTRY !== '') {
+        $node['address'] = [
+            '@type' => 'PostalAddress',
+            'addressCountry' => PUBLISHER_COUNTRY,
+        ];
+    }
+    // sameAs — verified profiles, authority records (ORCID, Wikidata, VIAF).
+    $sameAs = site_sameas_urls();
+    if ($sameAs) {
+        $node['sameAs'] = $sameAs;
+    }
+    // Nationality and alternate names help knowledge-graph disambiguation.
+    if (PUBLISHER_NATIONALITY !== '') {
+        $node['nationality'] = PUBLISHER_NATIONALITY;
+    }
+    $altNames = parse_name_list((string) PUBLISHER_ALT_NAMES);
+    if ($altNames) {
+        $node['alternateName'] = count($altNames) === 1 ? $altNames[0] : $altNames;
+    }
+    // Logo / image — important for the Organisation knowledge panel.
+    // Re-uses the configured site icon, since that is the closest thing
+    // Folio exposes without a separate logo-URL setting.
+    $icon = '';
+    $configured_icon = trim((string) SITE_ICON);
+    if ($configured_icon !== '') {
+        $icon = preg_match('#^https?://#i', $configured_icon)
+            ? $configured_icon
+            : rtrim(BASE_URL, '/') . '/' . ltrim($configured_icon, '/');
+    }
+    if ($icon !== '') {
+        if (PUBLISHER_TYPE === 'Organization') {
+            $node['logo'] = [
+                '@type'  => 'ImageObject',
+                'url'    => $icon,
+                'width'  => ['@type' => 'QuantitativeValue', 'value' => 512, 'unitCode' => 'E37'],
+                'height' => ['@type' => 'QuantitativeValue', 'value' => 512, 'unitCode' => 'E37'],
+            ];
+        } else {
+            $node['image'] = $icon;
+        }
+    }
+    // ContactPoint — enables the contact action in the knowledge panel.
+    if (PUBLISHER_EMAIL !== '') {
+        $node['contactPoint'] = [
+            '@type'           => 'ContactPoint',
+            'contactType'     => 'customer support',
+            'email'           => PUBLISHER_EMAIL,
+            'availableLanguage' => SITE_LANGUAGE,
+        ];
     }
     return $node;
 }
@@ -6046,24 +6764,118 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     if ($type === 'VideoObject') {
         $video_type = (string) ($m['video_type'] ?? '');
         if ($video_type !== '') {
-            $node['genre'] = video_types()[$video_type] ?? $video_type;
+            $node['genre']          = video_types()[$video_type] ?? $video_type;
             $node['additionalType'] = 'Video ' . (video_types()[$video_type] ?? $video_type);
+        }
+        // uploadDate is required by Google for Video rich results. Use the
+        // document date if recorded, otherwise the file's own mtime — both
+        // are honest proxies for when the content was made available.
+        $upload_ts = ($doc_date_meta['iso'] !== '') ? strtotime($doc_date_meta['iso']) : $mtime;
+        if ($upload_ts && $upload_ts > 0) {
+            $node['uploadDate'] = date('c', (int) $upload_ts);
+        }
+        // Thumbnail URL is required for a Video rich result. Use the
+        // server-generated frame thumbnail if one can be produced.
+        $thumb_url = url_thumb($rel, 640, $m);
+        if ($thumb_url !== '') {
+            $node['thumbnailUrl'] = $thumb_url;
+        }
+        // Duration: read from stored metadata if ffprobe populated it, or
+        // from any 'duration' the admin entered. ISO 8601 duration (PT1M30S).
+        $dur_raw = trim((string) ($m['video_duration'] ?? ''));
+        if ($dur_raw !== '') {
+            $node['duration'] = $dur_raw;
+        }
+        // If the video is public, provide an embedUrl — the document page URL
+        // with the video already loaded is the closest equivalent Folio has.
+        if ($show_pdf_url) {
+            $node['embedUrl'] = $view;
+        }
+        // Movie subtype: if the document_type is 'film' or the category
+        // strongly implies it, add the Movie-specific fields Google surfaces.
+        $is_movie = (strtolower($document_type) === 'film'
+            || strtolower($video_type) === 'film'
+            || strtolower((string)($m['category'] ?? '')) === 'films');
+        if ($is_movie) {
+            $node['@type'] = 'Movie';
+            if (trim((string) PUBLISHER_NAME) !== '') {
+                $node['director'] = ['@id' => BASE_URL . '#person'];
+            }
         }
     }
     if ($type === 'ImageObject') {
-        $node['thumbnailUrl'] = $raw;
+        if ($raw !== '') {
+            $node['thumbnailUrl'] = url_thumb($rel, 320, $m);
+            $node['contentUrl']   = $raw;
+        }
         $node['representativeOfPage'] = true;
         $dim = @getimagesize($abs);
         if (is_array($dim)) {
             $node['width']  = ['@type' => 'QuantitativeValue', 'value' => $dim[0], 'unitCode' => 'E37'];
             $node['height'] = ['@type' => 'QuantitativeValue', 'value' => $dim[1], 'unitCode' => 'E37'];
         }
-    }
-    if ($type === 'Article') {
+        // Google Image metadata rich result fields: creator, license, creditText,
+        // copyrightNotice. These require PUBLISHER_NAME/URL to be meaningful; a
+        // site with no publisher set stays silent rather than publishing an empty claim.
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $node['author'] = ['@id' => BASE_URL . '#person'];
+            $node['creator'] = ['@id' => BASE_URL . '#person'];
+            $node['creditText'] = PUBLISHER_NAME;
+            $node['copyrightHolder'] = ['@id' => BASE_URL . '#person'];
+            $node['copyrightYear'] = (int) date('Y');
         }
-        $node['headline'] = $title;
+        // License: published in structured data so Google Images can show a
+        // usage-rights badge. Uses SITE_SAMEAS if it includes a known licence
+        // URL, otherwise falls back to a conservative "all rights reserved"
+        // signal by omitting it — an absent licence is safer than a wrong one.
+        // Operators who want a Creative Commons badge should add the licence URL
+        // to their verified profiles list or set it directly in config.php as
+        // SITE_LICENSE_URL.
+        if (defined('SITE_LICENSE_URL') && SITE_LICENSE_URL !== '') {
+            $node['license'] = SITE_LICENSE_URL;
+            $node['acquireLicensePage'] = PUBLISHER_URL !== '' ? PUBLISHER_URL : BASE_URL;
+        }
+    }
+    if ($type === 'Event') {
+        // Minimal Event: name and url are already set. Add date fields and
+        // location if the document has them.
+        if ($doc_date_meta['iso'] !== '') {
+            $node['startDate'] = $doc_date_meta['iso'];
+        }
+        $node['eventStatus'] = 'https://schema.org/EventScheduled';
+        $node['eventAttendanceMode'] = 'https://schema.org/OfflineEventAttendanceMode';
+        if (trim((string) PUBLISHER_NAME) !== '') {
+            $node['organizer'] = ['@id' => BASE_URL . '#person'];
+        }
+        // Location defaults to the publisher's country if known.
+        if (PUBLISHER_COUNTRY !== '') {
+            $node['location'] = [
+                '@type' => 'Place',
+                'address' => ['@type' => 'PostalAddress', 'addressCountry' => PUBLISHER_COUNTRY],
+            ];
+        }
+    }
+    if ($type === 'Article' || in_array($type, ['NewsArticle','BlogPosting','ScholarlyArticle','TechArticle'], true)) {
+        if (trim((string) PUBLISHER_NAME) !== '') {
+            $node['author']     = ['@id' => BASE_URL . '#person'];
+            $node['publisher']  = ['@id' => BASE_URL . '#person'];
+        }
+        $node['headline']       = $title;
+        $node['articleSection'] = ($m['category'] ?? '') !== '' ? $m['category'] : null;
+        if ($node['articleSection'] === null) {
+            unset($node['articleSection']);
+        }
+        if ($doc_date_meta['iso'] !== '') {
+            $node['datePublished'] = $doc_date_meta['iso'];
+        }
+        $node['dateModified'] = date('c', $mtime);
+        if (($m['desc'] ?? '') !== '') {
+            $node['description'] = $m['desc'];
+        }
+        // Speakable: mark the body text as TTS-eligible for articles.
+        $node['speakable'] = [
+            '@type'       => 'SpeakableSpecification',
+            'cssSelector' => ['.detail-body', '.md-content', 'h1'],
+        ];
     }
     if ($full) {
         $node['mainEntityOfPage'] = ['@id' => $view . '#page'];
@@ -6145,6 +6957,15 @@ function index_all_files(array $mime_map): array
             }
             $rel_e = ltrim($rel . '/' . $entry, '/');
             if (is_excluded($entry, $rel_e)) {
+                continue;
+            }
+            // A caption file belongs to the media file beside it, not to the
+            // library in its own right: listing interview.vtt next to
+            // interview.mp4 puts a document in the archive that nobody
+            // catalogued and nobody wants to read on its own. Hidden from the
+            // listing only — it is still served, because the <track> element
+            // on the media page has to be able to fetch it.
+            if (caption_sidecar_owner($rel_e) !== '') {
                 continue;
             }
             $abs_e = safe_entry_realpath($real_dir . DIRECTORY_SEPARATOR . $entry);
@@ -6836,6 +7657,47 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                     }
                 }
 
+            } elseif ($op === 'confirm_image_gate') {
+                if (FOLIO_URL_SIGNING_KEY === '') {
+                    $error = 'Set FOLIO_URL_SIGNING_KEY in config.php before confirming this.';
+                } elseif (!image_gate_ensure_probe_file()) {
+                    $error = 'Could not create the probe file. Check that ' . e(UPLOADS_DIRNAME) . '/ is writable.';
+                } else {
+                    // Verified independently rather than on the browser's
+                    // word alone, for the same reason as the PDF gate: this
+                    // flag decides whether a restriction is real.
+                    $probe_url = rtrim(BASE_URL, '/') . '/' . rawurlencode(UPLOADS_DIRNAME) . '/' . FOLIO_IMAGE_PROBE_NAME;
+                    ensure_session_started();
+                    $ctx = stream_context_create(['http' => [
+                        'method' => 'GET',
+                        'header' => 'Cookie: ' . FOLIO_COOKIE_NAME . '=' . rawurlencode((string) session_id()) . "\r\n",
+                        'timeout' => 8,
+                        'ignore_errors' => true,
+                    ]]);
+                    $result = @file_get_contents($probe_url, false, $ctx);
+                    $decoded = $result !== false ? json_decode($result, true) : null;
+                    $server_verified = is_array($decoded) && !empty($decoded['ok']) && ($decoded['gate'] ?? '') === 'image';
+                    $client_probe_ok = (string) ($_POST['probe_result'] ?? '') === 'ok';
+
+                    if ($server_verified && settings_store(['IMAGE_GATE_CONFIRMED' => true])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&imagegate=confirmed');
+                        exit;
+                    } elseif ($result === false && $client_probe_ok && settings_store(['IMAGE_GATE_CONFIRMED' => true])) {
+                        header('Location: ' . BASE_URL . '?action=crawlers&saved=1&imagegate=confirmed_unverified');
+                        exit;
+                    } else {
+                        $error = 'Could not confirm that image requests reach the raw action. '
+                            . 'Check that the image rewrite rule in .htaccess is present and mod_rewrite is active.';
+                    }
+                }
+
+            } elseif ($op === 'disable_image_gate') {
+                if (settings_store(['IMAGE_GATE_CONFIRMED' => false])) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
+                    exit;
+                }
+                $error = 'Could not save. Check that data/ is writable.';
+
             } elseif ($op === 'disable_pdf_gate') {
                 if (settings_store(['PDF_GATE_CONFIRMED' => false])) {
                     header('Location: ' . BASE_URL . '?action=crawlers&saved=1');
@@ -7237,6 +8099,49 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
         </div>
     <?php endif; ?>
 
+    <h2 class="detail-title">Image access control</h2>
+    <p class="detail-desc">
+        Set an image's access with <code>image_access</code> in the inline editor, the same three
+        tiers as PDFs and video: <strong>Public</strong> is shown to everyone;
+        <strong>Restricted</strong> keeps the document page listed and indexable but withholds the
+        image itself from the public; <strong>Hidden</strong> also removes the page from the folder
+        listing. A signed-in admin always sees every image, regardless of tier.
+    </p>
+    <p class="field-note">
+        Unlike video, this is enforced rather than delisting-only: an image is small enough to
+        serve through Folio without the seeking and bandwidth cost that made video's lighter model
+        the right call. A restricted image is delivered through a short-lived signed link, and a
+        hidden one is not delivered at all. Public images stay direct static URLs, so an ordinary
+        gallery is exactly as fast as before.
+    </p>
+    <?php if (FOLIO_URL_SIGNING_KEY === ''): ?>
+        <p class="msg msg-bad">
+            <code>FOLIO_URL_SIGNING_KEY</code> is not set in <code>config.php</code>, so image
+            access control cannot be enforced yet. The key offered above under PDF access control
+            covers both &mdash; set it once.
+        </p>
+    <?php elseif (IMAGE_GATE_CONFIRMED): ?>
+        <p class="field-note">Image access control is <strong>confirmed and enforced</strong>.</p>
+        <form method="post" class="stack-form">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="disable_image_gate">
+            <div><button type="submit" class="btn btn-ghost">Disable enforcement</button></div>
+        </form>
+        <p class="field-note">Disabling makes every image behave as Public again, immediately, without touching any file's stored <code>image_access</code> value.</p>
+    <?php else: ?>
+        <p class="field-note">Click <strong>Test image routing</strong> to check, then confirm.</p>
+        <div id="image-gate-preflight" data-probe="<?= e(rtrim(BASE_URL, '/')) ?>/<?= e(rawurlencode(UPLOADS_DIRNAME)) ?>/<?= e(FOLIO_IMAGE_PROBE_NAME) ?>">
+            <button type="button" class="btn" id="image-gate-test-btn">Test image routing</button>
+            <p class="field-note rewrite-result image-gate-result" id="image-gate-result"></p>
+            <form method="post" class="stack-form rewrite-enable-form image-gate-enable-form" id="image-gate-form">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="confirm_image_gate">
+                <input type="hidden" name="probe_result" value="">
+                <div><button type="submit" class="btn">Confirm and enforce</button></div>
+            </form>
+        </div>
+    <?php endif; ?>
+
     <h2 class="detail-title">Video access control</h2>
     <p class="detail-desc">
         Set a video's access with <code>video_access</code> in the inline editor:
@@ -7608,6 +8513,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             $ptype = (string) ($_POST['publisher_type'] ?? 'Person');
             $pname = trim((string) ($_POST['publisher_name'] ?? ''));
             $purl  = trim((string) ($_POST['publisher_url'] ?? ''));
+            // The address the contact form delivers to, and the one vcard.vcf
+            // and llms.txt's Contact section already publish. One setting for
+            // all three, so they cannot drift apart.
+            $pemail = trim((string) ($_POST['publisher_email'] ?? ''));
+            // Biographical detail for identity.json and llms.txt. Content
+            // rather than configuration, so it belongs in the admin: needing
+            // to hand-edit PHP to say what you do for a living is exactly
+            // what Folio's admin exists to avoid.
+            $pbio   = trim((string) ($_POST['publisher_bio'] ?? ''));
+            $pocc   = trim((string) ($_POST['publisher_occupation'] ?? ''));
+            $paltn  = trim((string) ($_POST['publisher_alt_names'] ?? ''));
+            $pnat   = trim((string) ($_POST['publisher_nationality'] ?? ''));
+            $palum  = trim((string) ($_POST['publisher_alumni_of'] ?? ''));
+            $paffil = trim((string) ($_POST['publisher_affiliation'] ?? ''));
+            $prsurl = trim((string) ($_POST['publisher_related_site_url'] ?? ''));
+            $prslab = trim((string) ($_POST['publisher_related_site_label'] ?? ''));
             $lang  = trim((string) ($_POST['site_language'] ?? 'en'));
 
             // sameAs: one profile URL per line. Each must be a valid http(s)
@@ -7631,6 +8552,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                 $error = 'The publisher type must be Person or Organization.';
             } elseif ($purl !== '' && !preg_match('#^https?://#', $purl)) {
                 $error = 'The publisher URL must start with http:// or https://.';
+            } elseif ($pemail !== '' && (!filter_var($pemail, FILTER_VALIDATE_EMAIL) || strlen($pemail) > 254)) {
+                $error = 'That publisher email does not look like a valid address.';
+            } elseif ($prsurl !== '' && !preg_match('#^https?://#', $prsurl)) {
+                $error = 'The related site URL must start with http:// or https://.';
+            } elseif (strlen($pbio) > 600) {
+                $error = 'The publisher biography must be at most 600 characters.';
             } elseif ($sameas_bad) {
                 $error = 'Each "same as" profile must be a full http(s) URL. Not valid: ' . implode(', ', array_slice($sameas_bad, 0, 3)) . '.';
             } elseif (!preg_match('/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/', $lang)) {
@@ -7642,6 +8569,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_TYPE' => $ptype,
                     'PUBLISHER_NAME' => $pname,
                     'PUBLISHER_URL' => $purl,
+                    'PUBLISHER_EMAIL' => $pemail,
+                    'PUBLISHER_BIO' => $pbio,
+                    'PUBLISHER_OCCUPATION' => $pocc,
+                    'PUBLISHER_ALT_NAMES' => $paltn,
+                    'PUBLISHER_NATIONALITY' => $pnat,
+                    'PUBLISHER_ALUMNI_OF' => $palum,
+                    'PUBLISHER_AFFILIATION' => $paffil,
+                    'PUBLISHER_RELATED_SITE_URL' => $prsurl,
+                    'PUBLISHER_RELATED_SITE_LABEL' => $prslab,
                     'SITE_SAMEAS' => $sameas,
                     'SITE_LANGUAGE' => $lang,
                     'AI_ALLOW_QUOTE' => !empty($_POST['ai_allow_quote']),
@@ -7670,6 +8606,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_type' => PUBLISHER_TYPE,
         'publisher_name' => PUBLISHER_NAME,
         'publisher_url' => PUBLISHER_URL,
+        'publisher_email' => PUBLISHER_EMAIL,
+        'publisher_bio' => PUBLISHER_BIO,
+        'publisher_occupation' => PUBLISHER_OCCUPATION,
+        'publisher_alt_names' => PUBLISHER_ALT_NAMES,
+        'publisher_nationality' => PUBLISHER_NATIONALITY,
+        'publisher_alumni_of' => PUBLISHER_ALUMNI_OF,
+        'publisher_affiliation' => PUBLISHER_AFFILIATION,
+        'publisher_related_site_url' => PUBLISHER_RELATED_SITE_URL,
+        'publisher_related_site_label' => PUBLISHER_RELATED_SITE_LABEL,
         'site_language' => SITE_LANGUAGE,
         'site_sameas' => SITE_SAMEAS,
         'ai_allow_quote' => AI_ALLOW_QUOTE,
@@ -7752,6 +8697,51 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
 
         <label for="s-purl">Publisher URL</label>
         <input type="text" id="s-purl" name="publisher_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_url']) ?>">
+
+        <label for="s-pemail">Publisher email</label>
+        <input type="email" id="s-pemail" name="publisher_email" maxlength="254" placeholder="you@example.com" value="<?= e((string) $cur['publisher_email']) ?>" autocomplete="email">
+        <p class="field-note">
+            Where the contact form delivers messages, and the address published in
+            <code>vcard.vcf</code> and <code>llms.txt</code>. Visitors never see it on the contact
+            page &mdash; the form posts to Folio, which reads this address on the server. Leave
+            empty and the contact form reports itself as not ready.
+        </p>
+
+        <label for="s-pocc">Occupation</label>
+        <input type="text" id="s-pocc" name="publisher_occupation" maxlength="120" placeholder="writer, poet, and apologist" value="<?= e((string) $cur['publisher_occupation']) ?>">
+        <p class="field-note">A short description of what the publisher does, used in <code>identity.json</code> and <code>llms.txt</code>. Written as it would follow &ldquo;is a&hellip;&rdquo;.</p>
+
+        <label for="s-pbio">Biography</label>
+        <textarea id="s-pbio" name="publisher_bio" rows="3" maxlength="600" placeholder="A sentence or two describing the publisher."><?= e((string) $cur['publisher_bio']) ?></textarea>
+        <p class="field-note">
+            Describes the <em>person or organisation</em>, where the description above describes the
+            <em>library</em>. Without this, <code>identity.json</code> falls back to the library's
+            description, which answers the wrong question about its own subject. Up to 600 characters.
+        </p>
+
+        <label for="s-paltn">Other names</label>
+        <input type="text" id="s-paltn" name="publisher_alt_names" maxlength="300" placeholder="MENJ, Elfie Juferi" value="<?= e((string) $cur['publisher_alt_names']) ?>">
+        <p class="field-note">Separate with commas. Helps a search engine or AI connect other spellings and pen names to the same person.</p>
+
+        <label for="s-pnat">Nationality</label>
+        <input type="text" id="s-pnat" name="publisher_nationality" maxlength="80" placeholder="Malaysian" value="<?= e((string) $cur['publisher_nationality']) ?>">
+
+        <label for="s-palum">Education</label>
+        <input type="text" id="s-palum" name="publisher_alumni_of" maxlength="300" placeholder="Universiti Sains Malaysia" value="<?= e((string) $cur['publisher_alumni_of']) ?>">
+        <p class="field-note">Institutions attended. Separate several with commas.</p>
+
+        <label for="s-paffil">Affiliations</label>
+        <input type="text" id="s-paffil" name="publisher_affiliation" maxlength="300" placeholder="Organisations you belong to" value="<?= e((string) $cur['publisher_affiliation']) ?>">
+        <p class="field-note">Separate several with commas.</p>
+
+        <label for="s-prsurl">Related site</label>
+        <input type="text" id="s-prsurl" name="publisher_related_site_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_related_site_url']) ?>">
+        <input type="text" id="s-prslab" name="publisher_related_site_label" maxlength="80" placeholder="Label, e.g. Primary blog" value="<?= e((string) $cur['publisher_related_site_label']) ?>">
+        <p class="field-note">
+            A second site about the same person &mdash; a blog alongside this library, say &mdash;
+            named explicitly rather than left as one more unlabelled profile link below. The label
+            is optional.
+        </p>
 
         <label for="s-sameas">Verified profiles (one URL per line)</label>
         <textarea id="s-sameas" name="site_sameas" rows="3" placeholder="https://www.wikidata.org/wiki/…&#10;https://linkedin.com/in/…&#10;https://twitter.com/…"><?= e((string) $cur['site_sameas']) ?></textarea>
@@ -8087,8 +9077,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
     $notice = '';
     $error  = '';
     $warnings = [];
+    $import_errors = [];
+    $test_result = null;
     $writable = is_writable(dirname(redirects_file())) || is_writable(redirects_file());
-    $tab = (($_GET['tab'] ?? '') === 'notfound') ? 'notfound' : 'rules';
+    $tab = (string) ($_GET['tab'] ?? '');
+    $tab = in_array($tab, ['notfound', 'slugs'], true) ? $tab : 'rules';
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_valid()) {
@@ -8218,8 +9211,66 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
                 header('Location: ' . BASE_URL . '?action=redirects&tab=notfound&saved=1');
                 exit;
 
+            } elseif ($op === 'test_redirect') {
+                $test_result = redirect_explain((string) ($_POST['test_path'] ?? ''));
+
+            } elseif ($op === 'export_redirects') {
+                $body = redirects_export();
+                $host = preg_replace('/[^a-z0-9.-]+/i', '-', (string) parse_url(BASE_URL, PHP_URL_HOST));
+                header('Content-Type: application/json; charset=UTF-8');
+                header('Content-Disposition: attachment; filename="folio-redirects-'
+                    . ($host !== '' ? $host . '-' : '') . date('Y-m-d') . '.json"');
+                header('Content-Length: ' . (string) strlen($body));
+                header('X-Content-Type-Options: nosniff');
+                header('Cache-Control: private, no-store');
+                echo $body;
+                exit;
+
+            } elseif ($op === 'import_redirects') {
+                // Checked completely before anything is written: a partly
+                // applied import leaves a state the administrator never chose
+                // and cannot easily reconstruct.
+                $raw = '';
+                if (!empty($_FILES['redirect_file']['tmp_name'])
+                    && ($_FILES['redirect_file']['error'] ?? 1) === UPLOAD_ERR_OK
+                    && is_uploaded_file($_FILES['redirect_file']['tmp_name'])) {
+                    if ((int) ($_FILES['redirect_file']['size'] ?? 0) > 2 * 1024 * 1024) {
+                        $import_errors[] = 'That file is larger than 2 MB, which is far more than a rule list should be.';
+                    } else {
+                        $raw = (string) @file_get_contents($_FILES['redirect_file']['tmp_name']);
+                    }
+                    @unlink($_FILES['redirect_file']['tmp_name']);
+                } else {
+                    $import_errors[] = 'Choose a file to import.';
+                }
+                if (!$import_errors && $raw !== '') {
+                    $parsed = redirects_import_check($raw, $import_errors);
+                    if (!$import_errors) {
+                        if (redirects_import_apply($parsed)) {
+                            header('Location: ' . BASE_URL . '?action=redirects&imported=' . count($parsed));
+                            exit;
+                        }
+                        $error = 'Could not write the imported rules. Check that data/ is writable.';
+                    }
+                }
+
             } elseif ($op === 'clear_404') {
                 notfound_update(static fn(array $log): array => []);
+                header('Location: ' . BASE_URL . '?action=redirects&tab=notfound&saved=1');
+                exit;
+
+            } elseif ($op === 'purge_404_scans') {
+                // Entries recorded before scanner filtering existed. Removes
+                // only what the filter recognises as a probe, so a genuine
+                // broken link someone actually followed is left in place.
+                notfound_update(static function (array $log): array {
+                    foreach (array_keys($log) as $path) {
+                        if (notfound_is_scanner_probe((string) $path)) {
+                            unset($log[$path]);
+                        }
+                    }
+                    return $log;
+                });
                 header('Location: ' . BASE_URL . '?action=redirects&tab=notfound&saved=1');
                 exit;
             }
@@ -8228,6 +9279,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
 
     if (isset($_GET['saved'])) {
         $notice = 'Saved.';
+    }
+    if (isset($_GET['imported'])) {
+        $n = (int) $_GET['imported'];
+        $notice = $n . ' redirect' . ($n === 1 ? '' : 's') . ' imported, replacing what was there before.';
     }
     if (isset($_GET['warn']) && (string) $_GET['warn'] !== '') {
         $warnings[] = str_clip((string) $_GET['warn'], 500);
@@ -8321,6 +9376,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
         <a href="<?= e(BASE_URL) ?>?action=redirects"<?= $tab === 'rules' ? ' aria-current="page"' : '' ?>>Rules</a>
         <span class="sep">/</span>
         <a href="<?= e(BASE_URL) ?>?action=redirects&amp;tab=notfound"<?= $tab === 'notfound' ? ' aria-current="page"' : '' ?>>404 Monitor</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>?action=redirects&amp;tab=slugs"<?= $tab === 'slugs' ? ' aria-current="page"' : '' ?>>Slug history</a>
     </nav>
 
     <?php if ($tab === 'rules'): ?>
@@ -8370,6 +9427,98 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
         </div>
     </form>
 
+    <h3>Test an address</h3>
+    <p class="detail-desc">
+        Check what a given address does before relying on it &mdash; whether a rule answers it,
+        which one, and where a visitor ends up. Nothing is changed by testing.
+    </p>
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="test_redirect">
+        <label class="meta-form-label" for="r-test">Address to test
+            <input type="text" id="r-test" name="test_path" maxlength="600"
+                   placeholder="old-folder/report.pdf"
+                   value="<?= e((string) ($_POST['test_path'] ?? '')) ?>">
+        </label>
+        <div><button type="submit" class="btn btn-ghost">Test</button></div>
+    </form>
+    <?php if ($test_result !== null): ?>
+        <?php if (empty($test_result['ok'])): ?>
+            <p class="msg msg-bad"><?= e((string) $test_result['reason']) ?></p>
+        <?php elseif (!$test_result['chain']): ?>
+            <p class="msg <?= $test_result['live'] !== '' ? 'msg-ok' : 'msg-bad' ?>">
+                <strong><?= (int) $test_result['status'] ?></strong>
+                <?php if ($test_result['live'] !== ''): ?>
+                    &mdash; <code><?= e($test_result['normalised']) ?></code> is
+                    <?= e($test_result['live']) ?> on this site right now, so no redirect applies
+                    and none should: Folio only consults a rule once everything else has declined.
+                <?php else: ?>
+                    &mdash; nothing answers <code><?= e($test_result['normalised']) ?></code>.
+                    A visitor would get the &ldquo;not found&rdquo; page, and the address would be
+                    recorded in the 404 Monitor.
+                <?php endif; ?>
+            </p>
+        <?php else: ?>
+            <p class="msg msg-ok">
+                <strong><?= (int) $test_result['status'] ?></strong>
+                &mdash; a visitor is sent to <code><?= e((string) $test_result['final_url']) ?></code>
+                in one hop.
+            </p>
+            <?php if (count($test_result['chain']) > 1): ?>
+            <p class="field-note">
+                This is a chain of <?= count($test_result['chain']) ?> rules. Folio follows it
+                internally and sends the visitor straight to the end, but pointing the first rule
+                at the final address would be clearer:
+            </p>
+            <ul class="field-note">
+                <?php foreach ($test_result['chain'] as $step): ?>
+                    <li><code><?= e($step['source']) ?></code> &rarr; <code><?= e($step['destination']) ?></code> (<?= (int) $step['code'] ?>)</li>
+                <?php endforeach; ?>
+            </ul>
+            <?php endif; ?>
+            <?php if (!empty($test_result['external'])): ?>
+                <p class="field-note">The destination is on another site, so Folio cannot check whether it works.</p>
+            <?php elseif ($test_result['final_live'] === ''): ?>
+                <p class="msg msg-bad">
+                    The destination <code><?= e((string) $test_result['final']) ?></code> does not
+                    resolve to anything on this site, so this rule currently sends visitors from one
+                    dead address to another.
+                </p>
+            <?php else: ?>
+                <p class="field-note">The destination is <?= e((string) $test_result['final_live']) ?>, so the rule lands somewhere real.</p>
+            <?php endif; ?>
+        <?php endif; ?>
+    <?php endif; ?>
+
+    <h3>Back up and restore</h3>
+    <?php if ($import_errors): ?>
+        <p class="msg msg-bad">Nothing was imported. That file has <?= count($import_errors) ?> problem<?= count($import_errors) === 1 ? '' : 's' ?>:</p>
+        <ul class="field-note">
+            <?php foreach (array_slice($import_errors, 0, 20) as $ie): ?><li><?= e($ie) ?></li><?php endforeach; ?>
+            <?php if (count($import_errors) > 20): ?><li>&hellip; and <?= count($import_errors) - 20 ?> more.</li><?php endif; ?>
+        </ul>
+    <?php endif; ?>
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="export_redirects">
+        <div><button type="submit" class="btn btn-ghost"<?= $rules ? '' : ' disabled' ?>>Download the rules</button></div>
+    </form>
+    <form method="post" class="stack-form" enctype="multipart/form-data"
+          onsubmit="return confirm('Importing replaces every rule currently listed. Continue?');">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="import_redirects">
+        <label class="meta-form-label" for="r-import">Restore from a file
+            <input type="file" id="r-import" name="redirect_file" accept="application/json,.json">
+        </label>
+        <div><button type="submit" class="btn btn-ghost">Import</button></div>
+    </form>
+    <p class="field-note">
+        Importing <strong>replaces</strong> every rule listed below. The whole file is checked
+        first &mdash; a single bad entry stops the import entirely rather than leaving half of it
+        applied. Hit counts are kept for any rule whose address is unchanged, and are not carried
+        in the file itself, since they describe the site the file came from.
+    </p>
+
     <h3>Rules</h3>
     <?php if (!$rules): ?>
         <p class="detail-desc">No redirects yet. Anything Folio can already resolve on its own does not need one.</p>
@@ -8416,6 +9565,60 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
     </table>
     <?php endif; ?>
 
+    <?php elseif ($tab === 'slugs'): ?>
+
+    <?php
+    // Previous addresses Folio already answers on its own. Read-only: these
+    // are not rules an administrator wrote, they are history Folio recorded
+    // when a document's address changed, and they already redirect.
+    $slug_docs = [];
+    foreach ((meta_documents()['documents'] ?? []) as $sd) {
+        $aliases = array_values(array_filter((array) ($sd['aliases'] ?? [])));
+        if ($aliases) {
+            $slug_docs[] = [
+                'title'   => (string) ($sd['title'] ?? '') !== '' ? (string) $sd['title'] : (string) ($sd['file_path'] ?? ''),
+                'slug'    => (string) ($sd['slug'] ?? ''),
+                'aliases' => $aliases,
+            ];
+        }
+    }
+    usort($slug_docs, static fn($a, $b) => strcasecmp($a['title'], $b['title']));
+    ?>
+    <h3>Slug history</h3>
+    <p class="detail-desc">
+        When a document's address changes, Folio keeps the old one and redirects it automatically.
+        These are those old addresses &mdash; already working, with no rule needed. They are listed
+        here so you can see what Folio is already handling before writing a redirect that would
+        duplicate it.
+    </p>
+    <?php if (!$slug_docs): ?>
+        <p class="detail-desc">No document has changed address yet, so there is no history to show.</p>
+    <?php else: ?>
+    <table class="diag-table">
+        <thead>
+            <tr><th scope="col">Document</th><th scope="col">Current address</th><th scope="col">Also answers</th></tr>
+        </thead>
+        <tbody>
+        <?php foreach ($slug_docs as $sd): ?>
+            <tr>
+                <td><?= e(str_clip($sd['title'], 70)) ?></td>
+                <td><code><?= e($sd['slug']) ?></code></td>
+                <td>
+                    <?php foreach ($sd['aliases'] as $al): ?>
+                        <code><?= e((string) $al) ?></code><br>
+                    <?php endforeach; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <p class="field-note">
+        <?= count($slug_docs) ?> document<?= count($slug_docs) === 1 ? '' : 's' ?> with a previous
+        address. Nothing here needs maintaining: these redirect whether or not this screen is ever
+        opened, and they disappear on their own if the document is removed.
+    </p>
+    <?php endif; ?>
+
     <?php else: ?>
 
     <h3>Unresolved URLs</h3>
@@ -8452,10 +9655,29 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
         <?php endforeach; ?>
         </tbody>
     </table>
+    <?php
+    $scan_count = 0;
+    foreach (array_keys($log) as $lp) {
+        if (notfound_is_scanner_probe((string) $lp)) { $scan_count++; }
+    }
+    ?>
+    <?php if ($scan_count > 0): ?>
+    <p class="field-note">
+        <?= (int) $scan_count ?> of these look like automated scans — requests for
+        <code>.php</code> files and other applications' admin pages that nothing ever linked to.
+        Newer entries of this kind are no longer recorded at all; these were logged before that
+        filtering existed.
+    </p>
+    <form method="post" class="stack-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+        <input type="hidden" name="op" value="purge_404_scans">
+        <div><button type="submit" class="btn">Remove the <?= (int) $scan_count ?> scanner entries</button></div>
+    </form>
+    <?php endif; ?>
     <form method="post" class="stack-form" onsubmit="return confirm('Clear every recorded unresolved URL?');">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
         <input type="hidden" name="op" value="clear_404">
-        <div><button type="submit" class="btn btn-ghost">Clear the list</button></div>
+        <div><button type="submit" class="btn btn-ghost">Clear the whole list</button></div>
     </form>
     <?php endif; ?>
 
@@ -8679,14 +9901,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
                     <span>Content <em>(Markdown<?= $slot === 'faq' ? '; use ## for each question' : '' ?>)</em></span>
                     <textarea name="body[<?= e($slot) ?>]" rows="8" spellcheck="true"><?= e($rec['body']) ?></textarea>
                 </label>
-                <label>
+                <label class="page-field">
                     <span>Search title</span>
                     <input type="text" name="seo_title[<?= e($slot) ?>]" maxlength="60"
                            placeholder="Defaults to the title above"
                            value="<?= e($rec['seo_title'] ?? '') ?>">
                     <span class="field-note">Up to 60 characters. Used verbatim as the page title, with no site name appended.</span>
                 </label>
-                <label>
+                <label class="page-field">
                     <span>Search description</span>
                     <textarea name="seo_desc[<?= e($slot) ?>]" maxlength="150" rows="2"
                               placeholder="Defaults to the opening of the page"><?= e($rec['seo_desc'] ?? '') ?></textarea>
@@ -8895,6 +10117,26 @@ if (isset($_GET['page'])) {
         'inLanguage' => SITE_LANGUAGE,
         'isPartOf' => ['@id' => BASE_URL . '#website'],
     ];
+    // ProfilePage: who this page primarily describes.
+    if ($page_type === 'ProfilePage') {
+        if (trim((string) PUBLISHER_NAME) !== '') {
+            $page_node['about'] = ['@id' => BASE_URL . '#person'];
+            $page_node['mainEntity'] = ['@id' => BASE_URL . '#person'];
+        }
+        // Speakable: markup the page's text as suitable for TTS on Assistant-enabled
+        // devices. CssSelector pointing at the body prose block.
+        $page_node['speakable'] = [
+            '@type' => 'SpeakableSpecification',
+            'cssSelector' => ['.md-content', 'h1'],
+        ];
+    }
+    // FAQPage gets Speakable too — questions and answers are ideal TTS material.
+    if ($page_type === 'FAQPage') {
+        $page_node['speakable'] = [
+            '@type' => 'SpeakableSpecification',
+            'cssSelector' => ['.faq-question', '.faq-answer', 'h1'],
+        ];
+    }
     if ($page_type === 'FAQPage') {
         $faq = faq_parse($rec['body']);
         if ($faq) {
@@ -9083,6 +10325,49 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if (!csrf_valid()) {
             $error = 'Invalid security token — reload the page and try again.';
+        } elseif (($_POST['op'] ?? '') === 'export') {
+            // The one asset in a Folio installation that cannot be rebuilt
+            // from the files themselves: every title, description, category,
+            // tag, date, access setting and redaction region entered by
+            // hand. Thumbnails, extracted text and previews all regenerate;
+            // this does not.
+            //
+            // Sent verbatim rather than as a filtered subset, because the
+            // point is to be restorable: dropping the fields that look
+            // internal — redaction regions, access tiers, slug history —
+            // would produce a file that reads well and restores wrong.
+            // Read under a shared lock, so an export taken while a save is
+            // in flight cannot capture a half-written file. meta_update()
+            // takes LOCK_EX on this same lock file; LOCK_SH here waits for
+            // it rather than reading through the middle of the write.
+            $raw = false;
+            $exlock = @fopen(META_LOCK_FILE, 'c+b');
+            if ($exlock !== false) {
+                @flock($exlock, LOCK_SH);
+            }
+            if (is_file(META_FILE)) {
+                $raw = @file_get_contents(META_FILE);
+            }
+            if ($exlock !== false) {
+                @flock($exlock, LOCK_UN);
+                @fclose($exlock);
+            }
+            if ($raw === false || trim((string) $raw) === '') {
+                // Nothing catalogued yet is not a failure; an empty object is
+                // a valid, restorable export.
+                $raw = "{}\n";
+            }
+            $stamp = date('Y-m-d');
+            $host  = preg_replace('/[^a-z0-9.-]+/i', '-', (string) parse_url(BASE_URL, PHP_URL_HOST));
+            $name  = 'folio-catalogue-' . ($host !== '' ? $host . '-' : '') . $stamp . '.json';
+
+            header('Content-Type: application/json; charset=UTF-8');
+            header('Content-Disposition: attachment; filename="' . $name . '"');
+            header('Content-Length: ' . (string) strlen($raw));
+            header('X-Content-Type-Options: nosniff');
+            header('Cache-Control: private, no-store');
+            echo $raw;
+            exit;
         } elseif (($_POST['op'] ?? '') === 'reconcile') {
             @set_time_limit(300);
             $rep = [];
@@ -9149,6 +10434,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'catalogue') {
 
         <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
         <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
+
+        <?php
+        $meta_count = count(meta_load());
+        $meta_bytes = is_file(META_FILE) ? (int) @filesize(META_FILE) : 0;
+        ?>
+        <h2>Back up the catalogue</h2>
+        <p>
+            Everything you have typed — titles, descriptions, categories, tags, dates, access
+            settings and redaction regions — lives in one file. Thumbnails, extracted text and
+            previews all rebuild themselves if lost; this does not. It is the only part of a Folio
+            installation that cannot be recreated from your files, so it is the one part worth
+            keeping a copy of.
+        </p>
+        <p>
+            <strong><?= (int) $meta_count ?></strong>
+            record<?= $meta_count === 1 ? '' : 's' ?>,
+            <?= e(folio_bytes_human($meta_bytes)) ?>.
+        </p>
+        <form method="post">
+            <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+            <input type="hidden" name="op" value="export">
+            <p><button type="submit" class="btn">Download a copy</button></p>
+        </form>
+        <p class="field-note">
+            Downloads as <code>folio-catalogue-<?= e(date('Y-m-d')) ?>.json</code>. To restore it,
+            put the file back as <code>data/metadata.json</code> over FTP — it is the same file, so
+            nothing needs converting. Keep it somewhere other than the server it came from.
+        </p>
+
+        <h2>Records and files</h2>
 
         <?php if (!$survey['orphans'] && !$survey['unassociated']): ?>
             <p>Every document is matched to a file, and every file is catalogued. There is
@@ -9237,6 +10552,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     if (!is_admin()) {
         header('Location: ' . BASE_URL . '?action=login');
         exit;
+    }
+
+    // Clearing a cache is a write, so it is a POST behind the same CSRF
+    // check as every other admin action. The key is looked up in
+    // folio_caches() and an unknown one is refused, so no request can name
+    // a directory of its own.
+    $cache_notice = '';
+    $cache_error  = '';
+    if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['op'] ?? '') === 'clear_cache') {
+        if (!csrf_valid()) {
+            $cache_error = 'That form had expired. Please try again.';
+        } else {
+            $key = (string) ($_POST['cache'] ?? '');
+            $caches_now = folio_caches();
+            if (!isset($caches_now[$key])) {
+                $cache_error = 'Unknown cache.';
+            } elseif (folio_cache_clear($key)) {
+                header('Location: ' . BASE_URL . '?action=diagnostics&cleared=' . rawurlencode($key) . '#caches');
+                exit;
+            } else {
+                $cache_error = 'Could not clear that cache. Check that data/ is writable.';
+            }
+        }
+    }
+    if (isset($_GET['cleared'])) {
+        $ck = (string) $_GET['cleared'];
+        $cn = folio_caches();
+        $cache_notice = isset($cn[$ck])
+            ? $cn[$ck]['label'] . ' cleared. It will rebuild as the files are needed again.'
+            : 'Cache cleared.';
     }
 
     $route = (string) ($_SERVER['SFM_ROUTE'] ?? $_SERVER['REDIRECT_SFM_ROUTE'] ?? '');
@@ -10094,6 +11439,64 @@ bash tests/smoke.sh</pre>
         ends with <em>All Folio smoke tests passed.</em> See <code>tests/readme.md</code> for details.
     </p>
 
+    <h2 class="detail-title" id="caches">Stored caches</h2>
+    <p class="detail-desc">
+        Folio saves the results of expensive work — thumbnails, hover previews, extracted text —
+        so it does not repeat it on every visit. Every one of these is disposable: clearing one
+        costs the time to make it again and nothing else. Nothing you uploaded is stored here.
+    </p>
+    <p class="field-note">
+        Files are kept in folders named after the first two characters of an internal reference
+        (<code>3e/</code>, <code>fc/</code>, and so on) purely to spread them out — a few thousand
+        files in one folder makes both the server and an FTP client slow. The names carry no
+        meaning you need to know, and nothing here has to be managed by hand.
+    </p>
+    <?php if ($cache_notice !== ''): ?><p class="msg msg-ok"><?= e($cache_notice) ?></p><?php endif; ?>
+    <?php if ($cache_error !== ''): ?><p class="msg msg-bad"><?= e($cache_error) ?></p><?php endif; ?>
+    <?php
+    $cache_total = 0;
+    $cache_rows = [];
+    foreach (folio_caches() as $ckey => $cinfo) {
+        [$cbytes, $cfiles] = folio_cache_usage($cinfo['path']);
+        $cache_total += $cbytes;
+        $cache_rows[$ckey] = $cinfo + ['bytes' => $cbytes, 'files' => $cfiles];
+    }
+    ?>
+    <table class="diag-table">
+        <thead>
+            <tr><th scope="col">Cache</th><th scope="col">Size</th><th scope="col">Files</th><th scope="col"></th></tr>
+        </thead>
+        <tbody>
+        <?php foreach ($cache_rows as $ckey => $c): ?>
+            <tr>
+                <td><?= e($c['label']) ?><br><span class="field-note"><?= e($c['note']) ?></span></td>
+                <td><?= e(folio_bytes_human((int) $c['bytes'])) ?></td>
+                <td><?= (int) $c['files'] ?></td>
+                <td class="row-actions">
+                    <?php if ((int) $c['files'] > 0): ?>
+                    <form method="post" class="inline-form"
+                          onsubmit="return confirm('Clear <?= e(addslashes($c['label'])) ?>? It will be rebuilt as needed.');">
+                        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                        <input type="hidden" name="op" value="clear_cache">
+                        <input type="hidden" name="cache" value="<?= e($ckey) ?>">
+                        <button type="submit" class="btn-small btn-ghost">Clear</button>
+                    </form>
+                    <?php else: ?>
+                        <span class="field-note">empty</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+        <?php endforeach; ?>
+        </tbody>
+    </table>
+    <p class="field-note">
+        <strong><?= e(folio_bytes_human($cache_total)) ?></strong> total.
+        Clearing a cache never affects your documents, your metadata, or anything else you would
+        miss — Folio simply makes the file again the next time it is needed. OCR results and
+        compressed PDF copies are the two worth thinking about before clearing, since remaking
+        them takes real work rather than a moment.
+    </p>
+
     <p class="detail-actions">
         <a class="btn" href="<?= e(BASE_URL) ?>?action=diagnostics">Re-run checks</a>
         <a class="btn btn-ghost" href="<?= e(BASE_URL) ?>">Back to the library</a>
@@ -10265,6 +11668,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'video_preview') {
     $rel_vp = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
     if (is_excluded(basename($rel_vp), $rel_vp)
         || file_kind(strtolower(pathinfo($rel_vp, PATHINFO_EXTENSION))) !== 'video') {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    // A restricted or hidden video's preview is as revealing as the video:
+    // it is four seconds of the actual footage. The listing already declines
+    // to emit these URLs for a non-public video unless an admin is looking,
+    // but withholding a URL is not access control — anyone who guessed the
+    // path got a playable clip. This is the enforcement, and it mirrors
+    // exactly the rule the listing applies when deciding to show the card.
+    if (video_access_of(meta_load()[$rel_vp] ?? []) !== 'public' && !is_admin()) {
         http_response_code(404);
         exit('Not found');
     }
@@ -10550,6 +11964,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
     // requests to a real uploads/*.pdf file actually reach this action on
     // this server before pdf_access is treated as enforced. Admin-only, so
     // it gives an anonymous scanner no information.
+    if (($_GET['file'] ?? '') === FOLIO_IMAGE_PROBE_NAME) {
+        if (!is_admin()) {
+            http_response_code(404);
+            exit('Not found');
+        }
+        header('Content-Type: application/json');
+        exit(json_encode(['ok' => true, 'gate' => 'image']));
+    }
+
     if (($_GET['file'] ?? '') === FOLIO_PDF_PROBE_NAME) {
         if (!is_admin()) {
             http_response_code(404);
@@ -10576,6 +11999,40 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
     if (is_excluded(basename($rel), $rel)) {
         http_response_code(404);
         exit('Not found');
+    }
+
+    // A redacted image's original is never served here. Every public link
+    // points at ?action=image_redacted instead, but withholding a URL is not
+    // access control — this is the check that makes it real for anyone who
+    // simply guesses the path. Unlike the tier gate below, this does not
+    // depend on IMAGE_GATE_CONFIRMED: a redaction is an explicit instruction
+    // to cover something, and honouring it only when a separate preflight
+    // happens to have been confirmed would be the wrong default by far.
+    if (file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) === 'image'
+        && !is_admin()
+        && image_redact_is_on(meta_load()[$rel] ?? [])) {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    // image_access gate. Same shape as the pdf_access gate below, and the
+    // single enforcement point: every other route to an image's bytes is
+    // built to come through here rather than repeat the check.
+    if (file_kind(strtolower(pathinfo($abs, PATHINFO_EXTENSION))) === 'image'
+        && image_access_enforced() && !is_admin()) {
+        $iaccess = image_access_of(meta_load()[$rel] ?? []);
+        if ($iaccess === 'hidden') {
+            http_response_code(404);
+            exit('Not found');
+        }
+        if ($iaccess === 'restricted') {
+            $iexpires = (int) ($_GET['expires'] ?? 0);
+            $itoken   = (string) ($_GET['token'] ?? '');
+            if ($itoken === '' || !image_signed_url_valid($rel, $iexpires, $itoken)) {
+                http_response_code(404);
+                exit('Not found');
+            }
+        }
     }
 
     // video_access gate, active only while the .htaccess guard is on: with
@@ -10727,6 +12184,58 @@ if (isset($_GET['action']) && $_GET['action'] === 'raw') {
 /* downsampled and blurred JPEG, generated by pdf_blur_generate(). Safe */
 /* to serve publicly since no reconstructable content survives the blur.*/
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Redacted image derivative. The only image a visitor is offered for a  */
+/* file carrying redaction regions — the original is never linked and    */
+/* never served here. Fails closed: if the derivative cannot be built,   */
+/* nothing is returned rather than falling back to the unredacted file.  */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'image_redacted') {
+    $abs = resolve_path((string) ($_GET['file'] ?? ''));
+    if ($abs === null || !is_file($abs)) {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $rel = str_replace(DIRECTORY_SEPARATOR, '/', trim(substr($abs, strlen((string) realpath(BASE_DIR))), '/\\'));
+    if (is_excluded(basename($rel), $rel) || file_kind(strtolower(pathinfo($rel, PATHINFO_EXTENSION))) !== 'image') {
+        http_response_code(404);
+        exit('Not found');
+    }
+    $m_ir = meta_load()[$rel] ?? [];
+    $regions_ir = image_redact_sanitise_regions($m_ir['image_redact'] ?? []);
+    if (!$regions_ir) {
+        // No regions means no derivative exists to serve. The original is
+        // reached through ?action=raw, which applies its own access rules;
+        // this route never serves it.
+        http_response_code(404);
+        exit('Not found');
+    }
+    // The access tier still applies on top of redaction: a hidden image is
+    // hidden whether or not part of it is blacked out.
+    if (image_access_enforced() && !is_admin() && image_access_of($m_ir) === 'hidden') {
+        http_response_code(404);
+        exit('Not found');
+    }
+
+    $built = image_redact_build($abs, $rel, $regions_ir);
+    if ($built === null) {
+        // Fail closed. An administrator who set a redaction on a host
+        // without Imagick gets no image rather than the original.
+        http_response_code(404);
+        exit('Not found');
+    }
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+    header('Content-Type: image/jpeg');
+    header('Content-Length: ' . (string) filesize($built));
+    header('X-Content-Type-Options: nosniff');
+    header('Cache-Control: private, max-age=0, no-store');
+    header('X-Robots-Tag: noindex');
+    readfile($built);
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'pdf_preview') {
     $abs = resolve_path((string) ($_GET['file'] ?? ''));
     if ($abs === null || !is_file($abs) || strtolower(pathinfo($abs, PATHINFO_EXTENSION)) !== 'pdf') {
@@ -11461,6 +12970,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     // this library and a blog living at two different domains both need a
     // reader (human or otherwise) to be told, not left to infer, that they
     // describe the same author.
+    if (PUBLISHER_EMAIL !== '') {
+        $subject['email'] = PUBLISHER_EMAIL;
+    }
+    if (PUBLISHER_PHONE !== '') {
+        $subject['telephone'] = PUBLISHER_PHONE;
+    }
+    if (PUBLISHER_COUNTRY !== '') {
+        $subject['address'] = [
+            '@type' => 'PostalAddress',
+            'addressCountry' => PUBLISHER_COUNTRY,
+        ];
+    }
+    if (PUBLISHER_EMAIL !== '') {
+        $subject['contactPoint'] = [
+            '@type' => 'ContactPoint',
+            'contactType' => 'customer support',
+            'email' => PUBLISHER_EMAIL,
+            'availableLanguage' => SITE_LANGUAGE,
+        ];
+    }
+    $configured_icon_id = trim((string) SITE_ICON);
+    if ($configured_icon_id !== '') {
+        $icon_url_id = preg_match('#^https?://#i', $configured_icon_id)
+            ? $configured_icon_id
+            : rtrim(BASE_URL, '/') . '/' . ltrim($configured_icon_id, '/');
+        $subject[$subjectType === 'Organization' ? 'logo' : 'image'] = $icon_url_id;
+    }
     if (PUBLISHER_RELATED_SITE_URL !== '') {
         $subject['additionalProperty'][] = [
             '@type' => 'PropertyValue',
@@ -12483,6 +14019,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         $video_access = 'public';
     }
 
+    $image_redact_regions = image_redact_sanitise_regions(
+        json_decode((string) ($_POST['image_redact_regions'] ?? '[]'), true)
+    );
+
+    $image_access = (string) ($_POST['image_access'] ?? 'public');
+    if ($image_access === 'viewer') { $image_access = 'restricted'; }
+    if (!in_array($image_access, ['public', 'restricted', 'hidden'], true)) {
+        $image_access = 'public';
+    }
+
     // Manual fallback preview for "hidden" PDFs when automatic blurring
     // is not available on this host: a redacted or
     // placeholder image the admin has already placed in uploads/, the same
@@ -12517,7 +14063,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $language, $placeholder_image,
+        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $image_access, $image_redact_regions, $language, $placeholder_image,
         $seo_title, $seo_desc, $video_type, $redact_regions, $video_redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
@@ -12526,7 +14072,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         // cleared.
         if ($title === '' && $desc === '' && $long_desc === '' && $cat === '' && !$tags
             && $document_type === '' && $doc_date === '' && $transcript === ''
-            && $pdf_access === 'public' && $video_access === 'public' && $language === ''
+            && $pdf_access === 'public' && $video_access === 'public'
+            && $image_access === 'public' && !$image_redact_regions && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
             && $video_type === ''
             && !$redact_regions && !$video_redact_regions
@@ -12548,6 +14095,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'transcript' => $transcript,
                 'pdf_access' => $pdf_access,
                 'video_access' => $video_access,
+                'image_access' => $image_access,
+                'image_redact' => $image_redact_regions,
                 'language' => $language,
                 'placeholder_image' => $placeholder_image,
                 'video_type' => $video_type,
@@ -12929,6 +14478,23 @@ if (isset($_GET['view'])) {
     if ($kind === 'image') {
         $page_node['primaryImageOfPage'] = ['@id' => $view . '#file'];
     }
+    // Subscription and paywalled content markup. Tells Google this content is
+    // gated so it is distinguished from cloaking (serving different content to
+    // Googlebot vs visitors). Without this, a restricted document whose page
+    // is publicly visible but whose file is withheld might be flagged as
+    // spam. Using isAccessibleForFree=false + hasPart with cssSelector
+    // pointing to the restricted element is Google's documented pattern.
+    $is_restricted = ($pdf_access !== 'public' && $kind === 'pdf')
+        || (video_access_of($m) !== 'public' && $kind === 'video')
+        || (image_access_of($m) !== 'public' && $kind === 'image');
+    if ($is_restricted) {
+        $page_node['isAccessibleForFree'] = false;
+        $page_node['hasPart'] = [
+            '@type' => 'WebPageElement',
+            'isAccessibleForFree' => false,
+            'cssSelector' => '.file-gate-notice, .file-download-block, .folio-media',
+        ];
+    }
     $ld = [
         schema_website(),
         schema_publisher(),
@@ -12954,7 +14520,10 @@ if (isset($_GET['view'])) {
 <meta property="og:title" content="<?= e($title) ?>">
 <meta property="og:description" content="<?= e($meta_desc) ?>">
 <meta property="og:url" content="<?= e($view) ?>">
-<?php if ($kind === 'image'): ?>
+<?php if ($kind === 'image' && $raw !== ''): ?>
+<?php /* $raw is '' for a gated image, where url_raw_effective() declines to
+         emit a URL at all. Emitting the tags anyway would publish an empty
+         og:image and claim a large-image card with no image behind it. */ ?>
 <meta property="og:image" content="<?= e($raw) ?>">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:image" content="<?= e($raw) ?>">
@@ -13046,8 +14615,12 @@ if (isset($_GET['view'])) {
                     </div>
                 </div>
             <?php elseif ($kind === 'audio'): ?>
+                <?php $caption_url = caption_url_for($rel); ?>
                 <div class="folio-media fm-audio" data-media-kind="audio">
                     <audio class="fm-el" controls preload="metadata" src="<?= e($raw) ?>">
+                        <?php if ($caption_url !== ''): ?>
+                        <track kind="captions" srclang="<?= e(SITE_LANGUAGE) ?>" label="Captions" src="<?= e($caption_url) ?>" default>
+                        <?php endif; ?>
                         <a href="<?= e($raw) ?>">Download audio</a>
                     </audio>
                 </div>
@@ -13064,8 +14637,12 @@ if (isset($_GET['view'])) {
                     </div>
                 </div>
                 <?php else: ?>
+                <?php $caption_url = caption_url_for($rel); ?>
                 <div class="folio-media fm-video" data-media-kind="video">
                     <video class="fm-el" controls playsinline preload="metadata" src="<?= e($raw) ?>">
+                        <?php if ($caption_url !== ''): ?>
+                        <track kind="captions" srclang="<?= e(SITE_LANGUAGE) ?>" label="Captions" src="<?= e($caption_url) ?>" default>
+                        <?php endif; ?>
                         <?php if ($full_access): ?><a href="<?= e($raw) ?>">Download video</a><?php endif; ?>
                     </video>
                 </div>
@@ -13160,6 +14737,12 @@ foreach (scandir($abs_dir) as $entry) {
     if (is_excluded($entry, $rel_entry)) {
         continue;
     }
+    // A caption belongs to the media file beside it, not to the library in
+    // its own right. Hidden from the listing only; still served, since the
+    // <track> element on the media page has to fetch it.
+    if (caption_sidecar_owner($rel_entry) !== '') {
+        continue;
+    }
     $abs_entry = safe_entry_realpath($abs_dir . DIRECTORY_SEPARATOR . $entry);
     if ($abs_entry === null) {
         continue;
@@ -13211,6 +14794,9 @@ foreach (scandir($abs_dir) as $entry) {
             'pdf_access' => $pdf_access,
             'redact' => (isset($m['redact']) && is_array($m['redact'])) ? $m['redact'] : [],
             'video_access' => video_access_of($m),
+            'video_redact' => (isset($m['video_redact']) && is_array($m['video_redact'])) ? $m['video_redact'] : [],
+            'image_access' => image_access_of($m),
+            'image_redact' => (isset($m['image_redact']) && is_array($m['image_redact'])) ? $m['image_redact'] : [],
             'language' => $m['language'] ?? '',
             'video_type' => $m['video_type'] ?? '',
             'placeholder_image' => $m['placeholder_image'] ?? '',
@@ -13374,6 +14960,36 @@ if ($dirs) {
         ];
     }, $dirs);
 }
+// Dataset: every folder/root is a curated collection of documents.
+// Google Dataset Search indexes Dataset nodes; emitting one alongside the
+// CollectionPage+ItemList means the library is findable there too.
+$dataset_node = [
+    '@type'           => 'Dataset',
+    '@id'             => $collection_url . '#dataset',
+    'name'            => $collection_name,
+    'description'     => $rel_dir === '' ? SITE_DESCRIPTION : 'A curated collection of documents and media in ' . $collection_name . '.',
+    'url'             => $collection_url,
+    'inLanguage'      => SITE_LANGUAGE,
+    'isAccessibleForFree' => true,
+    'creator'         => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => BASE_URL . '#person'] : null,
+    'publisher'       => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => BASE_URL . '#person'] : null,
+    'numberOfItems'   => count($list_items),
+    'distribution'    => [
+        '@type'             => 'DataDownload',
+        'encodingFormat'    => 'application/json',
+        'contentUrl'        => BASE_URL . '?action=feed_json',
+        'name'              => 'JSON Feed',
+    ],
+    'license'         => defined('SITE_LICENSE_URL') && SITE_LICENSE_URL !== ''
+        ? SITE_LICENSE_URL
+        : 'https://schema.org/CreativeWork',
+];
+if ($dataset_node['creator'] === null) {
+    unset($dataset_node['creator']);
+}
+if ($dataset_node['publisher'] === null) {
+    unset($dataset_node['publisher']);
+}
 $listing_ld = [
     schema_website(),
     schema_publisher(),
@@ -13387,6 +15003,7 @@ $listing_ld = [
         'itemListOrder' => 'https://schema.org/ItemListOrderAscending',
         'itemListElement' => $list_items,
     ],
+    $dataset_node,
 ];
 ?>
 <!DOCTYPE html>
@@ -13765,6 +15382,24 @@ $listing_ld = [
                                 <?php endif; ?>
                             </fieldset>
                             <?php endif; ?>
+                            <?php if ($f['kind'] === 'image'): ?>
+                            <label class="meta-form-label">
+                                Image access
+                                <select name="image_access">
+                                    <option value="public" <?= image_access_of($f) === 'public' ? 'selected' : '' ?>>Public — shown to everyone, direct link allowed</option>
+                                    <option value="restricted" <?= image_access_of($f) === 'restricted' ? 'selected' : '' ?>>Restricted — page shown with a notice, image withheld from the public</option>
+                                    <option value="hidden" <?= image_access_of($f) === 'hidden' ? 'selected' : '' ?>>Hidden — removed from the folder listing, page still findable via search</option>
+                                </select>
+                            </label>
+                            <?php if (image_access_of($f) !== 'public' && !image_access_enforced()): ?>
+                            <p class="field-note field-bad">
+                                This setting is not being enforced: the image is still served to
+                                anyone. Set <code>FOLIO_URL_SIGNING_KEY</code> and confirm image
+                                routing on the Crawlers screen to make it real.
+                            </p>
+                            <?php endif; ?>
+                            <?php endif; ?>
+
                             <?php if ($f['kind'] === 'video'): ?>
                             <label class="meta-form-label">
                                 Video access
@@ -13793,6 +15428,41 @@ $listing_ld = [
                                 </div>
                                 <?php if ($video_redact_count > 0 && !tool_have('ffmpeg')): ?>
                                 <p class="field-note field-warn">This document has hover-preview redactions, but this server has no ffmpeg, so neither the redacted preview nor an unredacted one can be built — the hover preview is skipped entirely rather than risk showing the original.</p>
+                                <?php endif; ?>
+                            </fieldset>
+                            <?php endif; ?>
+                            <?php if ($f['kind'] === 'image'): ?>
+                            <?php
+                            $img_redact_json = json_encode(
+                                (isset($f['image_redact']) && is_array($f['image_redact'])) ? $f['image_redact'] : [],
+                                JSON_UNESCAPED_SLASHES
+                            );
+                            $img_redact_count = (isset($f['image_redact']) && is_array($f['image_redact'])) ? count($f['image_redact']) : 0;
+                            ?>
+                            <fieldset class="meta-redact-fields meta-video-redact-fields"
+                                data-video-redact-frame="<?= e(root_relative(url_raw($f['rel']))) ?>">
+                                <legend>Redaction</legend>
+                                <p class="field-note">
+                                    Draw a box over anything that should not be published &mdash; an identity
+                                    number, an address, a face. The public is served a copy with the boxes
+                                    burned into the pixels and the original withheld, so what is underneath
+                                    cannot be recovered by saving the image or reading its metadata. You
+                                    still see the original here, since you need to check the boxes cover
+                                    what you meant.
+                                </p>
+                                <input type="hidden" name="image_redact_regions" class="video-redact-regions-input" value="<?= e($img_redact_json) ?>">
+                                <div class="meta-form-actions">
+                                    <button type="button" class="btn-small btn-ghost video-redact-open">Edit redactions</button>
+                                    <button type="button" class="btn-small btn-ghost video-redact-clear">Clear all</button>
+                                    <span class="video-redact-count" aria-live="polite"><?= (int) $img_redact_count ?> region<?= $img_redact_count === 1 ? '' : 's' ?></span>
+                                </div>
+                                <?php if ($img_redact_count > 0 && !image_redact_available()): ?>
+                                <p class="field-note field-bad">
+                                    This image has redactions, but this server has no Imagick, so the
+                                    redacted copy cannot be built. The image is withheld entirely rather
+                                    than risk publishing the original &mdash; ask your host about the
+                                    <code>imagick</code> PHP extension.
+                                </p>
                                 <?php endif; ?>
                             </fieldset>
                             <?php endif; ?>
