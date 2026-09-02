@@ -1935,6 +1935,20 @@ a:focus-visible, button:focus-visible, input:focus-visible, summary:focus-visibl
     margin-top: 0.5rem;
 }
 .settings-form label:first-of-type { margin-top: 0; }
+/* .stack-form's flex column only stacks its own DIRECT children. Once
+   Settings gained tabs, every label/input pair moved one level deeper —
+   inside .settings-tabs, inside a .settings-panel — and stopped being a
+   flex item of the form at all. Without this, a <label> (inline) and its
+   <input> (inline-block) fall back to ordinary text flow: they sit side by
+   side and wrap wherever the viewport happens to break, so a field's label
+   can end up next to the WRONG field's box. Re-establishing the same
+   column layout on the panel itself is what actually stacks them. */
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.settings-panel .check-row { margin-top: 0.2rem; }
 .check-row {
     display: flex;
     align-items: center;
@@ -3181,3 +3195,88 @@ a.col-sort { text-decoration: none; }
     outline: 0;
 }
 .entity-row code { overflow-wrap: anywhere; }
+
+/* Delete affordance on an entity row, matching .page-delete on Pages. */
+.entity-delete {
+    float: right;
+    font-family: var(--sans);
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: none;
+    color: var(--quiet);
+    font-weight: 400;
+}
+.entity-delete input { margin-right: 0.25rem; }
+
+/* ---- Crawler tables ----------------------------------------------------
+   These previously borrowed .diag-table, which is shaped for the three
+   columns Diagnostics uses: a fixed 5.5rem middle column set to nowrap.
+   With four to six columns of variable-length operator names, that column
+   could not wrap and overflowed into the one beside it. These tables size
+   their own columns and every cell is allowed to wrap. */
+.bot-table,
+.route-table {
+    width: 100%;
+    margin-bottom: 1.4rem;
+    border-collapse: collapse;
+}
+.bot-table th,
+.route-table th {
+    font-family: var(--sans);
+    font-size: 0.62rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    text-align: left;
+    font-weight: 400;
+    padding: 0 0.75rem 0.5rem 0;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+}
+.bot-table td,
+.route-table td {
+    vertical-align: top;
+    padding: 0.55rem 0.75rem 0.55rem 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--quiet);
+    overflow-wrap: break-word;
+    hyphens: auto;
+}
+.bot-table td:last-child,
+.route-table td:last-child { padding-right: 0; }
+
+/* The identifier column reads as a name, not as small print. */
+.bot-table .bot-name {
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    color: var(--ink);
+    overflow-wrap: anywhere;
+}
+.bot-table .bot-num { text-align: right; white-space: nowrap; }
+.bot-table .bot-when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bot-table code { font-size: 0.78rem; overflow-wrap: anywhere; }
+
+/* Three columns whose widths are known: a label, a path, and a count. */
+.route-table .route-label {
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    color: var(--ink);
+    width: 30%;
+}
+.route-table .route-path code { font-size: 0.78rem; overflow-wrap: anywhere; }
+.route-table .route-hits {
+    text-align: right;
+    white-space: nowrap;
+    width: 6rem;
+}
+
+/* Narrow screens: let the wide tables scroll rather than crush every
+   column into a single character per line. */
+@media (max-width: 40rem) {
+    .bot-table-wide,
+    .bot-table-recent { display: block; overflow-x: auto; }
+    .bot-table-wide thead,
+    .bot-table-recent thead { white-space: nowrap; }
+}

@@ -97,6 +97,41 @@ define('PUBLISHER_CONTACT_TYPE', 'customer support');
 define('PUBLISHER_CONTACT_LANGUAGES', '');
 
 /**
+ * Optional authenticated SMTP transport for the contact form, used instead
+ * of PHP's mail() whenever a host is set here. mail() only ever confirms a
+ * message reached the local mail queue, never that it left the server or
+ * was accepted anywhere — on most modern hosts, which block outbound port
+ * 25 by default, that handoff succeeds while the message silently goes
+ * nowhere. Authenticated SMTP on port 587 avoids that.
+ *
+ *   define('SMTP_HOST', 'smtp.example.com');
+ *   define('SMTP_PORT', 587);
+ *   define('SMTP_ENCRYPTION', 'tls'); // tls | ssl | none
+ *   define('SMTP_USERNAME', 'you@example.com');
+ *   define('SMTP_PASSWORD', 'your-password-or-app-password');
+ *
+ * Leave SMTP_HOST empty to keep using mail(), unchanged from before these
+ * settings existed. All five are also editable from Settings → Advanced.
+ */
+define('SMTP_HOST', '');
+define('SMTP_PORT', 587);
+define('SMTP_ENCRYPTION', 'tls');
+define('SMTP_USERNAME', '');
+define('SMTP_PASSWORD', '');
+
+/**
+ * Per-category cap on how many documents llms.txt lists before pointing to
+ * library.yaml for the rest. llms.txt is meant to orient a reader, not
+ * enumerate the whole library — library.yaml has no cap and is the
+ * exhaustive index. Without a limit, a library of any real size turns
+ * llms.txt into the same sprawling dump it exists to avoid.
+ *
+ * Set to 0 to list everything with no cap, matching behaviour before this
+ * setting existed.
+ */
+define('LLMS_MAX_PER_SECTION', 30);
+
+/**
  * Optional, used only by the downloadable vCard (vcard.vcf), never by
  * identity.json. Each renders in the card only when set; leave any of them
  * as '' to omit that field entirely rather than emit an empty one.

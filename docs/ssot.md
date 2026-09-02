@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.67.1. Update this file in the same commit as any change it describes.
+Version 1.69.2. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.67.1');` |
-| `changelog.md` | `## 1.67.1 — 2 September 2026` |
-| `readme.txt` | `Stable tag: 1.67.1` |
-| `readme.md` | `1.67.1.` under `## Version` |
-| `security.md` | `The current supported release is **1.67.1**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.69.2');` |
+| `changelog.md` | `## 1.69.2 — 2 September 2026` |
+| `readme.txt` | `Stable tag: 1.69.2` |
+| `readme.md` | `1.69.2.` under `## Version` |
+| `security.md` | `The current supported release is **1.69.2**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -104,7 +104,6 @@ lib/contact.php           public contact form — validation, anti-spam, rate li
                           out of index.php for the same reason
 
 tests/smoke.sh            regression suite
-tests/readme.md           how to run it
 tests/asset-version-check.php   asserts every asset is linked with ?v=
 tests/wired-check.php     asserts every advertised utility is actually called
 uploads/.htaccess         hardening for the served uploads folder
@@ -132,7 +131,7 @@ config.php                credentials, secrets, settings
 data/users.php            accounts
 data/settings.php         settings saved from the admin
 data/metadata.json        titles, descriptions, categories, tags, document_type,
-                          entity_relation, entity_org, transcript, pdf_access,
+                          entity_relation, entity_org, entity_work, transcript, pdf_access,
                           language, placeholder_image
 data/metadata.lock        write lock
 data/entities.json        reusable Organization and Book entities; absent until the
@@ -252,6 +251,12 @@ a host matching `/^[A-Za-z0-9._-]+(:[0-9]{1,5})?$/`.
 | `SITEMAP_ENABLED` | `true` | Crawlers |
 | `LLMS_ENABLED` | `true` | Crawlers |
 | `LLMS_INTRO` | empty | Crawlers |
+| `LLMS_MAX_PER_SECTION` | `30` | config.php only |
+| `SMTP_HOST` | empty | Settings |
+| `SMTP_PORT` | `587` | Settings |
+| `SMTP_ENCRYPTION` | `tls` | Settings |
+| `SMTP_USERNAME` | empty | Settings |
+| `SMTP_PASSWORD` | empty | Settings (blank-means-unchanged on save) |
 | `INDEXNOW_KEY` | empty | Crawlers |
 | `IDENTITY_ENABLED` | `true` | Crawlers |
 | `VCARD_ENABLED` | `true` | Crawlers — also requires `IDENTITY_ENABLED` |
@@ -769,7 +774,23 @@ Rules that must hold. A change breaking any of these is a defect.
     distinct in the admin. An inferred value presented as a decision is a
     defect: the operator must be able to tell what they chose from what Folio
     guessed.
-27. An entity is referenced by `@id`, never repeated as a bare string. One
+27. A work, the page about it, and the file encoding it are three entities with
+    three identifiers (`#book`, `#page`, `#file`). A file inherits only facts
+    that belong to the work — publication date, language — and never its own
+    modification date onto the work, nor the work's date onto its own
+    `dateModified`.
+28. Two different names must never resolve to the same entity identifier
+    without the operator being told. `entity_key_from_name()` is lossy —
+    punctuation and case are discarded — so distinct names can collide.
+    Any code path that writes entities keyed this way must detect a
+    collision between two different names before writing, and refuse rather
+    than let the second silently overwrite the first.
+29. An entity is referenced by `@id`, never repeated as a bare string.
+30. Any admin screen using the tab pattern (data-*-tab / data-*-panel) must
+    load admin.js, or the tab JavaScript never activates and the page
+    silently runs its no-JS fallback with no visible sign anything is
+    missing. Verify with a real browser render — a markup-presence check
+    alone does not catch this, since the fallback also renders correctly. One
     organisation named by six records is one node with six references. An
     entity that cannot be resolved is omitted rather than emitted as a
     dangling reference or a guess.
@@ -783,12 +804,11 @@ wrong.
 | File | Audience and scope |
 | --- | --- |
 | `readme.txt` | general: what it is, how to use it, plain text, FAQ |
-| `readme.md` | operators and developers: features, architecture, hosting |
+| `readme.md` | operators and developers: features, architecture, hosting, and the regression suite (running it, coverage, what is not covered) |
 | `docs/install.md` | first-time installation only |
 | `docs/upgrading.md` | upgrading, migrating, the **roadmap**, removing |
 | `changelog.md` | version history; what observably changed |
 | `security.md` | threat model, controls, deployment, reporting |
-| `tests/readme.md` | how to run the suite, what it covers and does not |
 | `docs/ssot.md` | this reference: architecture, schemas, invariants |
 
 `docs/upgrading.md` carries the roadmap because the two questions are the

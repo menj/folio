@@ -3,6 +3,170 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.69.0 — 2 September 2026
+
+### Added
+
+- **llms.txt is capped per category.** Previously every document in every
+  category was listed with no limit, which contradicted the file's own stated
+  purpose — llms.txt is meant to be a concise orientation document, with
+  library.yaml as the exhaustive index. On any library of real size this made
+  llms.txt grow without bound, the same problem already solved for the sitemap
+  (which switches to a paginated index past 50,000 URLs) but never applied
+  here.
+
+  Each category now shows at most `LLMS_MAX_PER_SECTION` documents (default
+  30), and a category over the cap states how many more exist and links to
+  library.yaml for the rest. A library under the cap in every category emits
+  exactly what it emitted before — verified byte-identical. Set the constant
+  to `0` to remove the cap entirely.
+
+## 1.69.2 — 2 September 2026
+
+### Changed
+
+- **`tests/readme.md` merged into `readme.md`.** The test-suite documentation
+  — how to run it, the fixture table, the full coverage table, the signed-URL
+  scheme, the security regression payloads, and what is deliberately not
+  covered — now lives under readme.md's existing **Testing** section instead
+  of a separate file, so there is one operator/developer document instead of
+  two. `readme.txt` is unaffected; it documents a different audience and was
+  not touched. The Diagnostics screen's own reference to the file was updated
+  to point at the readme's Testing section instead of the now-removed path.
+  Verified against the actual test suite, not just checked for broken links —
+  all 56 checks pass.
+
+## 1.69.1 — 2 September 2026
+
+### Fixed
+
+- **Settings tabs and Diagnostics tabs never actually activated.** Both
+  screens' tab-switching JavaScript lives in `admin.js`, but neither route
+  ever emitted the `<script>` tag that loads it — every visit silently ran
+  the no-JS fallback (every panel visible with a heading) with no way to
+  tell from the page itself that anything was missing. Fixed by adding the
+  same one-line script tag the working Crawlers screen already had.
+
+- **Settings form labels and fields could visually detach from each other.**
+  `.stack-form`'s column layout only stacks its own direct children; once
+  Settings gained tabs, every label and input moved one level deeper (into a
+  `.settings-panel`) and fell out of that layout entirely, reverting to
+  ordinary inline text flow. A label could then end up sitting beside the
+  wrong field's box, wrapping wherever the viewport happened to break.
+  `.settings-panel` now carries its own column layout, and every field
+  stacks correctly again — confirmed with a real browser render, not just a
+  markup check.
+
+### Added
+
+- **SMTP transport for the contact form.** A hand-written SMTP client (no
+  external dependencies, matching the rest of Folio) sends authenticated
+  mail on port 587 with STARTTLS, in preference to PHP's `mail()` whenever a
+  host is configured under Settings → Advanced. This exists because
+  `mail()` only ever confirms a message reached the server's local mail
+  queue — never that it actually left the server or was accepted anywhere.
+  Most modern hosts, cloud VPS providers especially, block outbound port 25
+  by default, so that handoff silently succeeds while the message goes
+  nowhere and nothing bounces back to explain why. SMTP avoids that class of
+  failure and, when something does go wrong, reports the mail server's own
+  reason instead of a bare true/false — surfaced directly in the "Send a
+  test email" result and in the server error log.
+
+  Leave the SMTP host empty to keep using `mail()`, unchanged from before
+  this setting existed. The SMTP password uses blank-means-unchanged on
+  save, is never echoed back into the settings page, and is stored in plain
+  text in `data/settings.php` — the same way any application that sends
+  authenticated SMTP has to store it.
+
+## 1.68.2 — 2 September 2026
+
+### Fixed
+
+- **Two organisations with different names could silently merge into one.**
+  Identifiers are derived from a name by lower-casing it and collapsing
+  punctuation, so "AT&T" and "AT T" both reduce to `#at-t`. Saving both used
+  to keep only whichever was processed last, with no warning — the other
+  vanished. The Entities screen now detects this before writing and refuses
+  the save with a specific error naming both entries and the identifier they
+  collided on, rather than losing one silently. Confirmed nothing is written
+  to disk when this fires.
+
+- **`library.yaml` now carries the publisher and the linked work.** A
+  document's `entity_org` and `entity_work` were resolved into
+  `identity.json` and the page's own JSON-LD, but the file record used to
+  build `library.yaml` never carried them, so the YAML export was the one
+  surface where a "published by" relation's publisher, and a file's link to
+  its declared book, could not be seen. Each now appears as `entity_org` and
+  `example_of_work`, resolved to the same `@id` used everywhere else.
+
+## 1.68.1 — 2 September 2026
+
+### Fixed
+
+- **Crawler table columns no longer overlap.** The four crawler tables borrowed
+  `.diag-table`, which is shaped for the three columns Diagnostics uses and pins
+  its middle column to a fixed 5.5rem with `white-space: nowrap`. Applied to
+  tables of four to six columns, longer operator names could not wrap and ran
+  over the text beside them — "Common Crawl — feeds many training sets" and
+  "Google — Gemini and Vertex AI" collided with the purpose column, and in the
+  hits-by-file list the route path ran into its own hit count.
+
+  The crawler tables now size their own columns and every cell is free to wrap.
+  Counts are right-aligned, timestamps no longer break mid-value, and the two
+  widest tables scroll horizontally below 40rem rather than crushing six columns
+  into a few characters each. Verified with no overflowing cell at 1400, 900,
+  600 and 380 pixels.
+
+## 1.68.0 — 2 September 2026
+
+### Added
+
+- **A file can say which work it is a copy of.** Where a document reproduces a
+  book declared on the Entities screen, **Copy of** on its metadata form links
+  the two. The file then points at the work with `exampleOfWork` and takes its
+  publication year and language, while keeping its own modification date and its
+  own identifier.
+
+  This separates three things that were previously conflated: the work
+  (`#book` — written once, published once, with an author and a publisher), the
+  archive page where a reader finds it (`#page`), and the file itself (`#file` —
+  a format, a size, a modification date). A 2005 book scanned into a PDF in 2026
+  no longer looks like something published in 2026.
+
+### Changed
+
+- **The book field "Archive page" is now "Page on this site"**, with a
+  description explaining what it is for. The old label said nothing about what
+  the address should point at.
+
+## 1.67.3 — 2 September 2026
+
+### Fixed
+
+- **Entities can be deleted.** Each saved organisation and book now carries a
+  **Delete on save** checkbox, matching the Pages screen. Previously the only
+  way to remove one was to clear its name and save, which worked but was
+  documented nowhere and was not something anyone should have had to guess.
+
+  Deleting an organisation that a book still names no longer silently
+  recreates it: an explicit deletion outranks an incidental mention, so the
+  removal holds. A book left pointing at a deleted publisher omits the
+  reference rather than emitting a broken identifier.
+
+## 1.67.2 — 2 September 2026
+
+### Fixed
+
+- **A publisher could not be entered at all.** The Books section offered
+  publishers as a dropdown built from the organisations already saved, but the
+  organisation and book forms sit on the same page, so on a new installation
+  the list was empty and neither could be filled in first. The field is now
+  free text with existing organisations offered as suggestions, and a name that
+  is not yet an organisation is created as one on save. Matching is on the
+  derived key, so retyping an existing name in different case or with stray
+  spaces reuses that organisation rather than duplicating it, and its saved
+  website and authority links are preserved.
+
 ## 1.67.1 — 2 September 2026
 
 ### Added

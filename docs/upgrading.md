@@ -586,7 +586,6 @@ license.txt
 docs/install.md
 docs/upgrading.md
 docs/ssot.md
-tests/readme.md
 ```
 
 ### Step 2 — Delete the old files
@@ -1021,6 +1020,41 @@ detaches the plan from any conversation about it.
   bounded, reviewable piece of new behaviour, while this one touches the
   largest share of an already-large file for zero user-visible change,
   which makes a mistake here both easy to introduce and easy to miss.
+
+  A wider restructuring was proposed externally: a `core/` / `media/` /
+  `storage/` / `discovery/` / `admin/` / `views/` tree, roughly twenty
+  files. Rejected as written, for reasons worth recording so the idea isn't
+  silently re-proposed later without them:
+
+  - It has no autoloader story, and Folio has no Composer step to add one
+    without breaking Principle 3 above. Without one, twenty files means
+    twenty manually ordered `require_once` calls — a load-order footgun in
+    place of the single-file version, not an improvement on it.
+  - The boundaries don't hold against the real code. `schema_file()` —
+    called from nearly every route — reads the metadata store directly,
+    resolves the entity-relation vocabulary, and resolves organisation/book
+    entities, all in one function. That's three of the proposal's modules
+    in one place; the dependency graph is closer to a hub around schema
+    generation than the clean layers the folder names imply.
+  - It omits the piece nearly everything else depends on: the
+    `settings_store()` / `data/settings.php` → `config.php` → default
+    precedence chain that every `BASE_URL`- and `PUBLISHER_*`-reading
+    function relies on. Any real restructuring has to give that a home
+    before anything else, not leave it implicit.
+  - It invents a taxonomy `lib/` has never used. The precedent that
+    actually exists is flat — `lib/redirects.php`, `lib/contact.php`,
+    `lib/smtp.php`, `lib/video.php` — each `require_once`'d in a fixed
+    order at the top of `index.php`. Any split should extend that shape
+    incrementally, not replace it with a five-level tree in one step.
+
+  What the flat precedent suggests instead, if this is picked up before the
+  admin-screen split above: `lib/entities.php` is the next reasonable
+  candidate — the Organization/Book store and its node builders
+  (`entity_key_from_name()`, `entity_id()`, `entity_org_nodes()`,
+  `entity_book_nodes()`) call almost nothing outside themselves beyond
+  `person_id()` and `BASE_URL`. That's a boundary confirmed by reading the
+  actual calls, not assumed from the function names — which is the standard
+  any future split here should be held to before code moves, not after.
 
 **Phase 6 — the archive's remaining phases, each depending on the one before.**
 

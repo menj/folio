@@ -57,7 +57,10 @@ function contact_sender(): string
 /** Whether the form can actually deliver. Both halves must be true. */
 function contact_ready(): bool
 {
-    return contact_recipient() !== '' && function_exists('mail');
+    if (contact_recipient() === '') {
+        return false;
+    }
+    return smtp_configured() || function_exists('mail');
 }
 
 /** Effective attachment ceiling, never above what the server itself allows —
@@ -487,7 +490,7 @@ function contact_encode_header(string $value): string
  * configuration inside this function and is never a parameter, so there is no
  * code path by which a request could redirect the message elsewhere.
  */
-function contact_send(array $in, array $attachments): bool
+function contact_send(array $in, array $attachments, string &$error = ''): bool
 {
     $to = contact_recipient();
     if ($to === '') {
@@ -530,7 +533,7 @@ function contact_send(array $in, array $attachments): bool
     if (!$attachments) {
         $headers[] = 'Content-Type: text/plain; charset=UTF-8';
         $headers[] = 'Content-Transfer-Encoding: 8bit';
-        return @mail($to, $mail_subject, $body, implode("\r\n", $headers));
+        return contact_dispatch($to, $mail_subject, $headers, $body, $error);
     }
 
     $boundary = 'folio-' . bin2hex(random_bytes(12));
@@ -554,7 +557,38 @@ function contact_send(array $in, array $attachments): bool
     }
     $payload .= "--" . $boundary . "--\r\n";
 
-    return @mail($to, $mail_subject, $payload, implode("\r\n", $headers));
+    return contact_dispatch($to, $mail_subject, $headers, $payload, $error);
+}
+
+/**
+ * The one place that actually calls a transport. SMTP is used whenever
+ * SMTP_HOST is configured; PHP's mail() is the fallback for every install
+ * that has not set it, unchanged from before this function existed. Neither
+ * transport is called from more than this one spot, so there is exactly one
+ * place that decides which is in use.
+ */
+function contact_dispatch(string $to, string $subject, array $headers, string $body, string &$error = ''): bool
+{
+    if (smtp_configured()) {
+        $header_block = implode("\r\n", array_merge(
+            ['Subject: ' . $subject],
+            $headers
+        ));
+        $ok = smtp_send($to, $header_block, $body, $error);
+        if (!$ok) {
+            error_log('Folio contact form: SMTP send failed — ' . $error);
+        }
+        return $ok;
+    }
+    if (!function_exists('mail')) {
+        $error = 'This server has no PHP mail function available.';
+        return false;
+    }
+    $ok = @mail($to, $subject, $body, implode("\r\n", $headers));
+    if (!$ok) {
+        $error = 'mail() returned false — the local mail transport refused the message.';
+    }
+    return $ok;
 }
 
 /** Remove every temporary upload, on success and on failure alike. PHP

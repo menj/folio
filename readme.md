@@ -361,6 +361,28 @@ Publishers, universities and the subject's own books are declared once on the
 documents naming one publisher describe one publisher rather than six unrelated
 strings. See *Entities* below.
 
+### Works and their copies
+
+A book is not the same thing as the PDF of it. *Buddhism: A Muslim Primer* was
+written once and published by Jahabersa in 2005; the file in the library is one
+copy of that work, made at some later date. Collapsing the two makes the file's
+modification date look like a publication date and loses the publisher
+altogether.
+
+Where a file is a copy of a declared book, say so with **Copy of** on the
+document's metadata form. Three identifiers then describe three genuinely
+different things:
+
+| Identifier | What it is |
+| --- | --- |
+| `…#book` | the work — author, publisher, year, language, ISBN, OCLC |
+| `…#page` | the archive page where a reader finds it |
+| `…#file` | the file itself — format, size, modification date |
+
+The file points at the work with `exampleOfWork` and inherits its publication
+year and language, while keeping its own modification date. Everything else
+about the work stays on the book, stated once.
+
 `alumniOf` and `affiliation` on the subject upgrade from plain strings to entity
 references automatically when a declared organisation has the same name. A name
 matching nothing stays a plain string, so nothing you have already typed stops
@@ -464,6 +486,12 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   this as informational rather than an error), and the specification
   attribution as a closing footer. Toggle it off to return 404. It also
   returns 404 while the whole site is non-indexable.
+
+  Each category lists at most `LLMS_MAX_PER_SECTION` documents (default 30);
+  beyond that it names how many more exist and points to `library.yaml` for
+  the complete list. llms.txt is meant to orient a reader, not enumerate the
+  whole library — that is library.yaml's job, and it has no cap. Set the
+  constant to `0` in `config.php` to list everything with no limit.
 * **identity.json.** A Schema.org identity document at `/identity.json` (or
   `?action=identity`) describing who the site is and who it is about: a `Person`
   (the subject the library documents) and the `WebSite` itself, in a linked
@@ -1031,9 +1059,13 @@ issues or publishes. Each takes a name, a type (organisation, college or
 university, government body, NGO, publisher), an optional website, and optional
 authority links such as a Wikidata record.
 
-**Books** are works the subject authored. Each takes a title, a publisher chosen
-from the organisations you have declared, a publication date, a language, and
-optional ISBN, OCLC and archive-page values.
+**Books** are works the subject authored. Each takes a title, a publisher, a
+publication date, a language, and optional ISBN, OCLC and page values. **Page on
+this site** is the address of the book's own page in the library, if it has one;
+leave it empty for a book with no page here.
+Type the publisher's name directly; existing organisations are offered as
+suggestions, and a name that is not one yet is created as an organisation when
+you save, so you never enter it twice.
 
 Two details matter more than they look:
 
@@ -1046,8 +1078,9 @@ Two details matter more than they look:
 
 Identifiers are derived from the name — "Langgam Fikir" becomes
 `…/#langgam-fikir` — and shown under each entry once saved. To remove an entry,
-clear its name and save. Removing an organisation that a document still refers
-to leaves that document's *published by* silent rather than broken.
+tick **Delete on save** on it and save. Removing an organisation that a book or
+document still refers to leaves that reference silent rather than broken, and
+you can add it back at any time.
 
 Entities appear in `identity.json` and on the records that reference them. An
 archive with none declared emits exactly what it did before.
@@ -1138,6 +1171,23 @@ request to redirect a message somewhere else.
 The email is sent *as your site*, with the visitor's address as the reply
 address. Sending it as the visitor would look like forgery to most mail
 providers and land it in spam.
+
+By default this goes through PHP's built-in `mail()`, which only ever
+confirms a message reached the server's local mail queue — never that it
+actually left the server or was accepted anywhere. Most modern hosts, cloud
+VPS providers especially, block outbound port 25 by default, so that handoff
+quietly succeeds while the message goes nowhere and nothing bounces back to
+say so. If a test email is not arriving and is not in spam either, this is
+almost always why.
+
+Configure **SMTP** under Settings → Advanced to send authenticated mail on
+port 587 instead. A real mail provider actually confirms delivery, and when
+something does go wrong it reports the server's own reason rather than a bare
+failure. Leave the SMTP host empty to keep using `mail()`, unchanged from
+before this setting existed. The password is stored in plain text in
+`data/settings.php`, the same way any application that sends authenticated
+SMTP has to store it — it has to be readable to be used, unlike a login
+password, which never does.
 
 Before relying on the form, click **Send a test email** on the Pages screen. It
 sends only to your own address and confirms delivery works. If it is greyed
@@ -1354,10 +1404,167 @@ explains what counts as a vulnerability and how to report one privately.
 
 ## Testing
 
-[`tests/readme.md`](tests/readme.md) documents the regression suite: how to
-run it, what each group proves, the security payloads it replays, and — just
-as importantly — what it does **not** cover, so a passing run is not
-over-read.
+Folio ships one test suite: an integration smoke test that exercises a real
+installation over HTTP. There is no unit-test framework and no browser-driver
+suite, which is a deliberate trade for a single-file application with no
+Composer dependency — but it does mean the coverage boundaries below are worth
+reading before you rely on a green run.
+
+### Running the suite
+
+From the Folio root:
+
+```sh
+bash tests/smoke.sh
+```
+
+It prints one `PASS:` line per group, exits `0` when everything passes, and
+exits `1` on the first failure with a `FAIL:` line naming what broke.
+
+### Requirements
+
+- **PHP command line**, matching the version the site runs on. The suite uses
+  PHP's built-in development server, so no separate web server is needed.
+- **curl**, and standard POSIX tools (`grep`, `sed`, `mktemp`, `touch`).
+- **The `mbstring` extension**, which Folio requires at runtime.
+- The suite deliberately avoids optional extensions. It parses XML with
+  pattern matching rather than SimpleXML, because SimpleXML is absent from
+  some PHP builds and a test suite should not fail for a reason unrelated to
+  the code under test.
+
+Set `FOLIO_TEST_PORT` if the default port `18765` is in use:
+
+```sh
+FOLIO_TEST_PORT=19000 bash tests/smoke.sh
+```
+
+### How it works
+
+Each run builds a throwaway installation in a temporary directory: a fresh
+`config.php` with a generated password hash, an empty `data/`, and a small
+fixture library. It starts PHP's development server against that directory,
+runs every check over HTTP as a real client would, then removes the directory.
+
+Nothing touches your live installation, and no test depends on the order you
+ran it in — except where noted below, since a few checks deliberately build on
+the state left by the previous one.
+
+The fixture library is small but awkward on purpose:
+
+| Fixture | Why it exists |
+| --- | --- |
+| `foo.pdf` and `Foo!.pdf` | Two files whose names normalise to the same slug, to prove collisions are disambiguated |
+| `foo.jpg` | Same stem as `foo.pdf`, to prove the extension participates in addressing |
+| `evil.html` | An active format that must be forced to download, never rendered in-origin |
+| `notes.txt` | A plain file used for metadata and `lastmod` checks |
+| `host.txt` | A symbolic link to `/etc/hostname`, which must never be served |
+
+### What is covered
+
+| Group | What it proves |
+| --- | --- |
+| Anonymous caching and canonical host | Public pages set no cookie, stay cacheable, and build canonical URLs from `SITE_URL` even when the request `Host` header claims otherwise |
+| Symbolic-link containment | A symlink pointing outside `uploads/` is not followed or served |
+| Collision-safe addressing | Colliding names get distinct slugs; unambiguous legacy slugs redirect; ambiguous ones 404 |
+| Controlled file delivery | Active and unknown formats are forced to `application/octet-stream` with an attachment disposition, a sandboxing CSP, and `noindex` |
+| Invalid directory | A nonexistent folder returns 404 rather than an error page |
+| Metadata storage | An authenticated edit is written atomically and leaves a last-known-good `.bak` |
+| Category sitemap | Categories get their own sitemap; the main sitemap never duplicates them |
+| Hidden `pdf_access` | Every path to a hidden PDF's bytes — direct URL, `?action=raw` — is blocked for the public |
+| Viewer `pdf_access` | The record page still renders; the file itself requires a valid, unexpired signed URL (see [Signed URLs](#signed-urls) below) |
+| `video_access` gate | Hidden is admin-only; viewer requires a valid signed URL and rejects a forged one; public streams with range-request support |
+| Hidden-file indexability | A hidden video is pulled from the folder listing but its record page stays sitemap-indexable, and an admin still sees it in the listing — the same policy a hidden PDF's record page already follows |
+| `pdf_access` and page-level indexing | A `pdf_access` setting never leaks into the record page's sitemap presence, robots meta, or `llms.txt` — it only ever gates the raw file |
+| llms.txt Specification conformance | `Lang:` immediately after the H1, a required `# Contact` section built from configured publisher fields, and the specification attribution as a closing footer rather than an inline link — per the llms.txt Specification (v1.7.0) |
+| Live robots.txt | Served as `text/plain`, always responds (never 404, unlike every other discovery endpoint), reflects `Allow: /` and the current `Sitemap:` references while the site is indexable. Does not yet cover the `Disallow: /` branch, since that needs `SITE_INDEXABLE` toggled at runtime and this suite provisions one static config per run — same gap already noted for the `X-Robots-Tag` fix |
+| JSON-LD injection | Metadata containing `</script>`, mixed-case variants, ampersands, and quotes cannot terminate the structured-data element or create markup |
+| Malformed metadata | A corrupt store is rejected rather than overwritten, and the valid copy survives |
+| Session revocation | Resetting a password invalidates sessions already holding the old `auth_version` |
+| Logout protection | `GET` logout is refused with `405`, a tokenless `POST` is refused, and only a valid CSRF `POST` ends the session |
+| Installer headers | The installer emits a CSP with no `unsafe-inline`, forbids framing, and is not cacheable |
+| Sitemap `lastmod` | Editing one document's metadata moves only that entry's date, without touching the file on disk |
+| Analytics CSP | Inline analytics scripts are allowed by a `sha256` source hash, never by `unsafe-inline` |
+| Excluded files | A file matching `EXCLUDE_PATTERNS` is absent from every public surface, not just the listing |
+| Derivative images | Generated thumbnails and previews are written under a bounded cache path and never overwrite or expose the original file |
+| Restricted-PDF thumbnails | A restricted PDF is refused a thumbnail rather than rendering one from gated content |
+| External utilities | Each optional tool (ffmpeg, Imagick, qpdf, etc.) is invoked without a shell, and only when actually available and gated on |
+| Optional utilities | Every utility Folio can use is genuinely optional; Ghostscript specifically is never invoked unless explicitly allowed |
+| Utility inventory | Every utility the documentation advertises is actually referenced somewhere in the code — no stale claims |
+| Root icon | A request for the root favicon is answered with a real icon file, not a 404 or a redirect loop |
+| Release-asset versioning | The manifest's recorded size still matches the shipped source, so an upgrade is never served a stale cached stylesheet |
+| PDF file sitemap | Lists only PDFs the public can actually fetch — a hidden or viewer-only PDF's *page* stays indexed elsewhere, but its raw *file* is absent from this one; excluded files and folders never appear; non-PDFs never appear; served with index, follow |
+| Video sitemap | Serves valid XML with the `video:` namespace; the same "indexed page, gated file" split as the PDF file sitemap — a restricted or hidden video's raw file is absent; excluded files and non-video files never appear. Does not yet cover a real, decodable public video with a derivable thumbnail actually being listed, since the suite's video fixtures are random bytes, not playable video |
+| Canonical slugs and aliases | A renamed or migrated document keeps working addresses; ambiguous or colliding slugs behave predictably |
+| Reconciliation and relinking | The admin tools for repairing broken metadata associations are gated to admins and never modify files on disk |
+| Sitemap partitioning | Small libraries stay a single `urlset`; invalid, negative, and out-of-range part numbers 404 |
+| Stateless sitemap | The sitemap generates without a session and reflects the current library |
+
+#### Signed URLs
+
+A gated PDF or video is served through `?action=raw` behind a short-lived
+HMAC-signed URL rather than its plain path. The two are deliberately
+namespaced so a token for one can never validate the other:
+
+```
+PDF:   hash_hmac('sha256', "{rel}|{expires}", FOLIO_URL_SIGNING_KEY)
+Video: hash_hmac('sha256', "video|{rel}|{expires}", FOLIO_URL_SIGNING_KEY)
+```
+
+A test building a video token from the PDF payload (no `video|` prefix)
+will construct a token the real validator rejects — this exact mistake
+shipped once and is why it's called out here explicitly.
+
+### Security regression payloads
+
+The JSON-LD check writes real attack strings through the ordinary metadata
+form and then inspects the rendered page. The payloads include
+`Report </script><img src=x onerror=alert(1)><script>`, a mixed-case
+`</ScRiPt><svg onload=alert(2)>`, and values containing ampersands,
+apostrophes, and quotation marks.
+
+The expected result is that every one survives as *data*: each JSON-LD block
+still parses as JSON, the raw text contains no closing script tag, and no
+`img`, `svg`, `iframe`, or `form` element appears in the document. A failure
+here means output encoding regressed, which is a release blocker.
+
+This check was confirmed to fail against the pre-1.0.1 encoder, so it is known
+to detect the bug it guards rather than merely passing.
+
+### What is not covered
+
+Being explicit about this matters more than the list above, because a green
+run is easy to over-read.
+
+- **Concurrency.** PHP's development server handles one request at a time, so
+  the suite cannot exercise parallel logins or simultaneous administrative
+  writes. The login throttle's locking was verified separately by running
+  eight processes performing twenty-five increments each against one counter
+  and confirming all two hundred were recorded; that harness is not part of
+  the suite. Concurrent administrative edits are a known gap.
+- **External services.** No test contacts IndexNow, and nothing is mocked,
+  because the suite never triggers a submission. Batching is verified by
+  reasoning about `array_chunk` boundaries rather than by observing requests.
+- **Scale.** There is no large-library dataset. Sitemap partitioning is
+  verified structurally, by lowering `SITEMAP_MAX_URLS` in a scratch copy and
+  confirming the index and parts are correct, rather than by generating fifty
+  thousand files.
+- **Browsers.** No JavaScript is executed. Client-side search, hover cards,
+  the PDF flip reader, keyboard navigation, and CSP enforcement in a real
+  browser are all unverified by this suite.
+- **Upgrades.** There is no automated test that upgrades a populated older
+  installation.
+
+### Adding a test
+
+Follow the existing shape: perform the request, assert on the response, then
+call `pass 'short description'`. Use `fail 'what went wrong'` for a failure so
+the suite exits non-zero.
+
+Two habits are worth keeping. Assert on the smallest thing that proves the
+behaviour, so a failure names the cause rather than a symptom. And before
+trusting a new regression test, break the fix it guards and confirm the test
+actually fails — a test that cannot fail is worse than no test, because it
+looks like coverage.
 
 ## Theme architecture
 
@@ -1461,4 +1668,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.67.1. Single-file application with separated CSS and JS assets.
+1.69.2. Single-file application with separated CSS and JS assets.

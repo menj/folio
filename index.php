@@ -126,12 +126,13 @@ if (is_file(__DIR__ . '/config.php')) {
 require_once __DIR__ . '/lib/video.php';
 require_once __DIR__ . '/lib/redirects.php';
 require_once __DIR__ . '/lib/contact.php';
+require_once __DIR__ . '/lib/smtp.php';
 
 defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.67.1');
+define('FOLIO_VERSION', '1.69.2');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -229,6 +230,30 @@ defined('SITE_LICENSE_URL') || define('SITE_LICENSE_URL', '');
  * request.
  */
 defined('CONTACT_SENDER_EMAIL')  || define('CONTACT_SENDER_EMAIL', '');
+/**
+ * Optional authenticated SMTP transport for the contact form, used in
+ * preference to PHP's mail() whenever a host is configured. mail() only
+ * ever reports whether a message reached the server's local mail queue,
+ * never whether it left the server or was accepted anywhere — and on most
+ * modern hosts (cloud VPS providers block outbound port 25 by default)
+ * that local handoff succeeds while the message silently goes nowhere.
+ * Authenticated SMTP on port 587 sidesteps that, and reports back a real
+ * reason on failure instead of a bare true/false.
+ *
+ * SMTP_PASSWORD is stored in plain text in data/settings.php, the same way
+ * every SMTP-sending application stores it — an SMTP password must be
+ * reversible to be used, unlike ADMIN_PASSWORD_HASH, which never needs to
+ * be read back. Keep data/ off the public web, which the shipped .htaccess
+ * already does.
+ *
+ * Leave SMTP_HOST empty to keep using PHP's mail(), unchanged from before
+ * these settings existed.
+ */
+defined('SMTP_HOST')             || define('SMTP_HOST', '');
+defined('SMTP_PORT')             || define('SMTP_PORT', 587);
+defined('SMTP_ENCRYPTION')       || define('SMTP_ENCRYPTION', 'tls'); // tls | ssl | none
+defined('SMTP_USERNAME')         || define('SMTP_USERNAME', '');
+defined('SMTP_PASSWORD')         || define('SMTP_PASSWORD', '');
 defined('CONTACT_ATTACHMENTS')   || define('CONTACT_ATTACHMENTS', true);
 defined('CONTACT_MAX_ATTACHMENTS') || define('CONTACT_MAX_ATTACHMENTS', 3);
 defined('CONTACT_MAX_FILE_MB')   || define('CONTACT_MAX_FILE_MB', 5);
@@ -316,6 +341,14 @@ defined('AI_POLICY_NOTE')       || define('AI_POLICY_NOTE', '');
  */
 defined('ROBOTS_CRAWL_DELAY')   || define('ROBOTS_CRAWL_DELAY', 0);
 defined('LLMS_INTRO')           || define('LLMS_INTRO', '');
+// Per-category cap on how many documents llms.txt lists before it points to
+// library.yaml for the rest. llms.txt is meant to be a concise orientation
+// document, not the exhaustive index — that job belongs to library.yaml,
+// which has no cap. Without a limit here, a library of any real size turns
+// llms.txt into the same sprawling dump it was meant to avoid. Set to 0 to
+// disable the cap and list everything, matching behaviour before this
+// setting existed.
+defined('LLMS_MAX_PER_SECTION') || define('LLMS_MAX_PER_SECTION', 30);
 defined('SITE_INDEXABLE')       || define('SITE_INDEXABLE', true);
 defined('INDEXNOW_KEY')         || define('INDEXNOW_KEY', '');
 /** Google Indexing API service-account credentials. Stored in data/settings.php, never rendered. */
@@ -7846,6 +7879,33 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
             $node[$prop] = $value;
         }
     }
+
+    /* Where the record names a declared work, this file is a copy of that
+       work rather than a thing in its own right. The distinction is real:
+       "Buddhism: A Muslim Primer" was written once and published once in
+       2005, while the PDF here is one encoding of it made at some later
+       date. Collapsing the two makes the file's own modification date look
+       like a publication date and loses the publisher entirely.
+
+       exampleOfWork points the file at the work it reproduces, and the
+       work's own facts — author, publisher, date, language, identifiers —
+       stay on the Book node in identity.json, stated once. The file keeps
+       its own @id and its own encoding facts. */
+    $work_key = entity_key_from_name((string) ($m['entity_work'] ?? ''));
+    if ($work_key !== '' && isset(entities_load()['books'][$work_key])) {
+        $work = entities_load()['books'][$work_key];
+        $node['exampleOfWork'] = ['@id' => entity_id($work_key)];
+        // The work's language and publication date describe the work, so
+        // they are safe to surface on the copy; its modification date is
+        // not, and is left alone. Only filled where the file does not
+        // already state its own.
+        if ($work['language'] !== '' && !isset($node['inLanguage'])) {
+            $node['inLanguage'] = $work['language'];
+        }
+        if ($work['datePublished'] !== '' && !isset($node['datePublished'])) {
+            $node['datePublished'] = $work['datePublished'];
+        }
+    }
     return $node;
 }
 
@@ -7957,6 +8017,8 @@ function index_all_files(array $mime_map): array
                 'tags' => $m['tags'] ?? [],
                 'document_type' => $m['document_type'] ?? '',
                 'entity_relation' => entity_relations_for($m, $rel_e ?? ''),
+                'entity_org' => (string) ($m['entity_org'] ?? ''),
+                'entity_work' => (string) ($m['entity_work'] ?? ''),
 
                 'doc_date' => $m['doc_date'] ?? '',
                 'seo_title' => $m['seo_title'] ?? '',
@@ -9070,12 +9132,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             </div>
 
             <h3 class="detail-title crawler-subhead">Hits by file · last 30 days</h3>
-            <table class="accounts diag-table">
+            <table class="accounts route-table">
                 <?php foreach ($crawler_routes_order as $route => $route_label): ?>
                     <tr>
-                        <td><?= e($route_label) ?></td>
-                        <td class="detail-facts"><code><?= e($route) ?></code></td>
-                        <td class="detail-facts"><?= (int) $crawler_by_route[$route] ?> hit<?= $crawler_by_route[$route] === 1 ? '' : 's' ?></td>
+                        <td class="route-label"><?= e($route_label) ?></td>
+                        <td class="route-path"><code><?= e($route) ?></code></td>
+                        <td class="route-hits"><?= (int) $crawler_by_route[$route] ?> hit<?= $crawler_by_route[$route] === 1 ? '' : 's' ?></td>
                     </tr>
                 <?php endforeach; ?>
             </table>
@@ -9084,16 +9146,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             <?php if (!$crawler_summary): ?>
                 <p class="empty">No AI crawler hits recorded yet.</p>
             <?php else: ?>
-                <table class="accounts diag-table">
+                <table class="accounts bot-table bot-table-wide">
                     <thead><tr><th>Bot</th><th>Operator</th><th>Purpose</th><th>Hits</th><th>Last seen</th><th>Top file</th></tr></thead>
                     <?php foreach ($crawler_summary as $row): ?>
                         <tr>
-                            <td><?= e($row['agent']) ?></td>
-                            <td class="detail-facts"><?= e($row['operator']) ?></td>
-                            <td class="detail-facts"><?= e($row['group']) ?></td>
-                            <td class="detail-facts"><?= (int) $row['hits'] ?></td>
-                            <td class="detail-facts"><?= $row['last_seen'] ? e(gmdate('Y-m-d H:i', (int) $row['last_seen'])) . ' UTC' : '—' ?></td>
-                            <td class="detail-facts"><code><?= e($row['top_route']) ?></code></td>
+                            <td class="bot-name"><?= e($row['agent']) ?></td>
+                            <td><?= e($row['operator']) ?></td>
+                            <td><?= e($row['group']) ?></td>
+                            <td class="bot-num"><?= (int) $row['hits'] ?></td>
+                            <td class="bot-when"><?= $row['last_seen'] ? e(gmdate('Y-m-d H:i', (int) $row['last_seen'])) . ' UTC' : '—' ?></td>
+                            <td><code><?= e($row['top_route']) ?></code></td>
                         </tr>
                     <?php endforeach; ?>
                 </table>
@@ -9130,17 +9192,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             <?php if (!$crawler_recent): ?>
                 <p class="empty">No AI crawler hits recorded yet.</p>
             <?php else: ?>
-                <table class="accounts diag-table">
+                <table class="accounts bot-table bot-table-recent">
                     <thead><tr><th>Time (UTC)</th><th>Bot</th><th>Operator</th><th>File</th></tr></thead>
                     <?php foreach ($crawler_recent as $row):
                         $agent = (string) ($row['b'] ?? '');
                         $operator = $crawler_registry[$agent]['operator'] ?? '';
                         ?>
                         <tr>
-                            <td class="detail-facts"><?= e(gmdate('Y-m-d H:i:s', (int) ($row['t'] ?? 0))) ?></td>
-                            <td><?= e($agent) ?></td>
-                            <td class="detail-facts"><?= e($operator) ?></td>
-                            <td class="detail-facts"><code><?= e((string) ($row['r'] ?? '')) ?></code></td>
+                            <td class="bot-when"><?= e(gmdate('Y-m-d H:i:s', (int) ($row['t'] ?? 0))) ?></td>
+                            <td class="bot-name"><?= e($agent) ?></td>
+                            <td><?= e($operator) ?></td>
+                            <td><code><?= e((string) ($row['r'] ?? '')) ?></code></td>
                         </tr>
                     <?php endforeach; ?>
                 </table>
@@ -9150,13 +9212,13 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
         <section class="crawler-panel" data-crawler-panel="2" role="tabpanel">
             <p class="field-note">Every agent Folio recognises, grouped by what it does — the same registry the <a href="<?= e(BASE_URL) ?>?action=settings">AI permissions</a> toggles govern in robots.txt.</p>
-            <table class="accounts diag-table">
+            <table class="accounts bot-table">
                 <thead><tr><th>Bot</th><th>Operator</th><th>Purpose</th></tr></thead>
                 <?php foreach ($crawler_registry as $agent => $info): ?>
                     <tr>
-                        <td><?= e($agent) ?></td>
-                        <td class="detail-facts"><?= e($info['operator']) ?></td>
-                        <td class="detail-facts"><?= e($info['label']) ?></td>
+                        <td class="bot-name"><?= e($agent) ?></td>
+                        <td><?= e($info['operator']) ?></td>
+                        <td><?= e($info['label']) ?></td>
                     </tr>
                 <?php endforeach; ?>
             </table>
@@ -9661,6 +9723,20 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             $pimg    = trim((string) ($_POST['publisher_image'] ?? ''));
             $pctype  = trim((string) ($_POST['publisher_contact_type'] ?? ''));
             $pclangs = trim((string) ($_POST['publisher_contact_languages'] ?? ''));
+
+            // Outgoing mail. The password uses blank-means-unchanged: an
+            // empty submission keeps whatever is already saved, so the
+            // field never has to round-trip the real password back into
+            // the page just to avoid clobbering it on an unrelated save.
+            $smtp_host = trim((string) ($_POST['smtp_host'] ?? ''));
+            $smtp_port = (int) ($_POST['smtp_port'] ?? 0);
+            $smtp_enc  = (string) ($_POST['smtp_encryption'] ?? 'tls');
+            if (!in_array($smtp_enc, ['tls', 'ssl', 'none'], true)) {
+                $smtp_enc = 'tls';
+            }
+            $smtp_user = trim((string) ($_POST['smtp_username'] ?? ''));
+            $smtp_pass_in = (string) ($_POST['smtp_password'] ?? '');
+            $smtp_pass = $smtp_pass_in !== '' ? $smtp_pass_in : SMTP_PASSWORD;
             // The address the contact form delivers to, and the one vcard.vcf
             // and llms.txt's Contact section already publish. One setting for
             // all three, so they cannot drift apart.
@@ -9717,6 +9793,8 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                 $error = 'The canonical identity ID must be a full http(s) URL, typically ending in a fragment such as #person.';
             } elseif ($pimg !== '' && preg_match('#^[a-z][a-z0-9+.-]*://#i', $pimg) && !preg_match('#^https?://#i', $pimg)) {
                 $error = 'The portrait must be a path inside this installation or a full http(s) URL.';
+            } elseif ($smtp_host !== '' && ($smtp_port < 1 || $smtp_port > 65535)) {
+                $error = 'The SMTP port must be between 1 and 65535.';
             } elseif ($pemail !== '' && (!filter_var($pemail, FILTER_VALIDATE_EMAIL) || strlen($pemail) > 254)) {
                 $error = 'That publisher email does not look like a valid address.';
             } elseif ($prsurl !== '' && !preg_match('#^https?://#', $prsurl)) {
@@ -9740,6 +9818,11 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_IMAGE' => $pimg,
                     'PUBLISHER_CONTACT_TYPE' => $pctype !== '' ? $pctype : 'customer support',
                     'PUBLISHER_CONTACT_LANGUAGES' => $pclangs,
+                    'SMTP_HOST' => $smtp_host,
+                    'SMTP_PORT' => $smtp_port > 0 ? $smtp_port : 587,
+                    'SMTP_ENCRYPTION' => $smtp_enc,
+                    'SMTP_USERNAME' => $smtp_user,
+                    'SMTP_PASSWORD' => $smtp_pass,
                     'PUBLISHER_EMAIL' => $pemail,
                     'PUBLISHER_BIO' => $pbio,
                     'PUBLISHER_OCCUPATION' => $pocc,
@@ -9794,6 +9877,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_image' => PUBLISHER_IMAGE,
         'publisher_contact_type' => PUBLISHER_CONTACT_TYPE,
         'publisher_contact_languages' => PUBLISHER_CONTACT_LANGUAGES,
+        'smtp_host' => SMTP_HOST,
+        'smtp_port' => (string) SMTP_PORT,
+        'smtp_encryption' => SMTP_ENCRYPTION,
+        'smtp_username' => SMTP_USERNAME,
+        // The password itself is never echoed back into the page — only
+        // whether one is already saved, which is what lets the field show
+        // "leave blank to keep it" without ever putting the secret in HTML.
+        'smtp_password_set' => trim((string) SMTP_PASSWORD) !== '',
         'publisher_email' => PUBLISHER_EMAIL,
         'publisher_bio' => PUBLISHER_BIO,
         'publisher_occupation' => PUBLISHER_OCCUPATION,
@@ -9827,7 +9918,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'audio_playlist' => AUDIO_PLAYLIST,
     ];
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '') {
-        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'publisher_canonical_id', 'publisher_image', 'publisher_contact_type', 'publisher_contact_languages', 'site_language', 'site_sameas', 'ai_policy_note'] as $k) {
+        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'publisher_canonical_id', 'publisher_image', 'publisher_contact_type', 'publisher_contact_languages', 'site_language', 'site_sameas', 'ai_policy_note', 'smtp_host', 'smtp_port', 'smtp_encryption', 'smtp_username'] as $k) {
             if (isset($_POST[$k])) {
                 $cur[$k] = (string) $_POST[$k];
             }
@@ -10105,6 +10196,43 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     <input type="checkbox" name="audio_playlist" value="1" <?= $cur['audio_playlist'] ? 'checked' : '' ?>>
                     Play a folder's audio or video as a playlist, with a queue and auto-advance
                 </label>
+
+                <h3 class="detail-subtitle">Outgoing mail (SMTP)</h3>
+                <p class="field-note">
+                    Used for the contact form instead of the server's built-in mail function whenever
+                    a host is set below. PHP's default mail sender only ever confirms a message
+                    reached the local mail queue, never that it actually left the server — on most
+                    modern hosts, which block outbound port 25 by default, that handoff quietly
+                    succeeds while the message goes nowhere. Authenticated SMTP on port 587 avoids
+                    that, and reports back a real reason when something goes wrong. Leave the host
+                    empty to keep using the server's built-in sender, unchanged from before this
+                    setting existed.
+                </p>
+
+                <label for="s-smtphost">SMTP host</label>
+                <input type="text" id="s-smtphost" name="smtp_host" maxlength="200" placeholder="smtp.example.com" value="<?= e((string) $cur['smtp_host']) ?>">
+
+                <label for="s-smtpport">Port</label>
+                <input type="text" id="s-smtpport" name="smtp_port" maxlength="6" placeholder="587" value="<?= e((string) $cur['smtp_port']) ?>">
+
+                <label for="s-smtpenc">Encryption</label>
+                <select id="s-smtpenc" name="smtp_encryption">
+                    <option value="tls" <?= $cur['smtp_encryption'] === 'tls' ? 'selected' : '' ?>>STARTTLS (usually port 587)</option>
+                    <option value="ssl" <?= $cur['smtp_encryption'] === 'ssl' ? 'selected' : '' ?>>SSL/TLS from the start (usually port 465)</option>
+                    <option value="none" <?= $cur['smtp_encryption'] === 'none' ? 'selected' : '' ?>>None (not recommended)</option>
+                </select>
+
+                <label for="s-smtpuser">Username</label>
+                <input type="text" id="s-smtpuser" name="smtp_username" maxlength="200" autocomplete="off" value="<?= e((string) $cur['smtp_username']) ?>">
+
+                <label for="s-smtppass">Password</label>
+                <input type="password" id="s-smtppass" name="smtp_password" maxlength="500" autocomplete="new-password" placeholder="<?= $cur['smtp_password_set'] ? 'Unchanged — leave blank to keep it' : '' ?>" value="">
+                <p class="field-note">
+                    Stored in plain text in <code>data/settings.php</code>, the same way every
+                    application that sends SMTP mail stores it — the password has to be readable to
+                    be used, unlike the login password above, which never needs to be read back.
+                    <?= $cur['smtp_password_set'] ? 'Leave this blank to keep the password already saved.' : '' ?>
+                </p>
             </section>
         </div>
 
@@ -10113,6 +10241,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
 
     <p class="detail-facts">Clean URLs and the uploads folder name stay in <code>config.php</code>, since changing them can take the site down and should be a deliberate file edit.</p>
 </main>
+<script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script>
 </body>
 </html>
     <?php
@@ -11038,8 +11167,28 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
                deletion: entities_save() drops it, which is how a row is
                removed without a separate delete action per row. */
             $store = ['organizations' => [], 'books' => []];
+            /* Names explicitly ticked for deletion. Tracked separately because
+               a book may still carry a deleted organisation's name in its
+               publisher field, and the auto-create step below would otherwise
+               recreate it — making the delete look as though it silently
+               failed. An explicit deletion outranks an incidental mention. */
+            $deleted_org_keys = [];
+            foreach ((array) ($_POST['org_name'] ?? []) as $i => $o_name) {
+                if (empty($_POST['org_delete'][$i])) {
+                    continue;
+                }
+                $d_key = entity_key_from_name((string) ($_POST['org_key'][$i] ?? '')) ?: entity_key_from_name((string) $o_name);
+                if ($d_key !== '') {
+                    $deleted_org_keys[$d_key] = true;
+                }
+            }
             $o_names = (array) ($_POST['org_name'] ?? []);
             foreach ($o_names as $i => $o_name) {
+                // A row ticked for deletion is simply left out of the set
+                // handed to entities_save(), which writes what it is given.
+                if (!empty($_POST['org_delete'][$i])) {
+                    continue;
+                }
                 $store['organizations'][] = [
                     'key'    => (string) ($_POST['org_key'][$i] ?? ''),
                     'name'   => (string) $o_name,
@@ -11048,8 +11197,36 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
                     'sameas' => (string) ($_POST['org_sameas'][$i] ?? ''),
                 ];
             }
+            /* A publisher typed on a book that matches no organisation is
+               created as one. Without this the first publisher could never be
+               entered: both forms are on this page, so neither can be saved
+               before the other. Matching is on the derived key, so "Jahabersa"
+               and "jahabersa " are the same organisation, not two. */
+            $known_org_keys = [];
+            foreach ($store['organizations'] as $o_rec) {
+                $o_k = entity_key_from_name((string) ($o_rec['key'] ?? '')) ?: entity_key_from_name((string) $o_rec['name']);
+                if ($o_k !== '') {
+                    $known_org_keys[$o_k] = true;
+                }
+            }
+            foreach ((array) ($_POST['book_publisher'] ?? []) as $p_name) {
+                $p_name = trim((string) $p_name);
+                $p_key  = entity_key_from_name($p_name);
+                if ($p_key === '' || isset($known_org_keys[$p_key]) || isset($deleted_org_keys[$p_key])) {
+                    continue;
+                }
+                $known_org_keys[$p_key] = true;
+                $store['organizations'][] = [
+                    'key' => $p_key, 'name' => $p_name,
+                    'type' => 'Organization', 'url' => '', 'sameas' => '',
+                ];
+            }
+
             $b_names = (array) ($_POST['book_name'] ?? []);
             foreach ($b_names as $i => $b_name) {
+                if (!empty($_POST['book_delete'][$i])) {
+                    continue;
+                }
                 $store['books'][] = [
                     'key'           => (string) ($_POST['book_key'][$i] ?? ''),
                     'name'          => (string) $b_name,
@@ -11061,8 +11238,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
                     'url'           => (string) ($_POST['book_url'][$i] ?? ''),
                 ];
             }
+            /* Two different names can normalise to the same identifier —
+               "AT&T" and "AT T" both become "at-t" — and entities_save()
+               keys its store by that identifier, so the second one saved
+               would silently overwrite the first with no warning. Detected
+               here, before the write, rather than left to be discovered as
+               a organisation that mysteriously vanished. */
+            $collision_error = '';
+            foreach (['organizations' => 'organisations', 'books' => 'books'] as $set => $set_label) {
+                $seen = [];
+                foreach ($store[$set] as $rec) {
+                    $c_key = entity_key_from_name((string) ($rec['key'] ?? '')) ?: entity_key_from_name((string) $rec['name']);
+                    if ($c_key === '') {
+                        continue;
+                    }
+                    if (isset($seen[$c_key]) && $seen[$c_key] !== $rec['name']) {
+                        $collision_error = '"' . $seen[$c_key] . '" and "' . $rec['name'] . '" both reduce to the same identifier'
+                            . ' (#' . $c_key . '), so saving would silently keep only one. Rename one of the ' . $set_label . '.';
+                        break 2;
+                    }
+                    $seen[$c_key] = $rec['name'];
+                }
+            }
+
             $save_error = '';
-            if (!$writable) {
+            if ($collision_error !== '') {
+                $error = $collision_error;
+            } elseif (!$writable) {
                 $error = 'The data/ folder is not writable, so entities cannot be saved.';
             } elseif (entities_save($store, $save_error)) {
                 $notice = 'Entities saved.';
@@ -11120,9 +11322,16 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
         same publisher describe one publisher rather than six unrelated words.
     </p>
     <p class="field-note">
-        Clear an entry's name and save to remove it. Removing an organisation a document still
-        refers to leaves that document's &ldquo;published by&rdquo; silent rather than broken.
+        To remove an entry, tick <strong>Delete on save</strong> on it and save. Removing an
+        organisation that a book or document still refers to leaves that reference silent rather
+        than broken &mdash; nothing else breaks, and you can add it back at any time.
     </p>
+
+    <datalist id="folio-org-names">
+        <?php foreach ($ent['organizations'] as $po): ?>
+            <option value="<?= e($po['name']) ?>"></option>
+        <?php endforeach; ?>
+    </datalist>
 
     <form method="post" class="stack-form entities-form">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
@@ -11131,7 +11340,15 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
         <p class="field-note">Publishers, universities, institutions &mdash; anything that issues or publishes.</p>
         <?php foreach ($orgs as $i => $o): ?>
             <fieldset class="entity-row">
-                <legend><?= $o['name'] !== '' ? e($o['name']) : 'New organisation' ?></legend>
+                <legend>
+                    <?= $o['name'] !== '' ? e($o['name']) : 'New organisation' ?>
+                    <?php if ($o['key'] !== ''): ?>
+                        <label class="entity-delete">
+                            <input type="checkbox" name="org_delete[<?= (int) $i ?>]" value="1">
+                            Delete on save
+                        </label>
+                    <?php endif; ?>
+                </legend>
                 <input type="hidden" name="org_key[<?= (int) $i ?>]" value="<?= e($o['key']) ?>">
                 <label class="meta-form-label">Name
                     <input type="text" name="org_name[<?= (int) $i ?>]" maxlength="160" value="<?= e($o['name']) ?>" placeholder="Jahabersa">
@@ -11163,18 +11380,40 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
         </p>
         <?php foreach ($books as $i => $b): ?>
             <fieldset class="entity-row">
-                <legend><?= $b['name'] !== '' ? e($b['name']) : 'New book' ?></legend>
+                <legend>
+                    <?= $b['name'] !== '' ? e($b['name']) : 'New book' ?>
+                    <?php if ($b['key'] !== ''): ?>
+                        <label class="entity-delete">
+                            <input type="checkbox" name="book_delete[<?= (int) $i ?>]" value="1">
+                            Delete on save
+                        </label>
+                    <?php endif; ?>
+                </legend>
                 <input type="hidden" name="book_key[<?= (int) $i ?>]" value="<?= e($b['key']) ?>">
                 <label class="meta-form-label">Title
                     <input type="text" name="book_name[<?= (int) $i ?>]" maxlength="300" value="<?= e($b['name']) ?>">
                 </label>
                 <label class="meta-form-label">Publisher
-                    <select name="book_publisher[<?= (int) $i ?>]">
-                        <option value="">Not stated</option>
-                        <?php foreach ($ent['organizations'] as $po_key => $po): ?>
-                            <option value="<?= e($po_key) ?>" <?= $b['publisher'] === $po_key ? 'selected' : '' ?>><?= e($po['name']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
+                    <?php
+                    /* Free text with suggestions, not a select. A select could
+                       only ever offer organisations already saved, which made
+                       the first publisher impossible to enter: the book form
+                       and the organisation form are on the same page, so
+                       neither could be filled first. Typing a new name here
+                       creates the organisation on save. */
+                    $b_pub_name = ($b['publisher'] !== '' && isset($ent['organizations'][$b['publisher']]))
+                        ? $ent['organizations'][$b['publisher']]['name']
+                        : $b['publisher'];
+                    ?>
+                    <input type="text" name="book_publisher[<?= (int) $i ?>]" maxlength="160"
+                           list="folio-org-names" autocomplete="off"
+                           value="<?= e($b_pub_name) ?>" placeholder="Jahabersa">
+                    <span class="field-note">
+                        Type the publisher's name. A name that is not already an organisation above
+                        is created as one when you save, so you never have to add it twice. Leave
+                        it empty rather than naming the author &mdash; a work with no publisher
+                        recorded is not the same as a self-published one.
+                    </span>
                 </label>
                 <label class="meta-form-label">Published
                     <input type="text" name="book_date[<?= (int) $i ?>]" maxlength="10" value="<?= e($b['datePublished']) ?>" placeholder="2005">
@@ -11189,8 +11428,14 @@ if (isset($_GET['action']) && $_GET['action'] === 'entities') {
                 <label class="meta-form-label">OCLC <span class="field-note field-note-inline">(optional)</span>
                     <input type="text" name="book_oclc[<?= (int) $i ?>]" maxlength="30" value="<?= e($b['oclc']) ?>">
                 </label>
-                <label class="meta-form-label">Archive page <span class="field-note field-note-inline">(optional)</span>
-                    <input type="text" name="book_url[<?= (int) $i ?>]" maxlength="200" value="<?= e($b['url']) ?>" placeholder="https://…">
+                <label class="meta-form-label">Page on this site <span class="field-note field-note-inline">(optional)</span>
+                    <input type="text" name="book_url[<?= (int) $i ?>]" maxlength="200" value="<?= e($b['url']) ?>" placeholder="<?= e(rtrim(BASE_URL, '/')) ?>/buddhism/">
+                    <span class="field-note">
+                        The address of this book's own page in the library, if it has one. The book
+                        is the work &mdash; written once, published once; the page is where a reader
+                        finds it. Naming the page here says the two are the same book rather than
+                        two unrelated things. Leave it empty for a book with no page here.
+                    </span>
                 </label>
                 <?php if ($b['key'] !== ''): ?>
                     <p class="field-note">Identifier: <code><?= e(entity_id($b['key'])) ?></code></p>
@@ -11234,9 +11479,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
             // messages go to anyway.
             if (contact_recipient() === '') {
                 $error = 'No publisher email is set, so there is nowhere to send a test. Add one under Settings.';
-            } elseif (!function_exists('mail')) {
-                $error = 'This server has no PHP mail function available, so Folio cannot send email at all. Ask your host about this.';
+            } elseif (!smtp_configured() && !function_exists('mail')) {
+                $error = 'This server has no PHP mail function available, and no SMTP transport is configured. Ask your host about mail(), or add SMTP settings above.';
             } else {
+                $send_error = '';
                 $sent = contact_send([
                     'name'    => 'Folio',
                     'email'   => contact_recipient(),
@@ -11244,14 +11490,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'pages') {
                     'message' => "This is a test from your Folio contact form.\n\n"
                                . "If you are reading this, mail delivery works and messages sent "
                                . "through your contact page will reach you at this address.",
-                ], []);
+                ], [], $send_error);
                 if ($sent) {
-                    $notice = 'Test email sent to your publisher address. If it does not arrive within '
-                        . 'a few minutes, check the spam folder — that is the usual reason.';
+                    $notice = 'Test email sent to your publisher address via '
+                        . (smtp_configured() ? 'SMTP (' . e(SMTP_HOST) . ')' : "PHP's mail()")
+                        . '. If it does not arrive within a few minutes, check the spam folder — '
+                        . 'that is the usual reason' . (smtp_configured() ? '' : ', though on many hosts the real cause is outbound port 25 being blocked, which SMTP avoids') . '.';
                 } else {
-                    $error = 'The server refused to send the test email. Your host can say why; '
-                        . 'Folio has recorded a note in the server error log.';
-                    error_log('Folio contact form: test email failed — mail() returned false.');
+                    $error = smtp_configured()
+                        ? ('SMTP send failed: ' . $send_error)
+                        : 'The server refused to send the test email. Your host can say why; '
+                          . 'Folio has recorded a note in the server error log.';
+                    error_log('Folio contact form: test email failed — ' . ($send_error !== '' ? $send_error : 'mail() returned false.'));
                 }
             }
         } else {
@@ -11556,7 +11806,7 @@ if (isset($_GET['page'])) {
                 $contact_errors['form'] = $generic;
                 error_log('Folio contact form: cannot send — '
                     . (contact_recipient() === '' ? 'PUBLISHER_EMAIL is not set or not a valid address'
-                                                  : 'PHP mail() is unavailable on this server'));
+                                                  : 'no transport available (neither SMTP nor PHP mail() is configured)'));
             } else {
                 $in = [
                     'name'    => (string) ($_POST['name'] ?? ''),
@@ -11583,7 +11833,8 @@ if (isset($_GET['page'])) {
                     $attachments = contact_collect_attachments($_FILES['attachments'] ?? null, $contact_errors);
 
                     if (!$contact_errors) {
-                        $ok = contact_send($in, $attachments);
+                        $send_error = '';
+                        $ok = contact_send($in, $attachments, $send_error);
                         contact_cleanup($attachments);
                         if ($ok) {
                             contact_rate_record();
@@ -11597,7 +11848,7 @@ if (isset($_GET['page'])) {
                         }
                         $contact_failed = true;
                         $contact_errors['form'] = $generic;
-                        error_log('Folio contact form: mail() returned false — the message was not accepted by the transport.');
+                        error_log('Folio contact form: send failed — ' . ($send_error !== '' ? $send_error : 'mail() returned false.'));
                     } else {
                         contact_cleanup($attachments);
                     }
@@ -12489,7 +12740,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
     if ($contact_page_on) {
         $contact_bits = [];
         $contact_bits[] = contact_recipient() !== '' ? 'recipient configured' : 'NO RECIPIENT';
-        $contact_bits[] = function_exists('mail') ? 'mail transport available' : 'NO MAIL TRANSPORT';
+        $contact_bits[] = smtp_configured()
+            ? 'SMTP transport configured (' . SMTP_HOST . ')'
+            : (function_exists('mail') ? "mail() transport available (consider SMTP — see note)" : 'NO MAIL TRANSPORT');
         $contact_bits[] = CONTACT_ATTACHMENTS
             ? 'attachments on (max ' . (int) CONTACT_MAX_ATTACHMENTS . ', '
               . round(contact_effective_max_bytes() / 1048576) . ' MB total)'
@@ -12497,11 +12750,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
         $contact_bits[] = CONTACT_ANTISPAM ? 'anti-spam on' : 'ANTI-SPAM OFF';
         $cfg_checks[] = [
             'label'  => 'contact form',
-            'status' => contact_ready() ? 'ok' : 'warn',
+            'status' => !contact_ready() ? 'warn' : (smtp_configured() ? 'ok' : 'info'),
             'note'   => (contact_ready() ? 'Ready. ' : 'Not ready — the page renders but cannot send. ')
                 . implode(', ', $contact_bits) . '.'
                 . (contact_recipient() === ''
                     ? ' Set a publisher email under Settings; it is the address messages are sent to.'
+                    : '')
+                . (contact_ready() && !smtp_configured()
+                    ? ' Using PHP\'s mail(), which only confirms the message reached the local mail '
+                      . 'queue — never whether it actually left the server or was accepted anywhere. '
+                      . 'Most cloud hosts block outbound port 25 by default, which makes this fail '
+                      . 'silently: mail() reports success and nothing arrives. If test emails from '
+                      . 'Settings are not arriving, configure SMTP there instead.'
                     : ''),
         ];
     }
@@ -12989,7 +13249,7 @@ bash tests/smoke.sh</pre>
     <p class="detail-desc">
         It starts a throwaway PHP server on a copy of the installation, so it never touches your
         real <code>config.php</code>, <code>data/</code>, or <code>uploads/</code>. A passing run
-        ends with <em>All Folio smoke tests passed.</em> See <code>tests/readme.md</code> for details.
+        ends with <em>All Folio smoke tests passed.</em> See the <a href="https://github.com/menj/folio#testing">Testing</a> section of the readme for details.
     </p>
 
     <h2 class="detail-title" id="caches">Stored caches</h2>
@@ -13055,6 +13315,7 @@ bash tests/smoke.sh</pre>
         <a class="btn btn-ghost" href="<?= e(BASE_URL) ?>">Back to the library</a>
     </p>
 </main>
+<script src="<?= e(asset_url('assets/js/admin.js')) ?>" defer></script>
 </body>
 </html>
     <?php
@@ -15117,6 +15378,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
                 $out .= "      - " . $y($yr) . "\n";
             }
             $out .= "    relation_source: " . $y((string) ($yrel['source'] ?? 'fallback')) . "\n";
+
+            // The second party a "published by" or "issued by" relation
+            // names, and the declared work this file is a copy of — both
+            // resolved to their @id so the YAML carries the same identifiers
+            // as identity.json rather than a name a consumer has to guess at.
+            $y_org_key = entity_key_from_name((string) ($f['entity_org'] ?? ''));
+            if ($y_org_key !== '' && isset(entities_load()['organizations'][$y_org_key])) {
+                $out .= "    entity_org: " . $y(entity_id($y_org_key)) . "\n";
+            }
+            $y_work_key = entity_key_from_name((string) ($f['entity_work'] ?? ''));
+            if ($y_work_key !== '' && isset(entities_load()['books'][$y_work_key])) {
+                $out .= "    example_of_work: " . $y(entity_id($y_work_key)) . "\n";
+            }
         }
         // What kind of media the file is — pdf, image, video, audio, text.
         if (($f['kind'] ?? '') !== '') {
@@ -15338,8 +15612,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     ksort($by_cat, SORT_NATURAL | SORT_FLAG_CASE);
     foreach ($by_cat as $cat => $files_in_cat) {
         $label = $cat === "\x7fOther documents" ? 'Other documents' : $cat;
-        $out .= '## ' . $label . "\n\n";
-        foreach ($files_in_cat as $f) {
+        $cat_total = count($files_in_cat);
+        // Cap how many documents a category lists here. llms.txt is meant
+        // to orient a reader, not enumerate the whole library — that is
+        // library.yaml's job, and it has no cap. Matches the reasoning
+        // already applied to the sitemap, which switches to a paginated
+        // index past 50,000 URLs rather than growing one file without
+        // bound; the threshold here is far smaller because this file is
+        // read as prose, not parsed as a URL list.
+        $cat_capped = LLMS_MAX_PER_SECTION > 0 && $cat_total > LLMS_MAX_PER_SECTION;
+        $cat_shown  = $cat_capped ? array_slice($files_in_cat, 0, LLMS_MAX_PER_SECTION) : $files_in_cat;
+        $out .= '## ' . $label . ($cat_capped ? ' (showing ' . LLMS_MAX_PER_SECTION . ' of ' . $cat_total . ')' : '') . "\n\n";
+        foreach ($cat_shown as $f) {
             $title = $f['title'] !== '' ? $f['title'] : pathinfo($f['name'], PATHINFO_FILENAME);
             $out .= '- [' . str_replace(['[', ']'], '', $title) . '](' . $f['view'] . ')';
             if ($f['desc'] !== '') {
@@ -15359,6 +15643,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
                 $out .= ' — PDF: ' . url_raw((string) $f['rel']);
             }
             $out .= "\n";
+        }
+        if ($cat_capped && YAML_ENABLED) {
+            $out .= '- ' . ($cat_total - LLMS_MAX_PER_SECTION) . ' more in this category — see [library.yaml](' . url_yaml() . ") for the complete list.\n";
         }
         $out .= "\n";
     }
@@ -15740,6 +16027,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     if ($entity_org !== '' && !isset(entities_load()['organizations'][$entity_org])) {
         $entity_org = '';
     }
+    // Which declared work this file is a copy of. Validated against the
+    // stored books, so a record can never point at a work that does not
+    // exist.
+    $entity_work = entity_key_from_name((string) ($_POST['entity_work'] ?? ''));
+    if ($entity_work !== '' && !isset(entities_load()['books'][$entity_work])) {
+        $entity_work = '';
+    }
 
     $pdf_access = (string) ($_POST['pdf_access'] ?? 'public');
     if ($pdf_access === 'viewer') { $pdf_access = 'restricted'; }
@@ -15797,7 +16091,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $entity_relation, $entity_org, $doc_date, $transcript, $pdf_access, $video_access, $image_access, $image_redact_regions, $language, $placeholder_image,
+        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $entity_relation, $entity_org, $entity_work, $doc_date, $transcript, $pdf_access, $video_access, $image_access, $image_redact_regions, $language, $placeholder_image,
         $seo_title, $seo_desc, $video_type, $redact_regions, $video_redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
@@ -15805,7 +16099,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         // both discard it on save and stop an otherwise-empty record being
         // cleared.
         if ($title === '' && $desc === '' && $long_desc === '' && $cat === '' && !$tags
-            && $document_type === '' && !$entity_relation && $entity_org === '' && $doc_date === '' && $transcript === ''
+            && $document_type === '' && !$entity_relation && $entity_org === '' && $entity_work === '' && $doc_date === '' && $transcript === ''
             && $pdf_access === 'public' && $video_access === 'public'
             && $image_access === 'public' && !$image_redact_regions && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
@@ -15825,6 +16119,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'document_type' => $document_type,
                 'entity_relation' => $entity_relation,
                 'entity_org' => $entity_org,
+                'entity_work' => $entity_work,
                 'doc_date' => $doc_date,
                 'seo_title' => $seo_title,
                 'seo_desc' => $seo_desc,
@@ -15874,6 +16169,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         'document_type' => $document_type,
         'entity_relation' => $entity_relation,
         'entity_org' => $entity_org,
+        'entity_work' => $entity_work,
         'pdf_access' => $pdf_access,
     ]));
 }
@@ -16529,6 +16825,7 @@ foreach (scandir($abs_dir) as $entry) {
             'entity_relation' => entity_relations_clean((array) ($m['entity_relation'] ?? [])),
             'entity_relation_effective' => entity_relations_for($m, $rel_entry ?? ''),
             'entity_org' => (string) ($m['entity_org'] ?? ''),
+            'entity_work' => (string) ($m['entity_work'] ?? ''),
 
             'doc_date' => $m['doc_date'] ?? '',
             'seo_title' => $m['seo_title'] ?? '',
@@ -17116,6 +17413,25 @@ $listing_ld = [
                                             relation above refers to. Those two say nothing at all until one is named
                                             here &mdash; naming no one is better than implying the author published
                                             his own work. Manage the list on the Entities screen.
+                                        </span>
+                                    </label>
+                                <?php endif; ?>
+                                <?php $er_books = entities_load()['books']; ?>
+                                <?php if ($er_books): ?>
+                                    <label class="meta-form-label">
+                                        Copy of
+                                        <select name="entity_work">
+                                            <option value="">Not a copy of a declared work</option>
+                                            <?php foreach ($er_books as $ew_key => $ew): ?>
+                                                <option value="<?= e($ew_key) ?>" <?= ($f['entity_work'] ?? '') === $ew_key ? 'selected' : '' ?>><?= e($ew['name']) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <span class="field-note">
+                                            If this file is a copy of a book declared on the Entities screen, say
+                                            which. The book is the work &mdash; written once, published once; this
+                                            file is one copy of it. Naming it keeps the publisher and publication
+                                            year on the book, where they belong, instead of being guessed from
+                                            this file.
                                         </span>
                                     </label>
                                 <?php endif; ?>
