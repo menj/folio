@@ -131,7 +131,7 @@ defined('UPLOADS_DIRNAME')      || define('UPLOADS_DIRNAME', 'uploads');
 defined('ADMIN_USERNAME')       || define('ADMIN_USERNAME', 'admin');
 defined('ADMIN_PASSWORD_HASH')  || define('ADMIN_PASSWORD_HASH', 'CHANGE_ME');
 defined('SITE_NAME')            || define('SITE_NAME', 'Folio');
-define('FOLIO_VERSION', '1.60.0');
+define('FOLIO_VERSION', '1.67.1');
 define('FOLIO_AUTHOR', 'MENJ');
 define('FOLIO_AUTHOR_URI', 'https://menj.blog');
 define('FOLIO_REPO_URI', 'https://github.com/menj/folio');
@@ -141,6 +141,29 @@ defined('SITE_DESCRIPTION')     || define('SITE_DESCRIPTION', 'A reading library
 defined('PUBLISHER_TYPE')       || define('PUBLISHER_TYPE', 'Person');
 defined('PUBLISHER_NAME')       || define('PUBLISHER_NAME', '');
 defined('PUBLISHER_URL')        || define('PUBLISHER_URL', '');
+// Optional. By default the Person/Organization node's @id is derived from
+// this installation's own BASE_URL (…#person), which is correct for the
+// overwhelming majority of installs where the library and its subject's
+// canonical page are the same site. Set this only when this Folio install
+// is a *satellite* of a subject whose canonical identity lives elsewhere —
+// a documentary archive on one domain about a person whose primary,
+// authoritative page is on another. Must be a full URL with a fragment,
+// e.g. https://example.com/#person. Every schema graph this installation
+// emits (identity.json, page JSON-LD, vcard.vcf) then points to that one
+// external @id instead of minting a second, competing Person node here.
+defined('PUBLISHER_CANONICAL_ID') || define('PUBLISHER_CANONICAL_ID', '');
+// Optional. A canonical portrait or logo for the publisher, reused across
+// every identity surface: the Person/Organization node, the About
+// ProfilePage, Open Graph, and vcard.vcf. Left empty, Folio falls back to
+// SITE_ICON exactly as before — a favicon is a poor portrait, but it is
+// better than publishing no image at all, and that was the prior
+// behaviour. Accepts a full URL or a path inside the installation.
+defined('PUBLISHER_IMAGE') || define('PUBLISHER_IMAGE', '');
+// The contactType published on the Person/Organization contactPoint, and
+// the languages that contact is available in. Defaults preserve exactly
+// what Folio emitted before these were configurable.
+defined('PUBLISHER_CONTACT_TYPE') || define('PUBLISHER_CONTACT_TYPE', 'customer support');
+defined('PUBLISHER_CONTACT_LANGUAGES') || define('PUBLISHER_CONTACT_LANGUAGES', '');
 // Optional, vCard-only. Never required, never guessed: each renders in
 // vcard.vcf only when set, exactly like SITE_SAMEAS already works.
 defined('PUBLISHER_NICKNAME')   || define('PUBLISHER_NICKNAME', '');
@@ -165,6 +188,29 @@ defined('PUBLISHER_AFFILIATION') || define('PUBLISHER_AFFILIATION', '');
 // the one canonical link; this is specifically "also see," named.
 defined('PUBLISHER_RELATED_SITE_URL')   || define('PUBLISHER_RELATED_SITE_URL', '');
 defined('PUBLISHER_RELATED_SITE_LABEL') || define('PUBLISHER_RELATED_SITE_LABEL', '');
+// Person biography, per the Schema.org Person type. Every one of these is
+// typed by the publisher in Settings and published verbatim — Folio derives
+// nothing here. The family fields (spouse, children, parents) name other
+// people in a public machine-readable file, so they are empty by default
+// and carry a plain note in Settings saying exactly that; whether one's
+// family appears in one's own biography is the publisher's decision, the
+// same one every autobiography and Wikipedia infobox makes. Still not
+// supported: sibling, knows, colleague and relatedTo, which nobody has
+// asked for, and homeLocation/workLocation — addressCountry already states
+// the coarse fact without publishing a locality.
+defined('PUBLISHER_HONORIFIC_PREFIX') || define('PUBLISHER_HONORIFIC_PREFIX', '');
+defined('PUBLISHER_GIVEN_NAME')       || define('PUBLISHER_GIVEN_NAME', '');
+defined('PUBLISHER_FAMILY_NAME')      || define('PUBLISHER_FAMILY_NAME', '');
+defined('PUBLISHER_BIRTH_DATE')       || define('PUBLISHER_BIRTH_DATE', '');
+defined('PUBLISHER_BIRTH_PLACE')      || define('PUBLISHER_BIRTH_PLACE', '');
+defined('PUBLISHER_GENDER')           || define('PUBLISHER_GENDER', '');
+defined('PUBLISHER_PRONOUNS')         || define('PUBLISHER_PRONOUNS', '');
+defined('PUBLISHER_KNOWS_LANGUAGE')   || define('PUBLISHER_KNOWS_LANGUAGE', '');
+defined('PUBLISHER_WORKS_FOR')        || define('PUBLISHER_WORKS_FOR', '');
+defined('PUBLISHER_AWARDS')           || define('PUBLISHER_AWARDS', '');
+defined('PUBLISHER_SPOUSE')           || define('PUBLISHER_SPOUSE', '');
+defined('PUBLISHER_CHILDREN')         || define('PUBLISHER_CHILDREN', '');
+defined('PUBLISHER_PARENTS')          || define('PUBLISHER_PARENTS', '');
 // Optional: a Creative Commons or other licence URL, emitted in ImageObject
 // structured data so Google Images can show a usage-rights badge. E.g.:
 //   define('SITE_LICENSE_URL', 'https://creativecommons.org/licenses/by/4.0/');
@@ -245,12 +291,18 @@ defined('LLMS_ENABLED')         || define('LLMS_ENABLED', true);
 defined('YAML_ENABLED')         || define('YAML_ENABLED', true);
 defined('IDENTITY_ENABLED')     || define('IDENTITY_ENABLED', true);
 defined('VCARD_ENABLED')        || define('VCARD_ENABLED', true);
+// AI crawler tracker: logs a hit whenever a known bot from ai_crawlers()
+// requests one of the discovery files below. Independent of AI_ALLOW_* —
+// those state a policy in robots.txt/llms.txt; this records who actually
+// showed up, including bots that ignore the policy.
+defined('CRAWLER_LOG_ENABLED')  || define('CRAWLER_LOG_ENABLED', true);
+defined('CRAWLER_LOG_RETENTION') || define('CRAWLER_LOG_RETENTION', 90);
 // Order and presence of the footer's discovery-file links. A comma-separated
-// list of keys from {llms, yaml, vcard, json, html, xml}; a key's own
+// list of keys from {robots, llms, yaml, vcard, json, html, xml}; a key's own
 // ENABLED toggle and SITE_INDEXABLE still gate whether it actually shows.
 // Admin-editable on the Crawlers screen; removing a key here hides that link
 // without touching its underlying toggle or route.
-defined('FOOTER_LINKS')         || define('FOOTER_LINKS', 'llms,yaml,vcard,json,html,xml');
+defined('FOOTER_LINKS')         || define('FOOTER_LINKS', 'robots,llms,yaml,vcard,json,html,xml');
 defined('AI_ALLOW_QUOTE')       || define('AI_ALLOW_QUOTE', true);
 defined('AI_ALLOW_SUMMARISE')   || define('AI_ALLOW_SUMMARISE', true);
 defined('AI_ALLOW_TRAIN')       || define('AI_ALLOW_TRAIN', true);
@@ -497,7 +549,7 @@ function request_needs_session(): bool
         return true;
     }
     $action = (string) ($_GET['action'] ?? '');
-    return in_array($action, ['login', 'logout', 'settings', 'crawlers', 'users', 'docs', 'diagnostics', 'pages', 'analytics'], true);
+    return in_array($action, ['login', 'logout', 'settings', 'crawlers', 'users', 'docs', 'diagnostics', 'pages', 'entities', 'analytics'], true);
 }
 
 if (request_needs_session()) {
@@ -1722,6 +1774,13 @@ function media_page_visible(string $rel, array $m): bool
     if ($kind === 'video') {
         return video_access_of($m) !== 'hidden';
     }
+    // Images gained the same three tiers in 1.58.0; without this branch a
+    // hidden image stayed in the folder listing, library.yaml and llms.txt —
+    // hidden in name only, which is the exact failure the tier exists to
+    // prevent.
+    if ($kind === 'image') {
+        return image_access_of($m) !== 'hidden';
+    }
     return true;
 }
 
@@ -1854,6 +1913,244 @@ function ai_crawlers(): array
             ],
         ],
     ];
+}
+
+/* ── AI crawler tracker ───────────────────────────────────────────────────
+ * Detects a hit from one of the agents in ai_crawlers() against Folio's own
+ * discovery files (llms.txt, library.yaml, identity.json, vcard.vcf,
+ * robots.txt, the HTML sitemap) and appends one line to
+ * data/crawler-log.jsonl — {"t":unix,"b":"GPTBot","r":"/llms.txt"}. No
+ * document view, no ordinary visitor, and no raw user-agent string is ever
+ * recorded; this only ever fires from the six discovery-route handlers,
+ * each calling crawler_maybe_log() once its own gating has already passed.
+ */
+
+/** ai_crawlers() flattened to one row per agent, keyed by agent name. */
+function ai_crawler_flat_registry(): array
+{
+    static $flat = null;
+    if ($flat !== null) {
+        return $flat;
+    }
+    $flat = [];
+    foreach (ai_crawlers() as $group => $g) {
+        foreach ($g['agents'] as $agent => $operator) {
+            $flat[$agent] = [
+                'operator' => $operator,
+                'group'    => $group,
+                'label'    => $g['label'],
+            ];
+        }
+    }
+    return $flat;
+}
+
+/**
+ * Match a raw User-Agent header against the registry.
+ *
+ * Case-insensitive substring match, longest agent name first, so a more
+ * specific token (Applebot-Extended) is never shadowed by a shorter one
+ * that happens to be its prefix (Applebot).
+ */
+function ai_crawler_detect(string $ua): ?string
+{
+    if ($ua === '') {
+        return null;
+    }
+    static $names = null;
+    if ($names === null) {
+        $names = array_keys(ai_crawler_flat_registry());
+        usort($names, static fn($a, $b) => strlen($b) - strlen($a));
+    }
+    foreach ($names as $name) {
+        if (stripos($ua, $name) !== false) {
+            return $name;
+        }
+    }
+    return null;
+}
+
+function crawler_log_path(): string
+{
+    return __DIR__ . '/data/crawler-log.jsonl';
+}
+
+/**
+ * Append one hit. Silently gives up on any I/O failure — logging must never
+ * be the reason a discovery file fails to serve.
+ */
+function crawler_log_hit(string $agent, string $route): void
+{
+    if (!CRAWLER_LOG_ENABLED || !isset(ai_crawler_flat_registry()[$agent])) {
+        return;
+    }
+    $line = json_encode(['t' => time(), 'b' => $agent, 'r' => $route], JSON_UNESCAPED_SLASHES);
+    if (!is_string($line)) {
+        return;
+    }
+    $path = crawler_log_path();
+    $dir  = dirname($path);
+    if (!is_dir($dir) && !@mkdir($dir, 0750, true)) {
+        return;
+    }
+    $fh = @fopen($path, 'ab');
+    if ($fh === false) {
+        return;
+    }
+    if (@flock($fh, LOCK_EX)) {
+        @fwrite($fh, $line . "\n");
+        @fflush($fh);
+        @flock($fh, LOCK_UN);
+    }
+    @fclose($fh);
+    @chmod($path, 0600);
+    // Occasional opportunistic prune — cheap enough on a log this small, and
+    // enforces retention without the cron job Folio does not have.
+    if (mt_rand(1, 200) === 1) {
+        crawler_log_prune();
+    }
+}
+
+/**
+ * Detect the current request's User-Agent and log it if it matches.
+ * Called from each discovery-route handler after its own enabled/gating
+ * checks pass, so a disabled or 404'd route is never logged as a hit.
+ */
+function crawler_maybe_log(string $route): void
+{
+    $ua    = isset($_SERVER['HTTP_USER_AGENT']) ? (string) $_SERVER['HTTP_USER_AGENT'] : '';
+    $agent = ai_crawler_detect($ua);
+    if ($agent !== null) {
+        crawler_log_hit($agent, $route);
+    }
+}
+
+/**
+ * Read log lines from the last $days days. A line that fails to parse is
+ * skipped rather than aborting the whole read.
+ */
+function crawler_log_read(int $days): array
+{
+    $path = crawler_log_path();
+    if (!is_file($path)) {
+        return [];
+    }
+    $cutoff = time() - max(1, $days) * 86400;
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        return [];
+    }
+    $rows = [];
+    if (@flock($fh, LOCK_SH)) {
+        while (($line = fgets($fh)) !== false) {
+            $row = json_decode(trim($line), true);
+            if (is_array($row) && isset($row['t'], $row['b'], $row['r']) && (int) $row['t'] >= $cutoff) {
+                $rows[] = $row;
+            }
+        }
+        @flock($fh, LOCK_UN);
+    }
+    @fclose($fh);
+    return $rows;
+}
+
+/** Per-bot rollup for the Overview tab: hit count, last seen, most-requested route. */
+function crawler_log_summary(int $days = 30): array
+{
+    $rows     = crawler_log_read($days);
+    $registry = ai_crawler_flat_registry();
+    $by_bot   = [];
+    foreach ($rows as $row) {
+        $agent = (string) $row['b'];
+        if (!isset($registry[$agent])) {
+            continue;
+        }
+        if (!isset($by_bot[$agent])) {
+            $by_bot[$agent] = ['hits' => 0, 'last_seen' => 0, 'routes' => []];
+        }
+        $by_bot[$agent]['hits']++;
+        $by_bot[$agent]['last_seen'] = max($by_bot[$agent]['last_seen'], (int) $row['t']);
+        $route = (string) $row['r'];
+        $by_bot[$agent]['routes'][$route] = ($by_bot[$agent]['routes'][$route] ?? 0) + 1;
+    }
+    $out = [];
+    foreach ($by_bot as $agent => $d) {
+        arsort($d['routes']);
+        $out[] = [
+            'agent'     => $agent,
+            'operator'  => $registry[$agent]['operator'],
+            'group'     => $registry[$agent]['label'],
+            'hits'      => $d['hits'],
+            'last_seen' => $d['last_seen'],
+            'top_route' => array_key_first($d['routes']) ?? '',
+        ];
+    }
+    usort($out, static fn($a, $b) => $b['hits'] <=> $a['hits']);
+    return $out;
+}
+
+/**
+ * Delete log lines older than CRAWLER_LOG_RETENTION days. Rewrites the file
+ * only when pruning actually removes something.
+ */
+function crawler_log_prune(): void
+{
+    $path = crawler_log_path();
+    if (!is_file($path)) {
+        return;
+    }
+    $cutoff = time() - max(7, (int) CRAWLER_LOG_RETENTION) * 86400;
+    $fh = @fopen($path, 'rb');
+    if ($fh === false) {
+        return;
+    }
+    if (!@flock($fh, LOCK_SH)) {
+        @fclose($fh);
+        return;
+    }
+    $total = 0;
+    $keep  = [];
+    while (($line = fgets($fh)) !== false) {
+        $total++;
+        $row = json_decode(trim($line), true);
+        if (is_array($row) && (int) ($row['t'] ?? 0) >= $cutoff) {
+            $keep[] = trim($line);
+        }
+    }
+    @flock($fh, LOCK_UN);
+    @fclose($fh);
+    if (count($keep) === $total) {
+        return; // nothing to prune
+    }
+    atomic_replace_file($path, $keep ? implode("\n", $keep) . "\n" : '', 0600);
+}
+
+function crawler_log_clear(): bool
+{
+    $path = crawler_log_path();
+    return !is_file($path) || @unlink($path);
+}
+
+/** Stream the full retained log as CSV and exit. Admin-only — called from
+ *  inside the action=crawlers handler, which has already checked is_admin(). */
+function crawler_log_export_csv(): void
+{
+    $rows = crawler_log_read(max(7, (int) CRAWLER_LOG_RETENTION));
+    usort($rows, static fn($a, $b) => ((int) $b['t']) <=> ((int) $a['t']));
+    $registry = ai_crawler_flat_registry();
+    header('Content-Type: text/csv; charset=utf-8');
+    header('Content-Disposition: attachment; filename="ai-crawler-log-' . gmdate('Y-m-d') . '.csv"');
+    header('Pragma: no-cache');
+    $out = fopen('php://output', 'w');
+    fwrite($out, "\xEF\xBB\xBF");
+    fputcsv($out, ['Time (UTC)', 'Bot', 'Operator', 'Route']);
+    foreach ($rows as $row) {
+        $agent    = (string) $row['b'];
+        $operator = $registry[$agent]['operator'] ?? '';
+        fputcsv($out, [gmdate('c', (int) $row['t']), $agent, $operator, (string) $row['r']]);
+    }
+    fclose($out);
+    exit;
 }
 
 function robots_txt_generate(): string
@@ -2561,6 +2858,249 @@ function document_types(): array
 }
 
 /** Conservative Schema.org type per document_type. Not every archival label needs its own class. */
+/* ------------------------------------------------------------------ */
+/* Entity relationships: how a record relates to the canonical subject  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The controlled vocabulary of relationships a record may bear to an
+ * entity, and the Schema.org properties each one maps to.
+ *
+ * This exists because "the file is in the archive" and "the person wrote
+ * it" are completely different claims, and a library that cannot tell them
+ * apart ends up asserting authorship of every document it happens to hold.
+ * Each entry carries a human label for the admin, a one-line meaning, and
+ * the properties the schema graphs should emit. 'role' is set only where
+ * the mapping needs a named role to stay honest — a contributor is not
+ * self-explanatory the way an author is.
+ */
+function entity_relations(): array
+{
+    return [
+        'authored_by' => [
+            'label'   => 'Authored by',
+            'meaning' => 'The original work was written by the referenced person.',
+            'props'   => ['author', 'creator'],
+        ],
+        'about' => [
+            'label'   => 'About',
+            'meaning' => 'The record is primarily about the referenced entity.',
+            'props'   => ['about'],
+        ],
+        'evidence_for' => [
+            'label'   => 'Evidence for',
+            'meaning' => 'The record documents or substantiates a claim about the entity.',
+            'props'   => ['about', 'subjectOf'],
+        ],
+        'published_by' => [
+            'label'   => 'Published by',
+            'meaning' => 'The work was published by the referenced entity.',
+            'props'   => ['publisher'],
+        ],
+        'translated_by' => [
+            'label'   => 'Translated by',
+            'meaning' => 'The translation was performed by the referenced person.',
+            'props'   => ['translator'],
+        ],
+        'collected_by' => [
+            'label'   => 'Collected by',
+            'meaning' => 'Someone else\'s work, gathered and kept as a research source.',
+            'props'   => ['contributor'],
+            'role'    => 'Archivist',
+        ],
+        'appeared_in' => [
+            'label'   => 'Appeared in',
+            'meaning' => 'The work first appeared in a named publication or collection.',
+            'props'   => ['isPartOf'],
+        ],
+        'performed_by' => [
+            'label'   => 'Performed by',
+            'meaning' => 'The person delivered, recited or performed the work.',
+            'props'   => ['performer'],
+        ],
+        'client_work' => [
+            'label'   => 'Client work',
+            'meaning' => 'Professional work produced for a client.',
+            'props'   => ['creator', 'about'],
+        ],
+        'issued_by' => [
+            'label'   => 'Issued by',
+            'meaning' => 'A certificate, qualification or identity record issued by an institution.',
+            'props'   => ['creator', 'publisher'],
+        ],
+        'mentions' => [
+            'label'   => 'Mentions',
+            'meaning' => 'The record refers to the entity but is not chiefly about it.',
+            'props'   => ['mentions'],
+        ],
+        'archived_by' => [
+            'label'   => 'Archived by',
+            'meaning' => 'Deliberately kept in the archive. Claims nothing further.',
+            'props'   => ['contributor'],
+            'role'    => 'Archive curator',
+        ],
+    ];
+}
+
+/** Is this a relation name the vocabulary recognises? */
+function entity_relation_valid(string $relation): bool
+{
+    return array_key_exists($relation, entity_relations());
+}
+
+/**
+ * The relation assigned when nothing more precise can be established.
+ *
+ * Deliberately the weakest claim in the vocabulary. Guessing "authored_by"
+ * from a filename would put a fabricated authorship assertion into the
+ * public graph, which is far worse than saying only what is certainly
+ * true: the item is in the archive on purpose.
+ */
+function entity_relation_fallback(): string
+{
+    return 'archived_by';
+}
+
+/**
+ * High-confidence relationship defaults suggested by where a file lives.
+ *
+ * Directory layout is a real signal — an archive that separates works/ from
+ * sources/ is already asserting the difference — but only a suggestion.
+ * Explicit metadata always wins, and a path that matches nothing here falls
+ * back rather than guessing. Longest prefix wins, so a nested rule can
+ * refine a broader one.
+ */
+function entity_relation_path_rules(): array
+{
+    return [
+        'seo/case-studies/' => ['client_work'],
+        'works/'            => ['authored_by'],
+        'sources/'          => ['collected_by'],
+        'translations/'     => ['translated_by', 'collected_by'],
+        'identity/'         => ['about', 'evidence_for'],
+        'qualifications/'   => ['about', 'evidence_for', 'issued_by'],
+        'media/'            => ['archived_by'],
+        'activities/'       => ['about', 'evidence_for'],
+    ];
+}
+
+/**
+ * The relations a path suggests, or [] when it suggests nothing. Matching
+ * is on the longest prefix so 'seo/case-studies/' beats a bare 'seo/'.
+ */
+function entity_relations_inferred(string $rel_path): array
+{
+    $path = ltrim(str_replace('\\', '/', $rel_path), '/');
+    $best = '';
+    $found = [];
+    foreach (entity_relation_path_rules() as $prefix => $relations) {
+        if (strncasecmp($path, $prefix, strlen($prefix)) === 0 && strlen($prefix) > strlen($best)) {
+            $best = $prefix;
+            $found = $relations;
+        }
+    }
+    return $found;
+}
+
+/**
+ * Sanitise a list of relation names: unknown values dropped, duplicates
+ * removed, order preserved. Never invents a value — an empty result stays
+ * empty so the caller can distinguish "none set" from "set to the default".
+ */
+function entity_relations_clean(array $relations): array
+{
+    $out = [];
+    foreach ($relations as $r) {
+        $r = strtolower(trim((string) $r));
+        if ($r !== '' && entity_relation_valid($r) && !in_array($r, $out, true)) {
+            $out[] = $r;
+        }
+    }
+    return $out;
+}
+
+/**
+ * The relations in force for a record, and where they came from.
+ *
+ * Returns ['relations' => [...], 'source' => 'explicit'|'inferred'|'fallback'].
+ * The source matters to the admin: a value the archivist chose and a value
+ * a directory rule guessed should not look alike on screen, or the guess
+ * quietly acquires the authority of a decision.
+ */
+function entity_relations_for(array $rec, string $rel_path = ''): array
+{
+    $explicit = entity_relations_clean((array) ($rec['entity_relation'] ?? []));
+    if ($explicit) {
+        return ['relations' => $explicit, 'source' => 'explicit'];
+    }
+    $path = $rel_path !== '' ? $rel_path : (string) ($rec['file_path'] ?? '');
+    $inferred = entity_relations_clean(entity_relations_inferred($path));
+    if ($inferred) {
+        return ['relations' => $inferred, 'source' => 'inferred'];
+    }
+    return ['relations' => [entity_relation_fallback()], 'source' => 'fallback'];
+}
+
+/**
+ * The Schema.org properties a record's relations imply, as
+ * ['property' => node].
+ *
+ * Relations naming the archive's own subject resolve to the canonical
+ * Person. Relations naming a second party — a publisher, an issuing
+ * institution — resolve only when $org names a stored Organization, and are
+ * otherwise omitted entirely. Omission is deliberate: pointing
+ * "published_by" at the author would assert that he published his own book,
+ * which is exactly the confusion this vocabulary exists to prevent.
+ */
+function entity_relation_schema_props(array $relations, string $org = ''): array
+{
+    $vocab = entity_relations();
+    $subject = ['@id' => person_id()];
+    $about_subject = ['authored_by', 'about', 'evidence_for', 'translated_by',
+                      'collected_by', 'performed_by', 'mentions', 'archived_by'];
+    // These describe a second party. They stay silent without one.
+    $about_other = ['published_by', 'issued_by'];
+    $org_key = entity_key_from_name($org);
+    $org_node = ($org_key !== '' && isset(entities_load()['organizations'][$org_key]))
+        ? ['@id' => entity_id($org_key)]
+        : null;
+    $out = [];
+    foreach ($relations as $r) {
+        if (!isset($vocab[$r])) {
+            continue;
+        }
+        if (in_array($r, $about_other, true)) {
+            if ($org_node === null) {
+                continue;
+            }
+            foreach ($vocab[$r]['props'] as $prop) {
+                if (!isset($out[$prop])) {
+                    $out[$prop] = $org_node;
+                }
+            }
+            continue;
+        }
+        if (!in_array($r, $about_subject, true)) {
+            continue;
+        }
+        foreach ($vocab[$r]['props'] as $prop) {
+            if (isset($out[$prop])) {
+                continue;
+            }
+            if (isset($vocab[$r]['role'])) {
+                $out[$prop] = [
+                    '@type'    => 'Role',
+                    'roleName' => $vocab[$r]['role'],
+                    $prop      => $subject,
+                ];
+            } else {
+                $out[$prop] = $subject;
+            }
+        }
+    }
+    return $out;
+}
+
 function document_type_schema_type(string $document_type): string
 {
     // Schema.org and Google-recognised subtypes, chosen to maximise rich
@@ -4086,7 +4626,7 @@ function reserved_slugs(): array
 {
     return [
         'admin', 'login', 'logout', 'settings', 'users', 'accounts', 'crawlers',
-        'diagnostics', 'pages', 'page', 'about', 'faq', 'contact', 'category', 'categories',
+        'diagnostics', 'pages', 'page', 'entities', 'entity', 'about', 'faq', 'contact', 'category', 'categories',
         'sitemap', 'sitemap.xml', 'llms', 'llms.txt', 'robots', 'robots.txt',
         'yaml', 'library.yaml', 'yaml_view', 'library.html', 'sitemap_html', 'sitemap.html',
         'identity', 'identity.json', 'vcard', 'vcard.vcf',
@@ -5403,6 +5943,262 @@ function meta_update(callable $mutator)
 
 define('PAGES_FILE', __DIR__ . '/data/pages.json');
 
+/* ------------------------------------------------------------------ */
+/* Authority entities: organisations and works                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Reusable Organization and Book nodes, stored alongside the other JSON
+ * state in data/. These are site-level facts about *other* parties — a
+ * publisher, a university, a book the subject wrote — which is why they do
+ * not live in per-document metadata: an institution named by six documents
+ * must be one entity with one @id, not six strings that happen to match.
+ *
+ * Reusing the same @id everywhere is the entire point. A crawler seeing
+ * "Jahabersa" as a bare string in six records learns nothing; seeing six
+ * references to one identifier learns that one publisher published six
+ * things.
+ */
+define('ENTITIES_FILE', __DIR__ . '/data/entities.json');
+
+/** The Organization subtypes an archive realistically needs. */
+function entity_org_types(): array
+{
+    return [
+        'Organization'           => 'Organisation',
+        'CollegeOrUniversity'    => 'College or university',
+        'EducationalOrganization'=> 'Educational organisation',
+        'GovernmentOrganization' => 'Government body',
+        'NGO'                    => 'NGO',
+        'Publisher'              => 'Publisher',
+    ];
+}
+
+/**
+ * Turn a display name into a stable fragment key: "Langgam Fikir" becomes
+ * "langgam-fikir", which becomes the @id fragment. Derived from the name so
+ * an operator never has to invent an identifier, but stored once set, so
+ * renaming an organisation does not silently repoint every reference to it.
+ */
+function entity_key_from_name(string $name): string
+{
+    $key = strtolower(trim($name));
+    $key = preg_replace('/[^a-z0-9]+/', '-', $key) ?? '';
+    return trim($key, '-');
+}
+
+/** The absolute @id for a stored entity fragment. */
+function entity_id(string $key): string
+{
+    return rtrim(BASE_URL, '/') . '/#' . ltrim($key, '#');
+}
+
+/**
+ * Load the entity store. Shape:
+ *   ['organizations' => [key => [...]], 'books' => [key => [...]]]
+ * A missing or malformed file yields an empty store rather than an error:
+ * an archive with no declared entities is a perfectly ordinary archive.
+ */
+function entities_load(bool $reset = false): array
+{
+    static $cache = null;
+    if ($reset) {
+        $cache = null;
+        return [];
+    }
+    if (is_array($cache)) {
+        return $cache;
+    }
+    $empty = ['organizations' => [], 'books' => []];
+    if (is_link(ENTITIES_FILE) || !is_file(ENTITIES_FILE)) {
+        return $cache = $empty;
+    }
+    $raw  = @file_get_contents(ENTITIES_FILE);
+    $data = is_string($raw) ? json_decode($raw, true) : null;
+    if (!is_array($data)) {
+        error_log('Folio entity store is invalid JSON: ' . ENTITIES_FILE);
+        return $cache = $empty;
+    }
+
+    $orgs = [];
+    foreach ((array) ($data['organizations'] ?? []) as $key => $rec) {
+        $key = entity_key_from_name((string) $key);
+        if ($key === '' || !is_array($rec)) {
+            continue;
+        }
+        $name = trim((string) ($rec['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $type = (string) ($rec['type'] ?? 'Organization');
+        $orgs[$key] = [
+            'key'   => $key,
+            'name'  => $name,
+            'type'  => array_key_exists($type, entity_org_types()) ? $type : 'Organization',
+            'url'   => trim((string) ($rec['url'] ?? '')),
+            'sameas'=> trim((string) ($rec['sameas'] ?? '')),
+        ];
+    }
+
+    $books = [];
+    foreach ((array) ($data['books'] ?? []) as $key => $rec) {
+        $key = entity_key_from_name((string) $key);
+        if ($key === '' || !is_array($rec)) {
+            continue;
+        }
+        $name = trim((string) ($rec['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $books[$key] = [
+            'key'         => $key,
+            'name'        => $name,
+            // The publisher is an organisation key, not a string. An empty
+            // value means "not stated", never "the author published it".
+            'publisher'   => entity_key_from_name((string) ($rec['publisher'] ?? '')),
+            'datePublished' => trim((string) ($rec['datePublished'] ?? '')),
+            // Language belongs to the work, not to its publisher: a Malay
+            // press publishes in English too, so this is never inherited.
+            'language'    => trim((string) ($rec['language'] ?? '')),
+            'isbn'        => trim((string) ($rec['isbn'] ?? '')),
+            'oclc'        => trim((string) ($rec['oclc'] ?? '')),
+            'url'         => trim((string) ($rec['url'] ?? '')),
+        ];
+    }
+    return $cache = ['organizations' => $orgs, 'books' => $books];
+}
+
+/** Forget the cached store after a write, mirroring meta_documents_reset(). */
+function entities_reset(): void
+{
+    entities_load(true);
+}
+
+/** Persist the entity store atomically, like every other JSON file in data/. */
+function entities_save(array $store, string &$error = ''): bool
+{
+    $out = ['organizations' => [], 'books' => []];
+    foreach ((array) ($store['organizations'] ?? []) as $rec) {
+        $name = trim((string) ($rec['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $key = entity_key_from_name((string) ($rec['key'] ?? '')) ?: entity_key_from_name($name);
+        if ($key === '') {
+            continue;
+        }
+        $type = (string) ($rec['type'] ?? 'Organization');
+        $out['organizations'][$key] = [
+            'name'  => $name,
+            'type'  => array_key_exists($type, entity_org_types()) ? $type : 'Organization',
+            'url'   => trim((string) ($rec['url'] ?? '')),
+            'sameas'=> trim((string) ($rec['sameas'] ?? '')),
+        ];
+    }
+    foreach ((array) ($store['books'] ?? []) as $rec) {
+        $name = trim((string) ($rec['name'] ?? ''));
+        if ($name === '') {
+            continue;
+        }
+        $key = entity_key_from_name((string) ($rec['key'] ?? '')) ?: entity_key_from_name($name);
+        if ($key === '') {
+            continue;
+        }
+        $out['books'][$key] = [
+            'name'          => $name,
+            'publisher'     => entity_key_from_name((string) ($rec['publisher'] ?? '')),
+            'datePublished' => trim((string) ($rec['datePublished'] ?? '')),
+            'language'      => trim((string) ($rec['language'] ?? '')),
+            'isbn'          => trim((string) ($rec['isbn'] ?? '')),
+            'oclc'          => trim((string) ($rec['oclc'] ?? '')),
+            'url'           => trim((string) ($rec['url'] ?? '')),
+        ];
+    }
+    $json = json_encode($out, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    if (!is_string($json)) {
+        $error = 'The entity store could not be encoded.';
+        return false;
+    }
+    if (!atomic_replace_file(ENTITIES_FILE, $json . "\n", 0600, true)) {
+        $error = 'The entity store could not be written.';
+        return false;
+    }
+    entities_reset();
+    return true;
+}
+
+/**
+ * The Organization nodes, ready for a schema @graph. Referenced elsewhere
+ * by @id alone, so the full node is emitted once and pointed at thereafter.
+ */
+function entity_org_nodes(): array
+{
+    $nodes = [];
+    foreach (entities_load()['organizations'] as $key => $org) {
+        $node = [
+            '@type' => $org['type'] === 'Publisher' ? 'Organization' : $org['type'],
+            '@id'   => entity_id($key),
+            'name'  => $org['name'],
+        ];
+        if ($org['url'] !== '') {
+            $node['url'] = $org['url'];
+        }
+        $same = parse_name_list($org['sameas']);
+        if ($same) {
+            $node['sameAs'] = count($same) === 1 ? $same[0] : $same;
+        }
+        $nodes[] = $node;
+    }
+    return $nodes;
+}
+
+/**
+ * The Book nodes. Each names the canonical Person as author and, where one
+ * is recorded, the *actual* publisher — never the author standing in for a
+ * publisher who was really Jahabersa or Langgam Fikir.
+ */
+function entity_book_nodes(): array
+{
+    $orgs  = entities_load()['organizations'];
+    $nodes = [];
+    foreach (entities_load()['books'] as $key => $book) {
+        $node = [
+            '@type' => 'Book',
+            '@id'   => entity_id($key),
+            'name'  => $book['name'],
+        ];
+        if (trim((string) PUBLISHER_NAME) !== '') {
+            $node['author'] = ['@id' => person_id()];
+        }
+        if ($book['publisher'] !== '' && isset($orgs[$book['publisher']])) {
+            $node['publisher'] = ['@id' => entity_id($book['publisher'])];
+        }
+        if ($book['datePublished'] !== '') {
+            $node['datePublished'] = $book['datePublished'];
+        }
+        if ($book['language'] !== '') {
+            $node['inLanguage'] = $book['language'];
+        }
+        if ($book['url'] !== '') {
+            $node['url'] = $book['url'];
+        }
+        $ids = [];
+        if ($book['isbn'] !== '') {
+            $node['isbn'] = $book['isbn'];
+        }
+        if ($book['oclc'] !== '') {
+            $ids[] = ['@type' => 'PropertyValue', 'propertyID' => 'OCLC', 'value' => $book['oclc']];
+        }
+        if ($ids) {
+            $node['identifier'] = count($ids) === 1 ? $ids[0] : $ids;
+        }
+        $nodes[] = $node;
+    }
+    return $nodes;
+}
+
+
+
 /**
  * The fixed set of page slots. Two named defaults plus three free slots.
  * Slots are fixed by design: Folio stays a document library, not a page
@@ -5794,7 +6590,6 @@ function render_footer(): void
         </p>
         <?php endif; ?>
         <nav class="footer-nav" aria-label="Site">
-            <a href="<?= e(BASE_URL) ?>">Library</a>
             <?php foreach (footer_link_keys() as $link_key):
                 $link = footer_link_render($link_key);
                 if ($link === null) { continue; }
@@ -5814,7 +6609,7 @@ function render_footer(): void
 /** Valid footer-link keys, in Folio's built-in default order. */
 function footer_link_default_order(): array
 {
-    return ['llms', 'yaml', 'vcard', 'json', 'html', 'xml'];
+    return ['robots', 'llms', 'yaml', 'vcard', 'json', 'html', 'xml'];
 }
 
 /**
@@ -5843,6 +6638,8 @@ function footer_link_render(string $key): ?array
     switch ($key) {
         case 'llms':
             return LLMS_ENABLED ? ['label' => 'llms.txt', 'url' => url_llms()] : null;
+        case 'robots':
+            return ['label' => 'ROBOTS.TXT', 'url' => url_robots()];
         case 'yaml':
             return YAML_ENABLED ? ['label' => 'YAML', 'url' => url_yaml()] : null;
         case 'html':
@@ -6530,6 +7327,147 @@ function schema_type(string $ext): string
     }
 }
 
+/**
+ * The canonical @id for the Person/Organization this installation is about.
+ * Every schema graph Folio emits — schema_publisher(), identity.json,
+ * page-level JSON-LD, vcard.vcf — calls this instead of building
+ * BASE_URL . '#person' directly, so there is exactly one place that decides
+ * the identifier and no graph can drift from another.
+ *
+ * Defaults to this installation's own BASE_URL, which is unchanged
+ * behaviour for every existing install. Only when PUBLISHER_CANONICAL_ID is
+ * explicitly set — for a satellite archive documenting a subject whose
+ * canonical page lives on a different domain — does this point elsewhere.
+ */
+function person_id(): string
+{
+    $override = trim((string) PUBLISHER_CANONICAL_ID);
+    if ($override !== '' && preg_match('#^https?://\S+#i', $override)) {
+        return $override;
+    }
+    return BASE_URL . '#person';
+}
+
+/**
+ * The canonical image URL for the publisher, or '' when none is set.
+ * PUBLISHER_IMAGE is a real portrait or logo chosen for the purpose;
+ * SITE_ICON is the favicon, and remains the fallback so existing installs
+ * publish exactly the image they published before. Relative paths resolve
+ * against BASE_URL; a full URL is used as given.
+ */
+function publisher_image_url(): string
+{
+    foreach ([PUBLISHER_IMAGE, SITE_ICON] as $candidate) {
+        $value = trim((string) $candidate);
+        if ($value === '') {
+            continue;
+        }
+        return preg_match('#^https?://#i', $value)
+            ? $value
+            : rtrim(BASE_URL, '/') . '/' . ltrim($value, '/');
+    }
+    return '';
+}
+
+/**
+ * The ContactPoint node, or [] when there is no address to publish. Shared
+ * by schema_publisher() and identity.json so the two cannot disagree about
+ * how to reach the same person.
+ */
+function schema_contact_point(): array
+{
+    if (PUBLISHER_EMAIL === '') {
+        return [];
+    }
+    $languages = parse_name_list((string) PUBLISHER_CONTACT_LANGUAGES);
+    if (!$languages) {
+        $languages = [SITE_LANGUAGE];
+    }
+    return [
+        '@type'             => 'ContactPoint',
+        'contactType'       => PUBLISHER_CONTACT_TYPE,
+        'email'             => PUBLISHER_EMAIL,
+        'availableLanguage' => count($languages) === 1 ? $languages[0] : $languages,
+    ];
+}
+
+/**
+ * The Person-biography properties, applied to any Person node. One function
+ * feeding both schema_publisher() and identity.json, so the two graphs
+ * cannot disagree about the same person. Organizations get none of these:
+ * every property here is meaningless or wrong on an Organization node.
+ */
+function schema_person_biography(array $node): array
+{
+    if (PUBLISHER_TYPE !== 'Person') {
+        return $node;
+    }
+    if (PUBLISHER_HONORIFIC_PREFIX !== '') {
+        $node['honorificPrefix'] = PUBLISHER_HONORIFIC_PREFIX;
+    }
+    if (PUBLISHER_GIVEN_NAME !== '') {
+        $node['givenName'] = PUBLISHER_GIVEN_NAME;
+    }
+    if (PUBLISHER_FAMILY_NAME !== '') {
+        $node['familyName'] = PUBLISHER_FAMILY_NAME;
+    }
+    if (PUBLISHER_NICKNAME !== '') {
+        // Already published in vcard.vcf as NICKNAME; the schema graphs
+        // should not know less than the vCard does.
+        $node['additionalName'] = PUBLISHER_NICKNAME;
+    }
+    if (PUBLISHER_BIRTH_DATE !== '') {
+        $node['birthDate'] = PUBLISHER_BIRTH_DATE;
+    }
+    if (PUBLISHER_BIRTH_PLACE !== '') {
+        $node['birthPlace'] = ['@type' => 'Place', 'name' => PUBLISHER_BIRTH_PLACE];
+    }
+    if (PUBLISHER_GENDER !== '') {
+        $node['gender'] = PUBLISHER_GENDER;
+    }
+    // A person can hold more than one nationality, and stating one of two is
+    // as wrong as stating neither. Comma-separated, like languages and
+    // alternate names; one value stays a bare string so existing consumers
+    // see exactly what they saw before.
+    $nats = parse_name_list((string) PUBLISHER_NATIONALITY);
+    if ($nats) {
+        $node['nationality'] = count($nats) === 1 ? $nats[0] : $nats;
+    }
+    if (PUBLISHER_PRONOUNS !== '') {
+        $node['pronouns'] = PUBLISHER_PRONOUNS;
+    }
+    $langs = parse_name_list((string) PUBLISHER_KNOWS_LANGUAGE);
+    if ($langs) {
+        $node['knowsLanguage'] = count($langs) === 1 ? $langs[0] : $langs;
+    }
+    if (PUBLISHER_WORKS_FOR !== '') {
+        $node['worksFor'] = ['@type' => 'Organization', 'name' => PUBLISHER_WORKS_FOR];
+    }
+    $awards = parse_name_list((string) PUBLISHER_AWARDS);
+    if ($awards) {
+        $node['award'] = count($awards) === 1 ? $awards[0] : $awards;
+    }
+    // Family, as typed Person nodes rather than bare strings, so a consumer
+    // knows each value names a person. Names only — no URLs, no @ids —
+    // because Folio holds no further facts about them and should not imply
+    // any. Empty by default; the Settings note says plainly that these
+    // publish other people's names.
+    if (PUBLISHER_SPOUSE !== '') {
+        $node['spouse'] = ['@type' => 'Person', 'name' => PUBLISHER_SPOUSE];
+    }
+    $kids = parse_name_list((string) PUBLISHER_CHILDREN);
+    if ($kids) {
+        $kid_nodes = array_map(static fn($n) => ['@type' => 'Person', 'name' => $n], $kids);
+        $node['children'] = count($kid_nodes) === 1 ? $kid_nodes[0] : $kid_nodes;
+    }
+    $folks = parse_name_list((string) PUBLISHER_PARENTS);
+    if ($folks) {
+        $folk_nodes = array_map(static fn($n) => ['@type' => 'Person', 'name' => $n], $folks);
+        $node['parent'] = count($folk_nodes) === 1 ? $folk_nodes[0] : $folk_nodes;
+    }
+    return $node;
+}
+
 function schema_publisher(): array
 {
     if (trim((string) PUBLISHER_NAME) === '') {
@@ -6537,7 +7475,7 @@ function schema_publisher(): array
     }
     $node = [
         '@type' => PUBLISHER_TYPE,
-        '@id'   => BASE_URL . '#person',
+        '@id'   => person_id(),
         'name'  => PUBLISHER_NAME,
     ];
     if (PUBLISHER_URL !== '') {
@@ -6571,24 +7509,14 @@ function schema_publisher(): array
     if ($sameAs) {
         $node['sameAs'] = $sameAs;
     }
-    // Nationality and alternate names help knowledge-graph disambiguation.
-    if (PUBLISHER_NATIONALITY !== '') {
-        $node['nationality'] = PUBLISHER_NATIONALITY;
-    }
     $altNames = parse_name_list((string) PUBLISHER_ALT_NAMES);
     if ($altNames) {
         $node['alternateName'] = count($altNames) === 1 ? $altNames[0] : $altNames;
     }
     // Logo / image — important for the Organisation knowledge panel.
-    // Re-uses the configured site icon, since that is the closest thing
-    // Folio exposes without a separate logo-URL setting.
-    $icon = '';
-    $configured_icon = trim((string) SITE_ICON);
-    if ($configured_icon !== '') {
-        $icon = preg_match('#^https?://#i', $configured_icon)
-            ? $configured_icon
-            : rtrim(BASE_URL, '/') . '/' . ltrim($configured_icon, '/');
-    }
+    // PUBLISHER_IMAGE when set, otherwise the site icon, which is what
+    // Folio used before a dedicated portrait setting existed.
+    $icon = publisher_image_url();
     if ($icon !== '') {
         if (PUBLISHER_TYPE === 'Organization') {
             $node['logo'] = [
@@ -6602,15 +7530,11 @@ function schema_publisher(): array
         }
     }
     // ContactPoint — enables the contact action in the knowledge panel.
-    if (PUBLISHER_EMAIL !== '') {
-        $node['contactPoint'] = [
-            '@type'           => 'ContactPoint',
-            'contactType'     => 'customer support',
-            'email'           => PUBLISHER_EMAIL,
-            'availableLanguage' => SITE_LANGUAGE,
-        ];
+    $contact = schema_contact_point();
+    if ($contact) {
+        $node['contactPoint'] = $contact;
     }
-    return $node;
+    return schema_person_biography($node);
 }
 
 function schema_website(): array
@@ -6624,7 +7548,7 @@ function schema_website(): array
         'inLanguage' => SITE_LANGUAGE,
     ];
     if (trim((string) PUBLISHER_NAME) !== '') {
-        $node['publisher'] = ['@id' => BASE_URL . '#person'];
+        $node['publisher'] = ['@id' => person_id()];
     }
     return $node;
 }
@@ -6724,7 +7648,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         $node['contentUrl'] = $raw;
     }
     if (trim((string) PUBLISHER_NAME) !== '') {
-        $node['publisher'] = ['@id' => BASE_URL . '#person'];
+        $node['publisher'] = ['@id' => person_id()];
     }
     if (($m['desc'] ?? '') !== '') {
         $node['description'] = $m['desc'];
@@ -6799,7 +7723,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         if ($is_movie) {
             $node['@type'] = 'Movie';
             if (trim((string) PUBLISHER_NAME) !== '') {
-                $node['director'] = ['@id' => BASE_URL . '#person'];
+                $node['director'] = ['@id' => person_id()];
             }
         }
     }
@@ -6818,9 +7742,9 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         // copyrightNotice. These require PUBLISHER_NAME/URL to be meaningful; a
         // site with no publisher set stays silent rather than publishing an empty claim.
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $node['creator'] = ['@id' => BASE_URL . '#person'];
+            $node['creator'] = ['@id' => person_id()];
             $node['creditText'] = PUBLISHER_NAME;
-            $node['copyrightHolder'] = ['@id' => BASE_URL . '#person'];
+            $node['copyrightHolder'] = ['@id' => person_id()];
             $node['copyrightYear'] = (int) date('Y');
         }
         // License: published in structured data so Google Images can show a
@@ -6844,7 +7768,7 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
         $node['eventStatus'] = 'https://schema.org/EventScheduled';
         $node['eventAttendanceMode'] = 'https://schema.org/OfflineEventAttendanceMode';
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $node['organizer'] = ['@id' => BASE_URL . '#person'];
+            $node['organizer'] = ['@id' => person_id()];
         }
         // Location defaults to the publisher's country if known.
         if (PUBLISHER_COUNTRY !== '') {
@@ -6856,8 +7780,8 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
     }
     if ($type === 'Article' || in_array($type, ['NewsArticle','BlogPosting','ScholarlyArticle','TechArticle'], true)) {
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $node['author']     = ['@id' => BASE_URL . '#person'];
-            $node['publisher']  = ['@id' => BASE_URL . '#person'];
+            $node['author']     = ['@id' => person_id()];
+            $node['publisher']  = ['@id' => person_id()];
         }
         $node['headline']       = $title;
         $node['articleSection'] = ($m['category'] ?? '') !== '' ? $m['category'] : null;
@@ -6890,6 +7814,36 @@ function schema_file(string $rel, string $abs, array $meta, array $mime_map, boo
                 '@type' => 'DownloadAction',
                 'target' => $raw,
             ];
+        }
+    }
+
+    // The record's stated relationship to the archive's subject, applied
+    // last so an explicit archivist decision overrides the optimistic
+    // defaults the type-specific blocks above set. That matters most for
+    // Article, which otherwise asserts authorship of anything catalogued as
+    // an article — including a newspaper clipping the subject merely kept.
+    // Relations naming a second party Folio cannot yet identify (a
+    // publisher, a client) contribute nothing here rather than being
+    // pointed at the wrong entity.
+    if (trim((string) PUBLISHER_NAME) !== '') {
+        $relations = entity_relations_for($m, $rel)['relations'];
+        $relation_props = entity_relation_schema_props($relations, (string) ($m['entity_org'] ?? ''));
+        // A relation that does not name the subject as author must not leave
+        // an inherited author claim standing behind it. Authorship is the
+        // one assertion here that is actively harmful to get wrong.
+        if (!in_array('authored_by', $relations, true)) {
+            unset($node['author']);
+        }
+        // Same reasoning for the publisher. The type-specific blocks above
+        // optimistically set the subject as publisher; that is only true if
+        // the record actually says so, and "published_by" naming no
+        // organisation must clear the claim rather than fall back to the
+        // author. A book published by Jahabersa is not self-published.
+        if (!isset($relation_props['publisher'])) {
+            unset($node['publisher']);
+        }
+        foreach ($relation_props as $prop => $value) {
+            $node[$prop] = $value;
         }
     }
     return $node;
@@ -7002,6 +7956,7 @@ function index_all_files(array $mime_map): array
                 'category' => $m['category'] ?? '',
                 'tags' => $m['tags'] ?? [],
                 'document_type' => $m['document_type'] ?? '',
+                'entity_relation' => entity_relations_for($m, $rel_e ?? ''),
 
                 'doc_date' => $m['doc_date'] ?? '',
                 'seo_title' => $m['seo_title'] ?? '',
@@ -7755,6 +8710,28 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
                 $error = 'Could not disable video access control. Check that '
                     . e(UPLOADS_DIRNAME) . '/.htaccess is writable and still has the Folio-managed markers.';
 
+            } elseif ($op === 'crawler_tracker_save') {
+                $retention = (int) ($_POST['crawler_log_retention'] ?? 90);
+                $retention = max(7, min(365, $retention));
+                if (settings_store([
+                    'CRAWLER_LOG_ENABLED'   => !empty($_POST['crawler_log_enabled']),
+                    'CRAWLER_LOG_RETENTION' => $retention,
+                ])) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1&tracker=saved');
+                    exit;
+                }
+                $error = 'Could not save. Check that data/ is writable.';
+
+            } elseif ($op === 'crawler_tracker_clear') {
+                if (crawler_log_clear()) {
+                    header('Location: ' . BASE_URL . '?action=crawlers&saved=1&tracker=cleared');
+                    exit;
+                }
+                $error = 'Could not clear the crawler log. Check that data/ is writable.';
+
+            } elseif ($op === 'crawler_tracker_export') {
+                crawler_log_export_csv(); // exits
+
             } else {
                 $intro = trim((string) ($_POST['llms_intro'] ?? ''));
                 $default_order = footer_link_default_order();
@@ -7809,6 +8786,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             $notice = 'Confirmed: PDF requests reach the raw action on this server. "Restricted" and "hidden" pdf_access are now enforced.';
         } elseif (($_GET['pdfgate'] ?? '') === 'confirmed_unverified') {
             $notice = 'Enabled based on your browser\'s successful test — this server could not reach its own public URL to verify independently (outbound HTTP may be blocked here). "Restricted" and "hidden" pdf_access are now enforced.';
+        } elseif (($_GET['tracker'] ?? '') === 'saved') {
+            $notice = 'AI crawler tracker settings saved.';
+        } elseif (($_GET['tracker'] ?? '') === 'cleared') {
+            $notice = 'Crawler log cleared.';
         }
     }
 
@@ -7914,6 +8895,37 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
     $robots = robots_txt_generate();
 
+    /* AI crawler tracker: 30-day rollup for the Overview tab, the last 50
+       raw hits for the Recent hits tab, and the registry for the reference
+       tab. Computed unconditionally (cheap — the log is small and pruned)
+       so the panels render even when the admin never toggled anything. */
+    $crawler_summary = crawler_log_summary(30);
+    $crawler_recent   = crawler_log_read(CRAWLER_LOG_RETENTION);
+    usort($crawler_recent, static fn($a, $b) => ((int) $b['t']) <=> ((int) $a['t']));
+    $crawler_recent   = array_slice($crawler_recent, 0, 50);
+    $crawler_registry = ai_crawler_flat_registry();
+    $crawler_total_30d = array_sum(array_column($crawler_summary, 'hits'));
+
+    // Per-file breakdown, always in the canonical discovery-file order —
+    // ROBOTS, LLMS, YAML, vCard, JSON, HTML, XML — never sorted by count,
+    // so the row order stays fixed even as the numbers change.
+    $crawler_routes_order = [
+        '/robots.txt'   => 'ROBOTS',
+        '/llms.txt'     => 'LLMS',
+        '/library.yaml' => 'YAML',
+        '/vcard.vcf'    => 'vCard',
+        '/identity.json'=> 'JSON',
+        '/sitemap.html' => 'HTML',
+        '/sitemap.xml'  => 'XML',
+    ];
+    $crawler_by_route = array_fill_keys(array_keys($crawler_routes_order), 0);
+    foreach (crawler_log_read(30) as $row) {
+        $r = (string) ($row['r'] ?? '');
+        if (isset($crawler_by_route[$r])) {
+            $crawler_by_route[$r]++;
+        }
+    }
+
     $writable = is_dir(dirname(SETTINGS_FILE)) ? is_writable(dirname(SETTINGS_FILE)) : is_writable(__DIR__);
     header('Content-Type: text/html; charset=UTF-8');
     send_security_headers();
@@ -7996,7 +9008,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
             <thead><tr><th>Show</th><th>Link</th><th>Position</th></tr></thead>
             <tbody>
             <?php
-            $footer_labels = ['llms' => 'llms.txt', 'yaml' => 'YAML', 'vcard' => 'vCard', 'json' => 'JSON', 'html' => 'HTML', 'xml' => 'XML'];
+            $footer_labels = ['robots' => 'robots.txt', 'llms' => 'llms.txt', 'yaml' => 'YAML', 'vcard' => 'vCard', 'json' => 'JSON', 'html' => 'HTML', 'xml' => 'XML'];
             $included_keys = footer_link_keys();
             $current_order = $included_keys;
             // Keys present but not in the saved order (e.g. after an upgrade
@@ -8025,6 +9037,131 @@ if (isset($_GET['action']) && $_GET['action'] === 'crawlers') {
 
         <div><button type="submit" class="btn">Save</button></div>
     </form>
+
+    <h2 class="detail-title" id="crawler-tracker">AI crawler tracker</h2>
+    <p class="detail-desc">
+        Logs every request to the seven discovery files above from a known AI bot — GPTBot, ClaudeBot,
+        PerplexityBot, and the rest of the registry below — independently of what <code>AI_ALLOW_*</code>
+        permits, so a bot that ignores your stated terms still shows up here. Nothing about an ordinary
+        document visitor is ever recorded.
+    </p>
+
+    <div class="crawler-tabs" id="crawler-tabs">
+        <div class="crawler-tablist" role="tablist">
+            <button type="button" role="tab" class="crawler-tab is-active" data-crawler-tab="0" aria-selected="true">Overview</button>
+            <button type="button" role="tab" class="crawler-tab" data-crawler-tab="1" aria-selected="false">Recent hits</button>
+            <button type="button" role="tab" class="crawler-tab" data-crawler-tab="2" aria-selected="false">Known bots</button>
+        </div>
+
+        <section class="crawler-panel is-active" data-crawler-panel="0" role="tabpanel">
+            <div class="crawler-stats">
+                <div class="crawler-stat">
+                    <span class="crawler-stat-num"><?= (int) $crawler_total_30d ?></span>
+                    <span class="crawler-stat-label">Hits · last 30 days</span>
+                </div>
+                <div class="crawler-stat">
+                    <span class="crawler-stat-num"><?= count($crawler_summary) ?></span>
+                    <span class="crawler-stat-label">Unique bots · last 30 days</span>
+                </div>
+                <div class="crawler-stat">
+                    <span class="crawler-stat-num"><?= $crawler_summary ? e($crawler_summary[0]['agent']) : '—' ?></span>
+                    <span class="crawler-stat-label">Most active bot</span>
+                </div>
+            </div>
+
+            <h3 class="detail-title crawler-subhead">Hits by file · last 30 days</h3>
+            <table class="accounts diag-table">
+                <?php foreach ($crawler_routes_order as $route => $route_label): ?>
+                    <tr>
+                        <td><?= e($route_label) ?></td>
+                        <td class="detail-facts"><code><?= e($route) ?></code></td>
+                        <td class="detail-facts"><?= (int) $crawler_by_route[$route] ?> hit<?= $crawler_by_route[$route] === 1 ? '' : 's' ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+
+            <h3 class="detail-title crawler-subhead">By bot · last 30 days</h3>
+            <?php if (!$crawler_summary): ?>
+                <p class="empty">No AI crawler hits recorded yet.</p>
+            <?php else: ?>
+                <table class="accounts diag-table">
+                    <thead><tr><th>Bot</th><th>Operator</th><th>Purpose</th><th>Hits</th><th>Last seen</th><th>Top file</th></tr></thead>
+                    <?php foreach ($crawler_summary as $row): ?>
+                        <tr>
+                            <td><?= e($row['agent']) ?></td>
+                            <td class="detail-facts"><?= e($row['operator']) ?></td>
+                            <td class="detail-facts"><?= e($row['group']) ?></td>
+                            <td class="detail-facts"><?= (int) $row['hits'] ?></td>
+                            <td class="detail-facts"><?= $row['last_seen'] ? e(gmdate('Y-m-d H:i', (int) $row['last_seen'])) . ' UTC' : '—' ?></td>
+                            <td class="detail-facts"><code><?= e($row['top_route']) ?></code></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+            <?php endif; ?>
+
+            <h3 class="detail-title crawler-subhead">Settings</h3>
+            <form method="post" class="stack-form form-narrow">
+                <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                <input type="hidden" name="op" value="crawler_tracker_save">
+                <label class="check-row">
+                    <input type="checkbox" name="crawler_log_enabled" value="1" <?= CRAWLER_LOG_ENABLED ? 'checked' : '' ?>>
+                    Log AI crawler hits
+                </label>
+                <label for="c-retention">Keep log entries for (days)</label>
+                <input type="number" id="c-retention" name="crawler_log_retention" min="7" max="365" value="<?= (int) CRAWLER_LOG_RETENTION ?>">
+                <p class="field-note">Entries older than this are pruned automatically — no cron job needed. 7–365 days.</p>
+                <div><button type="submit" class="btn">Save</button></div>
+            </form>
+        </section>
+
+        <section class="crawler-panel" data-crawler-panel="1" role="tabpanel">
+            <div class="ping-row">
+                <form method="post" class="inline-form">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="op" value="crawler_tracker_export">
+                    <button type="submit" class="btn-small btn-ghost">Export CSV</button>
+                </form>
+                <form method="post" class="inline-form crawler-clear-form">
+                    <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+                    <input type="hidden" name="op" value="crawler_tracker_clear">
+                    <button type="submit" class="btn-small btn-ghost">Clear log</button>
+                </form>
+            </div>
+            <?php if (!$crawler_recent): ?>
+                <p class="empty">No AI crawler hits recorded yet.</p>
+            <?php else: ?>
+                <table class="accounts diag-table">
+                    <thead><tr><th>Time (UTC)</th><th>Bot</th><th>Operator</th><th>File</th></tr></thead>
+                    <?php foreach ($crawler_recent as $row):
+                        $agent = (string) ($row['b'] ?? '');
+                        $operator = $crawler_registry[$agent]['operator'] ?? '';
+                        ?>
+                        <tr>
+                            <td class="detail-facts"><?= e(gmdate('Y-m-d H:i:s', (int) ($row['t'] ?? 0))) ?></td>
+                            <td><?= e($agent) ?></td>
+                            <td class="detail-facts"><?= e($operator) ?></td>
+                            <td class="detail-facts"><code><?= e((string) ($row['r'] ?? '')) ?></code></td>
+                        </tr>
+                    <?php endforeach; ?>
+                </table>
+                <p class="field-note">Showing the most recent <?= count($crawler_recent) ?> of the retained log. Export CSV for the full window.</p>
+            <?php endif; ?>
+        </section>
+
+        <section class="crawler-panel" data-crawler-panel="2" role="tabpanel">
+            <p class="field-note">Every agent Folio recognises, grouped by what it does — the same registry the <a href="<?= e(BASE_URL) ?>?action=settings">AI permissions</a> toggles govern in robots.txt.</p>
+            <table class="accounts diag-table">
+                <thead><tr><th>Bot</th><th>Operator</th><th>Purpose</th></tr></thead>
+                <?php foreach ($crawler_registry as $agent => $info): ?>
+                    <tr>
+                        <td><?= e($agent) ?></td>
+                        <td class="detail-facts"><?= e($info['operator']) ?></td>
+                        <td class="detail-facts"><?= e($info['label']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+            </table>
+        </section>
+    </div>
 
     <h2 class="detail-title">Clean URLs</h2>
     <p class="detail-desc">
@@ -8513,6 +9650,17 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             $ptype = (string) ($_POST['publisher_type'] ?? 'Person');
             $pname = trim((string) ($_POST['publisher_name'] ?? ''));
             $purl  = trim((string) ($_POST['publisher_url'] ?? ''));
+            // The @id override for a satellite install documenting a subject
+            // whose canonical identity lives on another domain. Empty is the
+            // ordinary case: the Person/Organization node's @id is then
+            // derived from this installation's own BASE_URL, unchanged from
+            // before this setting existed.
+            $pcanon = trim((string) ($_POST['publisher_canonical_id'] ?? ''));
+            // One canonical portrait reused across every identity surface,
+            // and how the published contact address is labelled.
+            $pimg    = trim((string) ($_POST['publisher_image'] ?? ''));
+            $pctype  = trim((string) ($_POST['publisher_contact_type'] ?? ''));
+            $pclangs = trim((string) ($_POST['publisher_contact_languages'] ?? ''));
             // The address the contact form delivers to, and the one vcard.vcf
             // and llms.txt's Contact section already publish. One setting for
             // all three, so they cannot drift apart.
@@ -8529,6 +9677,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
             $paffil = trim((string) ($_POST['publisher_affiliation'] ?? ''));
             $prsurl = trim((string) ($_POST['publisher_related_site_url'] ?? ''));
             $prslab = trim((string) ($_POST['publisher_related_site_label'] ?? ''));
+            $phpre  = trim((string) ($_POST['publisher_honorific_prefix'] ?? ''));
+            $pgiven = trim((string) ($_POST['publisher_given_name'] ?? ''));
+            $pfam   = trim((string) ($_POST['publisher_family_name'] ?? ''));
+            $pbdate = trim((string) ($_POST['publisher_birth_date'] ?? ''));
+            $pbplace = trim((string) ($_POST['publisher_birth_place'] ?? ''));
+            $pgender = trim((string) ($_POST['publisher_gender'] ?? ''));
+            $ppron  = trim((string) ($_POST['publisher_pronouns'] ?? ''));
+            $plangs = trim((string) ($_POST['publisher_knows_language'] ?? ''));
+            $pworks = trim((string) ($_POST['publisher_works_for'] ?? ''));
+            $pawards = trim((string) ($_POST['publisher_awards'] ?? ''));
+            $pspouse = trim((string) ($_POST['publisher_spouse'] ?? ''));
+            $pkids   = trim((string) ($_POST['publisher_children'] ?? ''));
+            $pfolks  = trim((string) ($_POST['publisher_parents'] ?? ''));
             $lang  = trim((string) ($_POST['site_language'] ?? 'en'));
 
             // sameAs: one profile URL per line. Each must be a valid http(s)
@@ -8552,12 +9713,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                 $error = 'The publisher type must be Person or Organization.';
             } elseif ($purl !== '' && !preg_match('#^https?://#', $purl)) {
                 $error = 'The publisher URL must start with http:// or https://.';
+            } elseif ($pcanon !== '' && !preg_match('#^https?://\S+#i', $pcanon)) {
+                $error = 'The canonical identity ID must be a full http(s) URL, typically ending in a fragment such as #person.';
+            } elseif ($pimg !== '' && preg_match('#^[a-z][a-z0-9+.-]*://#i', $pimg) && !preg_match('#^https?://#i', $pimg)) {
+                $error = 'The portrait must be a path inside this installation or a full http(s) URL.';
             } elseif ($pemail !== '' && (!filter_var($pemail, FILTER_VALIDATE_EMAIL) || strlen($pemail) > 254)) {
                 $error = 'That publisher email does not look like a valid address.';
             } elseif ($prsurl !== '' && !preg_match('#^https?://#', $prsurl)) {
                 $error = 'The related site URL must start with http:// or https://.';
             } elseif (strlen($pbio) > 600) {
                 $error = 'The publisher biography must be at most 600 characters.';
+            } elseif ($pbdate !== '' && !preg_match('/^\d{4}(-\d{2}(-\d{2})?)?$/', $pbdate)) {
+                $error = 'The birth date must be an ISO date: 1978, 1978-05, or 1978-05-17.';
             } elseif ($sameas_bad) {
                 $error = 'Each "same as" profile must be a full http(s) URL. Not valid: ' . implode(', ', array_slice($sameas_bad, 0, 3)) . '.';
             } elseif (!preg_match('/^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})*$/', $lang)) {
@@ -8569,6 +9736,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_TYPE' => $ptype,
                     'PUBLISHER_NAME' => $pname,
                     'PUBLISHER_URL' => $purl,
+                    'PUBLISHER_CANONICAL_ID' => $pcanon,
+                    'PUBLISHER_IMAGE' => $pimg,
+                    'PUBLISHER_CONTACT_TYPE' => $pctype !== '' ? $pctype : 'customer support',
+                    'PUBLISHER_CONTACT_LANGUAGES' => $pclangs,
                     'PUBLISHER_EMAIL' => $pemail,
                     'PUBLISHER_BIO' => $pbio,
                     'PUBLISHER_OCCUPATION' => $pocc,
@@ -8578,6 +9749,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
                     'PUBLISHER_AFFILIATION' => $paffil,
                     'PUBLISHER_RELATED_SITE_URL' => $prsurl,
                     'PUBLISHER_RELATED_SITE_LABEL' => $prslab,
+                    'PUBLISHER_HONORIFIC_PREFIX' => $phpre,
+                    'PUBLISHER_GIVEN_NAME' => $pgiven,
+                    'PUBLISHER_FAMILY_NAME' => $pfam,
+                    'PUBLISHER_BIRTH_DATE' => $pbdate,
+                    'PUBLISHER_BIRTH_PLACE' => $pbplace,
+                    'PUBLISHER_GENDER' => $pgender,
+                    'PUBLISHER_PRONOUNS' => $ppron,
+                    'PUBLISHER_KNOWS_LANGUAGE' => $plangs,
+                    'PUBLISHER_WORKS_FOR' => $pworks,
+                    'PUBLISHER_AWARDS' => $pawards,
+                    'PUBLISHER_SPOUSE' => $pspouse,
+                    'PUBLISHER_CHILDREN' => $pkids,
+                    'PUBLISHER_PARENTS' => $pfolks,
                     'SITE_SAMEAS' => $sameas,
                     'SITE_LANGUAGE' => $lang,
                     'AI_ALLOW_QUOTE' => !empty($_POST['ai_allow_quote']),
@@ -8606,6 +9790,10 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_type' => PUBLISHER_TYPE,
         'publisher_name' => PUBLISHER_NAME,
         'publisher_url' => PUBLISHER_URL,
+        'publisher_canonical_id' => PUBLISHER_CANONICAL_ID,
+        'publisher_image' => PUBLISHER_IMAGE,
+        'publisher_contact_type' => PUBLISHER_CONTACT_TYPE,
+        'publisher_contact_languages' => PUBLISHER_CONTACT_LANGUAGES,
         'publisher_email' => PUBLISHER_EMAIL,
         'publisher_bio' => PUBLISHER_BIO,
         'publisher_occupation' => PUBLISHER_OCCUPATION,
@@ -8615,6 +9803,19 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'publisher_affiliation' => PUBLISHER_AFFILIATION,
         'publisher_related_site_url' => PUBLISHER_RELATED_SITE_URL,
         'publisher_related_site_label' => PUBLISHER_RELATED_SITE_LABEL,
+        'publisher_honorific_prefix' => PUBLISHER_HONORIFIC_PREFIX,
+        'publisher_given_name' => PUBLISHER_GIVEN_NAME,
+        'publisher_family_name' => PUBLISHER_FAMILY_NAME,
+        'publisher_birth_date' => PUBLISHER_BIRTH_DATE,
+        'publisher_birth_place' => PUBLISHER_BIRTH_PLACE,
+        'publisher_gender' => PUBLISHER_GENDER,
+        'publisher_pronouns' => PUBLISHER_PRONOUNS,
+        'publisher_knows_language' => PUBLISHER_KNOWS_LANGUAGE,
+        'publisher_works_for' => PUBLISHER_WORKS_FOR,
+        'publisher_awards' => PUBLISHER_AWARDS,
+        'publisher_spouse' => PUBLISHER_SPOUSE,
+        'publisher_children' => PUBLISHER_CHILDREN,
+        'publisher_parents' => PUBLISHER_PARENTS,
         'site_language' => SITE_LANGUAGE,
         'site_sameas' => SITE_SAMEAS,
         'ai_allow_quote' => AI_ALLOW_QUOTE,
@@ -8626,7 +9827,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
         'audio_playlist' => AUDIO_PLAYLIST,
     ];
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $error !== '') {
-        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'site_language', 'site_sameas', 'ai_policy_note'] as $k) {
+        foreach (['site_name', 'site_description', 'publisher_type', 'publisher_name', 'publisher_url', 'publisher_canonical_id', 'publisher_image', 'publisher_contact_type', 'publisher_contact_languages', 'site_language', 'site_sameas', 'ai_policy_note'] as $k) {
             if (isset($_POST[$k])) {
                 $cur[$k] = (string) $_POST[$k];
             }
@@ -8677,111 +9878,235 @@ if (isset($_GET['action']) && $_GET['action'] === 'settings') {
     <h2 class="detail-title">Site settings</h2>
     <p class="detail-desc">Saved settings override <code>config.php</code>. They apply immediately across the library, page titles, and structured data.</p>
 
+    <?php
+    /* Four panels, grouped by what an admin actually comes here to change,
+       rather than one long scroll through unrelated fields. Progressive
+       enhancement: without JavaScript every panel stays visible and the
+       page reads as labelled sections, same pattern as Diagnostics and
+       AI Crawlers above. */
+    $settings_tabs = ['Site', 'Publisher', 'AI Policy', 'Advanced'];
+    ?>
     <form method="post" class="stack-form settings-form">
         <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
 
-        <label for="s-name">Site name</label>
-        <input type="text" id="s-name" name="site_name" maxlength="100" value="<?= e((string) $cur['site_name']) ?>" required>
+        <div class="settings-tabs" id="settings-tabs">
+            <div class="settings-tablist" role="tablist">
+                <?php foreach ($settings_tabs as $i => $t_label): ?>
+                    <button type="button" role="tab"
+                            class="settings-tab<?= $i === 0 ? ' is-active' : '' ?>"
+                            data-settings-tab="<?= (int) $i ?>"
+                            aria-selected="<?= $i === 0 ? 'true' : 'false' ?>">
+                        <?= e($t_label) ?>
+                    </button>
+                <?php endforeach; ?>
+            </div>
 
-        <label for="s-desc">Description</label>
-        <input type="text" id="s-desc" name="site_description" maxlength="300" value="<?= e((string) $cur['site_description']) ?>">
+            <section class="settings-panel is-active" data-settings-panel="0" role="tabpanel">
+                <h2 class="detail-title settings-panel-heading">Site</h2>
 
-        <label for="s-ptype">Publisher type</label>
-        <select id="s-ptype" name="publisher_type">
-            <option value="Person" <?= $cur['publisher_type'] === 'Person' ? 'selected' : '' ?>>Person</option>
-            <option value="Organization" <?= $cur['publisher_type'] === 'Organization' ? 'selected' : '' ?>>Organization</option>
-        </select>
+                <label for="s-name">Site name</label>
+                <input type="text" id="s-name" name="site_name" maxlength="100" value="<?= e((string) $cur['site_name']) ?>" required>
 
-        <label for="s-pname">Publisher name</label>
-        <input type="text" id="s-pname" name="publisher_name" maxlength="100" value="<?= e((string) $cur['publisher_name']) ?>">
+                <label for="s-desc">Description</label>
+                <input type="text" id="s-desc" name="site_description" maxlength="300" value="<?= e((string) $cur['site_description']) ?>">
 
-        <label for="s-purl">Publisher URL</label>
-        <input type="text" id="s-purl" name="publisher_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_url']) ?>">
+                <label for="s-lang">Language (BCP 47, e.g. en or ms)</label>
+                <input type="text" id="s-lang" name="site_language" maxlength="20" value="<?= e((string) $cur['site_language']) ?>">
+            </section>
 
-        <label for="s-pemail">Publisher email</label>
-        <input type="email" id="s-pemail" name="publisher_email" maxlength="254" placeholder="you@example.com" value="<?= e((string) $cur['publisher_email']) ?>" autocomplete="email">
-        <p class="field-note">
-            Where the contact form delivers messages, and the address published in
-            <code>vcard.vcf</code> and <code>llms.txt</code>. Visitors never see it on the contact
-            page &mdash; the form posts to Folio, which reads this address on the server. Leave
-            empty and the contact form reports itself as not ready.
-        </p>
+            <section class="settings-panel" data-settings-panel="1" role="tabpanel">
+                <h2 class="detail-title settings-panel-heading">Publisher</h2>
 
-        <label for="s-pocc">Occupation</label>
-        <input type="text" id="s-pocc" name="publisher_occupation" maxlength="120" placeholder="writer, poet, and apologist" value="<?= e((string) $cur['publisher_occupation']) ?>">
-        <p class="field-note">A short description of what the publisher does, used in <code>identity.json</code> and <code>llms.txt</code>. Written as it would follow &ldquo;is a&hellip;&rdquo;.</p>
+                <label for="s-ptype">Publisher type</label>
+                <select id="s-ptype" name="publisher_type">
+                    <option value="Person" <?= $cur['publisher_type'] === 'Person' ? 'selected' : '' ?>>Person</option>
+                    <option value="Organization" <?= $cur['publisher_type'] === 'Organization' ? 'selected' : '' ?>>Organization</option>
+                </select>
 
-        <label for="s-pbio">Biography</label>
-        <textarea id="s-pbio" name="publisher_bio" rows="3" maxlength="600" placeholder="A sentence or two describing the publisher."><?= e((string) $cur['publisher_bio']) ?></textarea>
-        <p class="field-note">
-            Describes the <em>person or organisation</em>, where the description above describes the
-            <em>library</em>. Without this, <code>identity.json</code> falls back to the library's
-            description, which answers the wrong question about its own subject. Up to 600 characters.
-        </p>
+                <label for="s-pname">Publisher name</label>
+                <input type="text" id="s-pname" name="publisher_name" maxlength="100" value="<?= e((string) $cur['publisher_name']) ?>">
 
-        <label for="s-paltn">Other names</label>
-        <input type="text" id="s-paltn" name="publisher_alt_names" maxlength="300" placeholder="MENJ, Elfie Juferi" value="<?= e((string) $cur['publisher_alt_names']) ?>">
-        <p class="field-note">Separate with commas. Helps a search engine or AI connect other spellings and pen names to the same person.</p>
+                <label for="s-purl">Publisher URL</label>
+                <input type="text" id="s-purl" name="publisher_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_url']) ?>">
 
-        <label for="s-pnat">Nationality</label>
-        <input type="text" id="s-pnat" name="publisher_nationality" maxlength="80" placeholder="Malaysian" value="<?= e((string) $cur['publisher_nationality']) ?>">
+                <label for="s-pcanon">Canonical identity ID</label>
+                <input type="text" id="s-pcanon" name="publisher_canonical_id" maxlength="200" placeholder="https://example.com/#person" value="<?= e((string) $cur['publisher_canonical_id']) ?>">
+                <p class="field-note">
+                    Leave this empty unless you know you need it. Normally the publisher's
+                    structured-data identifier is derived from this library's own address, which is
+                    right when the library and the person's main page are the same site.
+                    Set it only when this library is a <em>satellite</em> archive about someone whose
+                    canonical page lives on another domain &mdash; a documentary archive here, their
+                    primary site there. Every graph this site emits
+                    (<code>identity.json</code>, page JSON-LD, <code>vcard.vcf</code>) then points at
+                    that one identifier instead of minting a second, competing record for the same
+                    person. Must be a full URL, normally ending in <code>#person</code>.
+                </p>
 
-        <label for="s-palum">Education</label>
-        <input type="text" id="s-palum" name="publisher_alumni_of" maxlength="300" placeholder="Universiti Sains Malaysia" value="<?= e((string) $cur['publisher_alumni_of']) ?>">
-        <p class="field-note">Institutions attended. Separate several with commas.</p>
+                <label for="s-pimg">Portrait or logo</label>
+                <input type="text" id="s-pimg" name="publisher_image" maxlength="200" placeholder="branding/portrait.jpg" value="<?= e((string) $cur['publisher_image']) ?>">
+                <p class="field-note">
+                    One canonical image for the publisher, reused in the structured data, the About
+                    page, and <code>vcard.vcf</code>. A path inside this installation (put it in
+                    <code>branding/</code> so upgrades don't overwrite it) or a full URL. Left empty,
+                    Folio falls back to the site icon &mdash; a favicon makes a poor portrait, but
+                    that is what it used before this setting existed.
+                </p>
 
-        <label for="s-paffil">Affiliations</label>
-        <input type="text" id="s-paffil" name="publisher_affiliation" maxlength="300" placeholder="Organisations you belong to" value="<?= e((string) $cur['publisher_affiliation']) ?>">
-        <p class="field-note">Separate several with commas.</p>
+                <label for="s-pctype">Contact type</label>
+                <input type="text" id="s-pctype" name="publisher_contact_type" maxlength="60" placeholder="customer support" value="<?= e((string) $cur['publisher_contact_type']) ?>">
+                <p class="field-note">How the published contact address should be labelled &mdash; &ldquo;professional enquiries&rdquo;, &ldquo;press&rdquo;, and so on. Defaults to &ldquo;customer support&rdquo;.</p>
 
-        <label for="s-prsurl">Related site</label>
-        <input type="text" id="s-prsurl" name="publisher_related_site_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_related_site_url']) ?>">
-        <input type="text" id="s-prslab" name="publisher_related_site_label" maxlength="80" placeholder="Label, e.g. Primary blog" value="<?= e((string) $cur['publisher_related_site_label']) ?>">
-        <p class="field-note">
-            A second site about the same person &mdash; a blog alongside this library, say &mdash;
-            named explicitly rather than left as one more unlabelled profile link below. The label
-            is optional.
-        </p>
+                <label for="s-pclangs">Contact languages</label>
+                <input type="text" id="s-pclangs" name="publisher_contact_languages" maxlength="120" placeholder="en, ms" value="<?= e((string) $cur['publisher_contact_languages']) ?>">
+                <p class="field-note">Languages someone writing to that address can use. Separate with commas. Empty uses the library language.</p>
 
-        <label for="s-sameas">Verified profiles (one URL per line)</label>
-        <textarea id="s-sameas" name="site_sameas" rows="3" placeholder="https://www.wikidata.org/wiki/…&#10;https://linkedin.com/in/…&#10;https://twitter.com/…"><?= e((string) $cur['site_sameas']) ?></textarea>
-        <p class="field-note">Added to <code>identity.json</code> as <code>sameAs</code>, linking the site's subject to authoritative profiles (Wikidata, LinkedIn, ORCID, etc.). Use only real, verified URLs — an absent list is safer than an incorrect one. Leave empty to omit.</p>
+                <label for="s-pemail">Publisher email</label>
+                <input type="email" id="s-pemail" name="publisher_email" maxlength="254" placeholder="you@example.com" value="<?= e((string) $cur['publisher_email']) ?>" autocomplete="email">
+                <p class="field-note">
+                    Where the contact form delivers messages, and the address published in
+                    <code>vcard.vcf</code> and <code>llms.txt</code>. Visitors never see it on the contact
+                    page &mdash; the form posts to Folio, which reads this address on the server. Leave
+                    empty and the contact form reports itself as not ready.
+                </p>
 
-        <label for="s-lang">Language (BCP 47, e.g. en or ms)</label>
-        <input type="text" id="s-lang" name="site_language" maxlength="20" value="<?= e((string) $cur['site_language']) ?>">
+                <label for="s-pocc">Occupation</label>
+                <input type="text" id="s-pocc" name="publisher_occupation" maxlength="120" placeholder="writer, poet, and apologist" value="<?= e((string) $cur['publisher_occupation']) ?>">
+                <p class="field-note">A short description of what the publisher does, used in <code>identity.json</code> and <code>llms.txt</code>. Written as it would follow &ldquo;is a&hellip;&rdquo;.</p>
 
-        <h3 class="detail-subtitle">AI usage policy</h3>
-        <p class="field-note">A site-wide statement, published in <code>library.yaml</code> under <code>permissions:</code>, of what you permit AI systems to do with this library's content. This is a declaration of intent, not enforcement — it states your terms; it does not compel anyone.</p>
+                <label for="s-pbio">Biography</label>
+                <textarea id="s-pbio" name="publisher_bio" rows="3" maxlength="600" placeholder="A sentence or two describing the publisher."><?= e((string) $cur['publisher_bio']) ?></textarea>
+                <p class="field-note">
+                    Describes the <em>person or organisation</em>, where the description above describes the
+                    <em>library</em>. Without this, <code>identity.json</code> falls back to the library's
+                    description, which answers the wrong question about its own subject. Up to 600 characters.
+                </p>
 
-        <label class="check-row">
-            <input type="checkbox" name="ai_allow_quote" value="1" <?= $cur['ai_allow_quote'] ? 'checked' : '' ?>>
-            Allow AI systems to quote content
-        </label>
-        <label class="check-row">
-            <input type="checkbox" name="ai_allow_summarise" value="1" <?= $cur['ai_allow_summarise'] ? 'checked' : '' ?>>
-            Allow AI systems to summarise content
-        </label>
-        <label class="check-row">
-            <input type="checkbox" name="ai_allow_train" value="1" <?= $cur['ai_allow_train'] ? 'checked' : '' ?>>
-            Allow use of content for AI model training
-        </label>
-        <label class="check-row">
-            <input type="checkbox" name="ai_allow_commercial" value="1" <?= $cur['ai_allow_commercial'] ? 'checked' : '' ?>>
-            Allow commercial use of content by AI systems
-        </label>
+                <label for="s-paltn">Other names</label>
+                <input type="text" id="s-paltn" name="publisher_alt_names" maxlength="300" placeholder="MENJ, Elfie Juferi" value="<?= e((string) $cur['publisher_alt_names']) ?>">
+                <p class="field-note">Separate with commas. Helps a search engine or AI connect other spellings and pen names to the same person.</p>
 
-        <label for="s-ainote">Policy note (optional)</label>
-        <textarea id="s-ainote" name="ai_policy_note" rows="2" maxlength="500" placeholder="Any additional terms, in plain language."><?= e((string) $cur['ai_policy_note']) ?></textarea>
+                <label for="s-pnat">Nationality</label>
+                <input type="text" id="s-pnat" name="publisher_nationality" maxlength="160" placeholder="Malaysian" value="<?= e((string) $cur['publisher_nationality']) ?>">
+                <p class="field-note">Dual nationality: separate the two with a comma, and both are published.</p>
 
-        <label class="check-row">
-            <input type="checkbox" name="show_admin_link" value="1" <?= $cur['show_admin_link'] ? 'checked' : '' ?>>
-            Show the Admin link to logged-out visitors
-        </label>
+                <label for="s-palum">Education</label>
+                <input type="text" id="s-palum" name="publisher_alumni_of" maxlength="300" placeholder="Universiti Sains Malaysia" value="<?= e((string) $cur['publisher_alumni_of']) ?>">
+                <p class="field-note">Institutions attended. Separate several with commas.</p>
 
-        <label class="check-row">
-            <input type="checkbox" name="audio_playlist" value="1" <?= $cur['audio_playlist'] ? 'checked' : '' ?>>
-            Play a folder's audio or video as a playlist, with a queue and auto-advance
-        </label>
+                <label for="s-paffil">Affiliations</label>
+                <input type="text" id="s-paffil" name="publisher_affiliation" maxlength="300" placeholder="Organisations you belong to" value="<?= e((string) $cur['publisher_affiliation']) ?>">
+                <p class="field-note">Separate several with commas.</p>
+
+                <label for="s-phpre">Honorific prefix</label>
+                <input type="text" id="s-phpre" name="publisher_honorific_prefix" maxlength="40" placeholder="Dr., Tuan, Datuk" value="<?= e((string) $cur['publisher_honorific_prefix']) ?>">
+
+                <label for="s-pgiven">Given name</label>
+                <input type="text" id="s-pgiven" name="publisher_given_name" maxlength="120" value="<?= e((string) $cur['publisher_given_name']) ?>">
+
+                <label for="s-pfam">Family name</label>
+                <input type="text" id="s-pfam" name="publisher_family_name" maxlength="120" value="<?= e((string) $cur['publisher_family_name']) ?>">
+                <p class="field-note">
+                    The structured halves of the display name, for machines that need to know which part
+                    is which &mdash; Malay names do not split the way a Western parser guesses, so stating
+                    it beats letting them guess.
+                </p>
+
+                <label for="s-pbdate">Birth date</label>
+                <input type="text" id="s-pbdate" name="publisher_birth_date" maxlength="10" placeholder="1978, 1978-05, or 1978-05-17" value="<?= e((string) $cur['publisher_birth_date']) ?>">
+                <p class="field-note">
+                    ISO format, as precise as you care to publish &mdash; a year alone is valid. This is a
+                    public fact once set: it appears in <code>identity.json</code> and the site's
+                    structured data. Leave empty to publish nothing.
+                </p>
+
+                <label for="s-pbplace">Birth place</label>
+                <input type="text" id="s-pbplace" name="publisher_birth_place" maxlength="120" placeholder="Kuala Lumpur, Malaysia" value="<?= e((string) $cur['publisher_birth_place']) ?>">
+
+                <label for="s-pgender">Gender</label>
+                <input type="text" id="s-pgender" name="publisher_gender" maxlength="40" value="<?= e((string) $cur['publisher_gender']) ?>">
+
+                <label for="s-ppron">Pronouns</label>
+                <input type="text" id="s-ppron" name="publisher_pronouns" maxlength="40" placeholder="he/him" value="<?= e((string) $cur['publisher_pronouns']) ?>">
+
+                <label for="s-plangs">Languages</label>
+                <input type="text" id="s-plangs" name="publisher_knows_language" maxlength="200" placeholder="Malay, English, Iban" value="<?= e((string) $cur['publisher_knows_language']) ?>">
+                <p class="field-note">Languages the publisher works in. Separate with commas.</p>
+
+                <label for="s-pworks">Works for</label>
+                <input type="text" id="s-pworks" name="publisher_works_for" maxlength="160" placeholder="Organisation name" value="<?= e((string) $cur['publisher_works_for']) ?>">
+
+                <label for="s-pawards">Awards</label>
+                <input type="text" id="s-pawards" name="publisher_awards" maxlength="400" placeholder="Award names, separated with commas" value="<?= e((string) $cur['publisher_awards']) ?>">
+
+                <label for="s-pspouse">Spouse</label>
+                <input type="text" id="s-pspouse" name="publisher_spouse" maxlength="120" value="<?= e((string) $cur['publisher_spouse']) ?>">
+
+                <label for="s-pkids">Children</label>
+                <input type="text" id="s-pkids" name="publisher_children" maxlength="400" placeholder="Names, separated with commas" value="<?= e((string) $cur['publisher_children']) ?>">
+
+                <label for="s-pfolks">Parents</label>
+                <input type="text" id="s-pfolks" name="publisher_parents" maxlength="240" placeholder="Names, separated with commas" value="<?= e((string) $cur['publisher_parents']) ?>">
+                <p class="field-note">
+                    These three publish <em>other people's</em> names in <code>identity.json</code> and the
+                    site's structured data, where any crawler or AI system can read them. That is a normal
+                    thing for a biography to do &mdash; be sure the people named are content with it, and
+                    think twice before naming a minor child. Empty publishes nothing.
+                </p>
+
+                <label for="s-prsurl">Related site</label>
+                <input type="text" id="s-prsurl" name="publisher_related_site_url" maxlength="200" placeholder="https://…" value="<?= e((string) $cur['publisher_related_site_url']) ?>">
+                <input type="text" id="s-prslab" name="publisher_related_site_label" maxlength="80" placeholder="Label, e.g. Primary blog" value="<?= e((string) $cur['publisher_related_site_label']) ?>">
+                <p class="field-note">
+                    A second site about the same person &mdash; a blog alongside this library, say &mdash;
+                    named explicitly rather than left as one more unlabelled profile link below. The label
+                    is optional.
+                </p>
+
+                <label for="s-sameas">Verified profiles (one URL per line)</label>
+                <textarea id="s-sameas" name="site_sameas" rows="3" placeholder="https://www.wikidata.org/wiki/…&#10;https://linkedin.com/in/…&#10;https://twitter.com/…"><?= e((string) $cur['site_sameas']) ?></textarea>
+                <p class="field-note">Added to <code>identity.json</code> as <code>sameAs</code>, linking the site's subject to authoritative profiles (Wikidata, LinkedIn, ORCID, etc.). Use only real, verified URLs — an absent list is safer than an incorrect one. Leave empty to omit.</p>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="2" role="tabpanel">
+                <h2 class="detail-title settings-panel-heading">AI usage policy</h2>
+                <p class="field-note">A site-wide statement, published in <code>library.yaml</code> under <code>permissions:</code>, of what you permit AI systems to do with this library's content. This is a declaration of intent, not enforcement — it states your terms; it does not compel anyone.</p>
+
+                <label class="check-row">
+                    <input type="checkbox" name="ai_allow_quote" value="1" <?= $cur['ai_allow_quote'] ? 'checked' : '' ?>>
+                    Allow AI systems to quote content
+                </label>
+                <label class="check-row">
+                    <input type="checkbox" name="ai_allow_summarise" value="1" <?= $cur['ai_allow_summarise'] ? 'checked' : '' ?>>
+                    Allow AI systems to summarise content
+                </label>
+                <label class="check-row">
+                    <input type="checkbox" name="ai_allow_train" value="1" <?= $cur['ai_allow_train'] ? 'checked' : '' ?>>
+                    Allow use of content for AI model training
+                </label>
+                <label class="check-row">
+                    <input type="checkbox" name="ai_allow_commercial" value="1" <?= $cur['ai_allow_commercial'] ? 'checked' : '' ?>>
+                    Allow commercial use of content by AI systems
+                </label>
+
+                <label for="s-ainote">Policy note (optional)</label>
+                <textarea id="s-ainote" name="ai_policy_note" rows="2" maxlength="500" placeholder="Any additional terms, in plain language."><?= e((string) $cur['ai_policy_note']) ?></textarea>
+            </section>
+
+            <section class="settings-panel" data-settings-panel="3" role="tabpanel">
+                <h2 class="detail-title settings-panel-heading">Advanced</h2>
+
+                <label class="check-row">
+                    <input type="checkbox" name="show_admin_link" value="1" <?= $cur['show_admin_link'] ? 'checked' : '' ?>>
+                    Show the Admin link to logged-out visitors
+                </label>
+
+                <label class="check-row">
+                    <input type="checkbox" name="audio_playlist" value="1" <?= $cur['audio_playlist'] ? 'checked' : '' ?>>
+                    Play a folder's audio or video as a playlist, with a queue and auto-advance
+                </label>
+            </section>
+        </div>
 
         <div><button type="submit" class="btn">Save settings</button></div>
     </form>
@@ -9692,6 +11017,201 @@ if (isset($_GET['action']) && $_GET['action'] === 'redirects') {
 /* ------------------------------------------------------------------ */
 /* Pages editor (admin only)                                           */
 /* ------------------------------------------------------------------ */
+/* ------------------------------------------------------------------ */
+/* Entities: reusable organisations and works                          */
+/* ------------------------------------------------------------------ */
+if (isset($_GET['action']) && $_GET['action'] === 'entities') {
+    if (!is_admin()) {
+        http_response_code(403);
+        header('Location: ' . BASE_URL);
+        exit;
+    }
+    $notice = '';
+    $error  = '';
+    $writable = is_dir(__DIR__ . '/data') && is_writable(__DIR__ . '/data');
+
+    if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+        if (!csrf_valid()) {
+            $error = 'Security token expired. Reload the page and try again.';
+        } else {
+            /* The form posts parallel arrays. A row whose name is empty is a
+               deletion: entities_save() drops it, which is how a row is
+               removed without a separate delete action per row. */
+            $store = ['organizations' => [], 'books' => []];
+            $o_names = (array) ($_POST['org_name'] ?? []);
+            foreach ($o_names as $i => $o_name) {
+                $store['organizations'][] = [
+                    'key'    => (string) ($_POST['org_key'][$i] ?? ''),
+                    'name'   => (string) $o_name,
+                    'type'   => (string) ($_POST['org_type'][$i] ?? 'Organization'),
+                    'url'    => (string) ($_POST['org_url'][$i] ?? ''),
+                    'sameas' => (string) ($_POST['org_sameas'][$i] ?? ''),
+                ];
+            }
+            $b_names = (array) ($_POST['book_name'] ?? []);
+            foreach ($b_names as $i => $b_name) {
+                $store['books'][] = [
+                    'key'           => (string) ($_POST['book_key'][$i] ?? ''),
+                    'name'          => (string) $b_name,
+                    'publisher'     => (string) ($_POST['book_publisher'][$i] ?? ''),
+                    'datePublished' => (string) ($_POST['book_date'][$i] ?? ''),
+                    'language'      => (string) ($_POST['book_language'][$i] ?? ''),
+                    'isbn'          => (string) ($_POST['book_isbn'][$i] ?? ''),
+                    'oclc'          => (string) ($_POST['book_oclc'][$i] ?? ''),
+                    'url'           => (string) ($_POST['book_url'][$i] ?? ''),
+                ];
+            }
+            $save_error = '';
+            if (!$writable) {
+                $error = 'The data/ folder is not writable, so entities cannot be saved.';
+            } elseif (entities_save($store, $save_error)) {
+                $notice = 'Entities saved.';
+            } else {
+                $error = $save_error ?: 'The entities could not be saved.';
+            }
+        }
+    }
+
+    $ent   = entities_load();
+    $orgs  = array_values($ent['organizations']);
+    $books = array_values($ent['books']);
+    // One spare row of each, so adding the first entity needs no separate
+    // "add" step — the same affordance the Pages screen uses.
+    $orgs[]  = ['key' => '', 'name' => '', 'type' => 'Organization', 'url' => '', 'sameas' => ''];
+    $books[] = ['key' => '', 'name' => '', 'publisher' => '', 'datePublished' => '',
+                'language' => '', 'isbn' => '', 'oclc' => '', 'url' => ''];
+
+    header('Content-Type: text/html; charset=UTF-8');
+    send_security_headers();
+    ?>
+<!DOCTYPE html>
+<html lang="<?= e(SITE_LANGUAGE) ?>" data-theme="folio">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Entities – <?= e(SITE_NAME) ?></title>
+<meta name="robots" content="noindex, nofollow">
+<?= site_icon_tags() ?><?= stylesheet_tag() ?>
+</head>
+<body>
+<a class="skip-link" href="#folio-main">Skip to content</a>
+<header class="topbar">
+    <h1><a class="site-home" href="<?= e(BASE_URL) ?>"><?= e(SITE_NAME) ?></a></h1>
+    <span class="running-head">Entities</span>
+    <nav class="crumbs">
+        <a href="<?= e(BASE_URL) ?>?action=settings">Settings</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
+        <span class="sep">/</span>
+        <a href="<?= e(BASE_URL) ?>">Back to the library</a>
+    </nav>
+</header>
+<main class="detail" id="folio-main" tabindex="-1">
+    <?php if ($notice !== ''): ?><p class="msg msg-ok"><?= e($notice) ?></p><?php endif; ?>
+    <?php if ($error !== ''): ?><p class="msg msg-bad"><?= e($error) ?></p><?php endif; ?>
+    <?php if (!$writable): ?>
+        <p class="msg msg-bad">The <code>data/</code> folder is not writable, so entities cannot be saved.</p>
+    <?php endif; ?>
+
+    <h2 class="detail-title">Entities</h2>
+    <p class="detail-desc">
+        Organisations and books the archive refers to more than once. Naming them here gives each
+        one a stable identifier that every record can point at, so six documents mentioning the
+        same publisher describe one publisher rather than six unrelated words.
+    </p>
+    <p class="field-note">
+        Clear an entry's name and save to remove it. Removing an organisation a document still
+        refers to leaves that document's &ldquo;published by&rdquo; silent rather than broken.
+    </p>
+
+    <form method="post" class="stack-form entities-form">
+        <input type="hidden" name="csrf" value="<?= e(csrf_token()) ?>">
+
+        <h3 class="detail-subtitle">Organisations</h3>
+        <p class="field-note">Publishers, universities, institutions &mdash; anything that issues or publishes.</p>
+        <?php foreach ($orgs as $i => $o): ?>
+            <fieldset class="entity-row">
+                <legend><?= $o['name'] !== '' ? e($o['name']) : 'New organisation' ?></legend>
+                <input type="hidden" name="org_key[<?= (int) $i ?>]" value="<?= e($o['key']) ?>">
+                <label class="meta-form-label">Name
+                    <input type="text" name="org_name[<?= (int) $i ?>]" maxlength="160" value="<?= e($o['name']) ?>" placeholder="Jahabersa">
+                </label>
+                <label class="meta-form-label">Type
+                    <select name="org_type[<?= (int) $i ?>]">
+                        <?php foreach (entity_org_types() as $t_val => $t_lab): ?>
+                            <option value="<?= e($t_val) ?>" <?= $o['type'] === $t_val ? 'selected' : '' ?>><?= e($t_lab) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label class="meta-form-label">Website <span class="field-note field-note-inline">(optional)</span>
+                    <input type="text" name="org_url[<?= (int) $i ?>]" maxlength="200" value="<?= e($o['url']) ?>" placeholder="https://…">
+                </label>
+                <label class="meta-form-label">Authority links <span class="field-note field-note-inline">(optional, comma-separated)</span>
+                    <input type="text" name="org_sameas[<?= (int) $i ?>]" maxlength="400" value="<?= e($o['sameas']) ?>" placeholder="https://www.wikidata.org/wiki/…">
+                </label>
+                <?php if ($o['key'] !== ''): ?>
+                    <p class="field-note">Identifier: <code><?= e(entity_id($o['key'])) ?></code></p>
+                <?php endif; ?>
+            </fieldset>
+        <?php endforeach; ?>
+
+        <h3 class="detail-subtitle">Books</h3>
+        <p class="field-note">
+            Works authored by <?= e(PUBLISHER_NAME !== '' ? PUBLISHER_NAME : 'the archive subject') ?>.
+            The publisher is a separate organisation: leave it as &ldquo;Not stated&rdquo; rather
+            than implying a work was self-published.
+        </p>
+        <?php foreach ($books as $i => $b): ?>
+            <fieldset class="entity-row">
+                <legend><?= $b['name'] !== '' ? e($b['name']) : 'New book' ?></legend>
+                <input type="hidden" name="book_key[<?= (int) $i ?>]" value="<?= e($b['key']) ?>">
+                <label class="meta-form-label">Title
+                    <input type="text" name="book_name[<?= (int) $i ?>]" maxlength="300" value="<?= e($b['name']) ?>">
+                </label>
+                <label class="meta-form-label">Publisher
+                    <select name="book_publisher[<?= (int) $i ?>]">
+                        <option value="">Not stated</option>
+                        <?php foreach ($ent['organizations'] as $po_key => $po): ?>
+                            <option value="<?= e($po_key) ?>" <?= $b['publisher'] === $po_key ? 'selected' : '' ?>><?= e($po['name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </label>
+                <label class="meta-form-label">Published
+                    <input type="text" name="book_date[<?= (int) $i ?>]" maxlength="10" value="<?= e($b['datePublished']) ?>" placeholder="2005">
+                </label>
+                <label class="meta-form-label">Language
+                    <input type="text" name="book_language[<?= (int) $i ?>]" maxlength="20" value="<?= e($b['language']) ?>" placeholder="en or ms">
+                    <span class="field-note">The language of this book, not of its publisher &mdash; a press can publish in more than one.</span>
+                </label>
+                <label class="meta-form-label">ISBN <span class="field-note field-note-inline">(optional)</span>
+                    <input type="text" name="book_isbn[<?= (int) $i ?>]" maxlength="20" value="<?= e($b['isbn']) ?>">
+                </label>
+                <label class="meta-form-label">OCLC <span class="field-note field-note-inline">(optional)</span>
+                    <input type="text" name="book_oclc[<?= (int) $i ?>]" maxlength="30" value="<?= e($b['oclc']) ?>">
+                </label>
+                <label class="meta-form-label">Archive page <span class="field-note field-note-inline">(optional)</span>
+                    <input type="text" name="book_url[<?= (int) $i ?>]" maxlength="200" value="<?= e($b['url']) ?>" placeholder="https://…">
+                </label>
+                <?php if ($b['key'] !== ''): ?>
+                    <p class="field-note">Identifier: <code><?= e(entity_id($b['key'])) ?></code></p>
+                <?php endif; ?>
+            </fieldset>
+        <?php endforeach; ?>
+
+        <div><button type="submit" class="btn">Save entities</button></div>
+    </form>
+
+    <p class="detail-facts">
+        Saving reloads this page with a fresh blank row of each kind, so several can be added in
+        a row. Entities appear in <code>identity.json</code> and on the records that reference them.
+    </p>
+</main>
+</body>
+</html>
+    <?php
+    exit;
+}
+
 if (isset($_GET['action']) && $_GET['action'] === 'pages') {
     if (!is_admin()) {
         http_response_code(403);
@@ -10120,8 +11640,8 @@ if (isset($_GET['page'])) {
     // ProfilePage: who this page primarily describes.
     if ($page_type === 'ProfilePage') {
         if (trim((string) PUBLISHER_NAME) !== '') {
-            $page_node['about'] = ['@id' => BASE_URL . '#person'];
-            $page_node['mainEntity'] = ['@id' => BASE_URL . '#person'];
+            $page_node['about'] = ['@id' => person_id()];
+            $page_node['mainEntity'] = ['@id' => person_id()];
         }
         // Speakable: markup the page's text as suitable for TTS on Assistant-enabled
         // devices. CssSelector pointing at the body prose block.
@@ -10178,6 +11698,12 @@ if (isset($_GET['page'])) {
 <meta property="og:description" content="<?= e($page_desc) ?>">
 <meta property="og:url" content="<?= e($page_url) ?>">
 <meta name="twitter:card" content="summary">
+<?php if (IDENTITY_ENABLED && SITE_INDEXABLE): ?>
+<?php /* The canonical identity graph, linked from the page that narrates the
+         same facts — About tells a human who this is; identity.json tells a
+         machine, and each should be one hop from the other. */ ?>
+<link rel="alternate" type="application/ld+json" href="<?= e(url_identity()) ?>" title="Identity (Schema.org)">
+<?php endif; ?>
 <script type="application/ld+json"><?= schema_emit($page_ld) ?></script>
 <?= site_icon_tags() ?><?= stylesheet_tag() ?>
 </head>
@@ -10899,6 +12425,33 @@ if (isset($_GET['action']) && $_GET['action'] === 'diagnostics') {
               . 'apple-touch-icon.png) in a branding/ folder at the root — it is picked up '
               . 'automatically and survives upgrades. Replacing the file inside assets/ '
               . 'would be overwritten by the next update.',
+    ];
+
+    // Which @id every schema graph on this site points at. Almost always
+    // this installation's own address, which is correct and needs no
+    // comment. It is worth stating plainly when it is *not*, because an
+    // external canonical ID is invisible from the settings screen once set
+    // and silently changes what identity.json, every page's JSON-LD, and
+    // vcard.vcf claim about who this library is about. 'info' rather than
+    // 'warn': pointing at another domain is a deliberate, valid choice for
+    // a satellite archive, not a fault to fix.
+    $canon_override = trim((string) PUBLISHER_CANONICAL_ID);
+    $cfg_checks[] = [
+        'label'  => 'canonical identity',
+        'brief'  => $canon_override !== ''
+            ? 'External: ' . $canon_override
+            : 'This site (' . person_id() . ')',
+        'status' => 'ok',
+        'note'   => $canon_override !== ''
+            ? 'Every schema graph points at ' . $canon_override . ', on another domain, rather '
+              . 'than minting a Person record of its own. That is the right setting for an '
+              . 'archive documenting someone whose main page lives elsewhere. Clear the '
+              . 'canonical identity ID in Settings to go back to using this site\'s own address.'
+            : 'Schema graphs identify the publisher as ' . person_id() . ', derived from this '
+              . 'library\'s own address. Correct unless this library is a satellite archive '
+              . 'about someone whose canonical page is on another domain, in which case set '
+              . 'the canonical identity ID in Settings so the two sites do not describe the '
+              . 'same person as two different entities.',
     ];
 
     // The llms.txt Specification (v1.7.0) lists # Contact as a required
@@ -12606,6 +14159,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'sitemap') {
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/sitemap.xml');
 
     $all = index_all_files($mime_map);
 
@@ -12907,11 +14461,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/identity.json');
     header('Content-Type: application/json; charset=UTF-8');
     send_public_cache_headers(900);
 
     $base    = rtrim(BASE_URL, '/') . '/';
-    $person_id  = $base . '#person';
+    $person_id  = person_id();
     $website_id = $base . '#website';
 
     // The site's subject. PUBLISHER_NAME is the human the library documents;
@@ -12943,14 +14498,26 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
     if ($altNames) {
         $subject['alternateName'] = count($altNames) === 1 ? $altNames[0] : $altNames;
     }
-    if (PUBLISHER_NATIONALITY !== '') {
-        $subject['nationality'] = PUBLISHER_NATIONALITY;
-    }
-    $alumniOf = parse_name_list((string) PUBLISHER_ALUMNI_OF);
+    /* alumniOf and affiliation upgrade from bare strings to entity
+       references when a declared Organization has the same name. A name
+       that matches nothing stays a plain string, so nothing an operator
+       already typed stops working — the string is simply less useful to a
+       consumer than an identifier it can resolve. */
+    $org_ref = static function (string $name) {
+        $key = entity_key_from_name($name);
+        return ($key !== '' && isset(entities_load()['organizations'][$key]))
+            ? ['@id' => entity_id($key)]
+            : $name;
+    };
+    /* Kept as a list even when there is one entry, which is the shape this
+       document has always emitted. Collapsing a single value to a bare
+       string would silently change the type of an existing field for every
+       installation that has one alma mater. */
+    $alumniOf = array_map($org_ref, parse_name_list((string) PUBLISHER_ALUMNI_OF));
     if ($alumniOf) {
         $subject['alumniOf'] = $alumniOf;
     }
-    $affiliation = parse_name_list((string) PUBLISHER_AFFILIATION);
+    $affiliation = array_map($org_ref, parse_name_list((string) PUBLISHER_AFFILIATION));
     if ($affiliation) {
         $subject['affiliation'] = $affiliation;
     }
@@ -12982,19 +14549,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
             'addressCountry' => PUBLISHER_COUNTRY,
         ];
     }
-    if (PUBLISHER_EMAIL !== '') {
-        $subject['contactPoint'] = [
-            '@type' => 'ContactPoint',
-            'contactType' => 'customer support',
-            'email' => PUBLISHER_EMAIL,
-            'availableLanguage' => SITE_LANGUAGE,
-        ];
+    $contact_id = schema_contact_point();
+    if ($contact_id) {
+        $subject['contactPoint'] = $contact_id;
     }
-    $configured_icon_id = trim((string) SITE_ICON);
-    if ($configured_icon_id !== '') {
-        $icon_url_id = preg_match('#^https?://#i', $configured_icon_id)
-            ? $configured_icon_id
-            : rtrim(BASE_URL, '/') . '/' . ltrim($configured_icon_id, '/');
+    $icon_url_id = publisher_image_url();
+    if ($icon_url_id !== '') {
         $subject[$subjectType === 'Organization' ? 'logo' : 'image'] = $icon_url_id;
     }
     if (PUBLISHER_RELATED_SITE_URL !== '') {
@@ -13004,6 +14564,43 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
             'value' => PUBLISHER_RELATED_SITE_URL,
         ];
     }
+    // knowsAbout: derived from the categories of the public library, never
+    // typed in by hand. The categories are real editorial facts — the person
+    // organised their documents under these subjects — so republishing them
+    // as knowsAbout states nothing the site does not already state. Hidden
+    // documents are excluded first, so a category that exists only on
+    // private material never becomes a public claim about the person.
+    $ident_files = index_all_files($mime_map);
+    $ident_meta  = meta_load();
+    $knows = [];
+    foreach ($ident_files as $if) {
+        $ifrel = (string) ($if['rel'] ?? '');
+        if (!media_page_visible($ifrel, $ident_meta[$ifrel] ?? [])) {
+            continue;
+        }
+        $ifcat = trim((string) ($if['category'] ?? ''));
+        if ($ifcat !== '') {
+            $knows[$ifcat] = true;
+        }
+    }
+    if ($knows) {
+        ksort($knows, SORT_NATURAL | SORT_FLAG_CASE);
+        $subject['knowsAbout'] = array_keys($knows);
+    }
+    // subjectOf: the About page is the authoritative human-readable account
+    // of this person, and ProfilePage is exactly the type that page carries.
+    // Emitted only when the page actually has content, so an empty slot
+    // never becomes a claim.
+    $ident_about = pages_load()['about'] ?? null;
+    if (is_array($ident_about) && trim((string) ($ident_about['body'] ?? '')) !== '') {
+        $subject['subjectOf'] = [
+            '@type' => 'ProfilePage',
+            'url'   => url_page('about'),
+            'name'  => page_title('about', $ident_about),
+        ];
+        $subject['mainEntityOfPage'] = url_page('about');
+    }
+    $subject = schema_person_biography($subject);
     // This library's own relationship to its subject, stated plainly rather
     // than left implicit in the fact that WebSite.about already points here:
     // a document-index tool cannot assume a reader already knows what kind
@@ -13054,9 +14651,22 @@ if (isset($_GET['action']) && $_GET['action'] === 'identity') {
         $website['subjectOf'] = array_map(static fn($u) => ['@type' => 'CreativeWork', 'url' => $u], $related);
     }
 
+    // Books and organisations, appended so the Person and WebSite keep
+    // their existing positions. Each carries its own @id, which is what
+    // lets the records that reference an entity point at it rather than
+    // repeating its name as a bare string. An archive with none declared
+    // emits exactly what it emitted before.
+    //
+    // The authorship link is stated once, on each Book's `author`, and not
+    // mirrored onto the Person: Schema.org has no inverse of `author`, and
+    // the nearest candidates all mean something else — `author` on a Person
+    // would say the person was written by someone. A consumer resolves the
+    // relationship from the Book side, which is where it is true.
+    $entity_nodes = array_merge(entity_book_nodes(), entity_org_nodes());
+
     $doc = [
         '@context' => 'https://schema.org',
-        '@graph'   => [$subject, $website],
+        '@graph'   => array_merge([$subject, $website], $entity_nodes),
         // Declares the external convention this document also conforms to,
         // alongside the Schema.org vocabulary named in @context.
         '_specification' => [
@@ -13192,6 +14802,18 @@ function social_platform_info(string $url): array
         'scribd.com' => ['Scribd', 'scribd'],
         'issuu.com' => ['Issuu', 'issuu'],
         'gravatar.com' => ['Gravatar', 'gravatar'],
+        // Authority and bibliographic identifiers. These are not social
+        // profiles, but they belong in the same list for the same reason:
+        // each is a verified external record of the same person, and
+        // sameAs is precisely where a crawler looks to reconcile them.
+        'orcid.org' => ['ORCID', 'orcid'],
+        'isni.org' => ['ISNI', 'isni'],
+        'viaf.org' => ['VIAF', 'viaf'],
+        'entities.oclc.org' => ['WorldCat Entities', 'oclc-entities'],
+        'search.worldcat.org' => ['WorldCat', 'oclc-entities'],
+        'worldcat.org' => ['WorldCat', 'oclc-entities'],
+        'openlibrary.org' => ['Open Library', 'openlibrary'],
+        'suno.com' => ['Suno', 'suno'],
         'play.google.com' => ['Google Play', 'google-play'],
         'scholar.google.com' => ['Google Scholar', 'google-scholar'],
         'acronymfinder.com' => ['Acronym Finder', 'acronym-finder'],
@@ -13235,6 +14857,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/vcard.vcf');
 
     $name = PUBLISHER_NAME !== '' ? PUBLISHER_NAME : SITE_NAME;
     $isOrg = PUBLISHER_TYPE === 'Organization';
@@ -13245,10 +14868,24 @@ if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
     $lines[] = 'PRODID:-//Folio//Folio ' . FOLIO_VERSION . '//EN';
     $lines[] = 'REV:' . gmdate('Y-m-d H:i:s');
     $lines[] = 'FN:' . vcard_escape($name);
-    // Structured name left empty: Folio collects no given/family split, and a
-    // guessed split could be wrong for names in any order. FN is what every
-    // vCard consumer displays; N exists only because the field is expected.
-    $lines[] = 'N:;;;;';
+    if (PUBLISHER_TYPE === 'Person' && PUBLISHER_BIRTH_DATE !== '') {
+        $lines[] = 'BDAY:' . vcard_escape(PUBLISHER_BIRTH_DATE);
+    }
+    foreach (parse_name_list((string) PUBLISHER_KNOWS_LANGUAGE) as $vlang) {
+        $lines[] = 'LANG:' . vcard_escape($vlang);
+    }
+    // Structured name, RFC 2426 §3.1.2: Family;Given;Additional;Prefix;Suffix.
+    // Populated from the parts the publisher stated in Settings; empty
+    // otherwise, because an N built by guessing where a name splits would
+    // state a wrong fact precisely — Malay names do not divide the way a
+    // Western parser assumes. Exactly one N either way, as vCard 3.0 requires.
+    if (!$isOrg && (PUBLISHER_FAMILY_NAME !== '' || PUBLISHER_GIVEN_NAME !== '' || PUBLISHER_HONORIFIC_PREFIX !== '')) {
+        $lines[] = 'N:' . vcard_escape(PUBLISHER_FAMILY_NAME) . ';'
+                 . vcard_escape(PUBLISHER_GIVEN_NAME) . ';;'
+                 . vcard_escape(PUBLISHER_HONORIFIC_PREFIX) . ';';
+    } else {
+        $lines[] = 'N:;;;;';
+    }
     if ($isOrg) {
         $lines[] = 'ORG:' . vcard_escape($name);
     }
@@ -13284,8 +14921,12 @@ if (isset($_GET['action']) && $_GET['action'] === 'vcard') {
         $lines[] = 'X-SOCIALPROFILE;type=' . vcard_social_label($u) . ':' . vcard_escape($u);
     }
     $lines[] = 'TZ:+0000';
-    if (SITE_ICON !== '' && !preg_match('#^https?://#i', SITE_ICON)) {
-        $icon_abs = realpath(__DIR__ . '/' . ltrim(SITE_ICON, '/'));
+    // The canonical portrait when one is set, else the favicon, matching
+    // what identity.json and the schema graphs publish. Only a local file
+    // can be embedded: a full URL has nothing to base64.
+    $vcard_photo = trim((string) PUBLISHER_IMAGE) !== '' ? trim((string) PUBLISHER_IMAGE) : (string) SITE_ICON;
+    if ($vcard_photo !== '' && !preg_match('#^https?://#i', $vcard_photo)) {
+        $icon_abs = realpath(__DIR__ . '/' . ltrim($vcard_photo, '/'));
         $icon_ext = $icon_abs !== false ? strtolower(pathinfo($icon_abs, PATHINFO_EXTENSION)) : '';
         $icon_type = ['png' => 'PNG', 'jpg' => 'JPEG', 'jpeg' => 'JPEG', 'gif' => 'GIF', 'webp' => 'PNG'][$icon_ext] ?? '';
         // Embedded as base64, matching every vCard consumer's expectation, but
@@ -13337,6 +14978,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/library.yaml');
     // text/plain rather than application/yaml: no browser has a native
     // handler for the latter, so it triggers a download prompt instead of
     // rendering. text/plain is what every browser already displays inline
@@ -13450,8 +15092,54 @@ if (isset($_GET['action']) && $_GET['action'] === 'yaml') {
         if (($f['language'] ?? '') !== '') {
             $out .= "    language: " . $y($f['language']) . "\n";
         }
+        // The document's own date — for an archive the fact that matters,
+        // distinct from when the file was last touched.
+        $ydate = document_date_parse((string) ($f['doc_date'] ?? ''));
+        if ($ydate['iso'] !== '') {
+            $out .= "    date: " . $y($ydate['iso']) . "\n";
+        }
         if (!empty($f['lastmod'])) {
             $out .= "    modified: " . $y(date('c', (int) $f['lastmod'])) . "\n";
+        }
+        if (($f['document_type'] ?? '') !== '') {
+            $out .= "    document_type: " . $y(document_types()[$f['document_type']] ?? $f['document_type']) . "\n";
+        }
+        // How this record relates to the archive's subject — the difference
+        // between a work the subject wrote and a source they merely kept.
+        // 'relation_source' states whether an archivist chose these, whether
+        // they were inferred from the folder, or whether this is the safe
+        // default, so a consumer can weigh the claim rather than treat a
+        // guess as a decision.
+        $yrel = $f['entity_relation'] ?? null;
+        if (is_array($yrel) && !empty($yrel['relations'])) {
+            $out .= "    entity_relation:\n";
+            foreach ($yrel['relations'] as $yr) {
+                $out .= "      - " . $y($yr) . "\n";
+            }
+            $out .= "    relation_source: " . $y((string) ($yrel['source'] ?? 'fallback')) . "\n";
+        }
+        // What kind of media the file is — pdf, image, video, audio, text.
+        if (($f['kind'] ?? '') !== '') {
+            $out .= "    media_type: " . $y($f['kind']) . "\n";
+        }
+        // The access tier, so a consumer knows a "restricted" document's
+        // page describes it but its file is withheld. Hidden never appears
+        // here at all — filtered above — so the only values are public and
+        // restricted, and publishing which is which reveals nothing the
+        // page itself does not already say.
+        $yaccess = 'public';
+        if (strtolower((string) ($f['ext'] ?? '')) === 'pdf') {
+            $yaccess = (string) ($f['pdf_access'] ?? 'public');
+        } elseif (($f['kind'] ?? '') === 'video') {
+            $yaccess = video_access_of(meta_load()[$f['rel']] ?? []);
+        } elseif (($f['kind'] ?? '') === 'image') {
+            $yaccess = image_access_of(meta_load()[$f['rel']] ?? []);
+        }
+        if ($yaccess !== 'public') {
+            $out .= "    access: " . $y($yaccess) . "\n";
+        }
+        if (!empty($f['has_transcript'])) {
+            $out .= "    transcript: " . $y('available on the document page') . "\n";
         }
     }
 
@@ -13468,6 +15156,7 @@ if (isset($_GET['action']) && ($_GET['action'] === 'sitemap_html' || $_GET['acti
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/sitemap.html');
     // The page was named library.html before 1.41.0. The old address is sent to
     // the new one with a permanent redirect so search engines consolidate on it.
     if (!empty($_GET['renamed_from_library'])) {
@@ -13523,6 +15212,7 @@ if (isset($_GET['action']) && $_GET['action'] === 'robots') {
     // Never gated on SITE_INDEXABLE or any *_ENABLED flag — see
     // robots_txt_generate()'s own docblock for why this route must always
     // respond, including (especially) while the library is non-indexable.
+    crawler_maybe_log('/robots.txt');
     header('Content-Type: text/plain; charset=UTF-8');
     send_public_cache_headers(900);
     echo robots_txt_generate();
@@ -13534,9 +15224,18 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         http_response_code(404);
         exit('Not found');
     }
+    crawler_maybe_log('/llms.txt');
     header('Content-Type: text/plain; charset=UTF-8');
     send_public_cache_headers(900);
     $all = index_all_files($mime_map);
+    // The same visibility rule library.yaml applies. Without it a hidden
+    // document — a passport scan, say — was listed here by name and URL:
+    // hidden from the folder listing but announced to every AI system that
+    // read this file. A discovery layer must obey the same access tiers as
+    // the pages it points at.
+    $all = array_values(array_filter($all, static function ($f) {
+        return media_page_visible((string) ($f['rel'] ?? ''), meta_load()[$f['rel'] ?? ''] ?? []);
+    }));
     $out = '# ' . SITE_NAME . "\n";
     // Per the llms.txt Specification (v1.7.0) §3: optional, but placed
     // immediately after the H1 when present, before the blockquote.
@@ -13602,6 +15301,35 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
     if ($contact_lines) {
         $out .= "# Contact\n\n" . implode("\n", $contact_lines) . "\n\n";
     }
+    // Orientation before inventory: an AI reading top-down should learn who
+    // this is, what the site is, and where the canonical resources live
+    // before it reaches two hundred document links. The inventory itself
+    // stays — llms.txt is the entry point, library.yaml the full record.
+    $out .= "# Canonical resources\n\n";
+    if (IDENTITY_ENABLED) {
+        $out .= '- [Identity](' . url_identity()
+              . "): the canonical machine-readable identity graph (Schema.org JSON-LD) — who this site is and who it is about. Start here for identity questions.\n";
+    }
+    $about_rec_llms = pages_load()['about'] ?? null;
+    if (is_array($about_rec_llms) && trim((string) ($about_rec_llms['body'] ?? '')) !== '') {
+        $out .= '- [About](' . url_page('about')
+              . "): the authoritative human-readable account of who this site represents.\n";
+    }
+    $faq_rec_llms = pages_load()['faq'] ?? null;
+    if (is_array($faq_rec_llms) && trim((string) ($faq_rec_llms['body'] ?? '')) !== '') {
+        $out .= '- [FAQ](' . url_page('faq')
+              . "): authoritative answers to recurring questions about the person, the site and the library.\n";
+    }
+    if (YAML_ENABLED) {
+        $out .= '- [Library index](' . url_yaml()
+              . "): the canonical structured inventory of every public document (library.yaml).\n";
+    }
+    if (SITEMAP_ENABLED) {
+        $out .= '- [Sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
+              . "): every page URL, for crawlers.\n";
+    }
+    $out .= "\n";
+
     $by_cat = [];
     foreach ($all as $f) {
         $key = $f['category'] !== '' ? $f['category'] : "\x7fOther documents";
@@ -13634,19 +15362,9 @@ if (isset($_GET['action']) && $_GET['action'] === 'llms') {
         }
         $out .= "\n";
     }
-    $out .= "## Machine-readable\n\n";
-    if (IDENTITY_ENABLED) {
-        $out .= '- [Identity](' . url_identity()
-              . "): Schema.org identity document — who the site is and who it is about.\n";
-    }
-    if (YAML_ENABLED) {
-        $out .= '- [YAML index](' . url_yaml()
-              . "): every public document as YAML — title, URL, category, tags, date.\n";
-    }
+    $out .= "## Additional resources\n\n";
     if (SITEMAP_ENABLED) {
-        $out .= '- [Page sitemap](' . (PRETTY_URLS ? rtrim(BASE_URL, '/') . '/sitemap.xml' : BASE_URL . '?action=sitemap')
-              . "): every page in the library.\n"
-              . '- [Document sitemap](' . url_sitemap_pdf()
+        $out .= '- [Document sitemap](' . url_sitemap_pdf()
               . "): the public PDF files themselves.\n"
               . '- [Video sitemap](' . url_sitemap_video()
               . "): the public video files, with title, description and thumbnail.\n"
@@ -14007,6 +15725,22 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         $document_type = '';
     }
 
+    // How this record relates to the archive's subject. Arrives as a list of
+    // checkbox values; anything outside the controlled vocabulary is dropped
+    // rather than stored, so a tampered POST cannot invent a relationship.
+    // An empty result is stored as an empty list, not as the fallback: that
+    // keeps "the archivist made no choice" distinguishable from "the
+    // archivist chose archived_by", which is what lets the inference layer
+    // and the migration report stay honest about what is actually known.
+    $entity_relation = entity_relations_clean((array) ($_POST['entity_relation'] ?? []));
+    // Which organisation a "published by" or "issued by" relation names.
+    // Validated against the stored entities: an unknown key is discarded, so
+    // the graph never references an organisation that does not exist.
+    $entity_org = entity_key_from_name((string) ($_POST['entity_org'] ?? ''));
+    if ($entity_org !== '' && !isset(entities_load()['organizations'][$entity_org])) {
+        $entity_org = '';
+    }
+
     $pdf_access = (string) ($_POST['pdf_access'] ?? 'public');
     if ($pdf_access === 'viewer') { $pdf_access = 'restricted'; }
     if (!in_array($pdf_access, ['public', 'restricted', 'hidden'], true)) {
@@ -14063,7 +15797,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
     }
 
     $updated = meta_update(static function (array $meta) use (
-        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $doc_date, $transcript, $pdf_access, $video_access, $image_access, $image_redact_regions, $language, $placeholder_image,
+        $rel, $title, $desc, $long_desc, $cat, $tags, $document_type, $entity_relation, $entity_org, $doc_date, $transcript, $pdf_access, $video_access, $image_access, $image_redact_regions, $language, $placeholder_image,
         $seo_title, $seo_desc, $video_type, $redact_regions, $video_redact_regions
     ): array {
         // Every field is checked here: a record is only cleared when the
@@ -14071,7 +15805,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         // both discard it on save and stop an otherwise-empty record being
         // cleared.
         if ($title === '' && $desc === '' && $long_desc === '' && $cat === '' && !$tags
-            && $document_type === '' && $doc_date === '' && $transcript === ''
+            && $document_type === '' && !$entity_relation && $entity_org === '' && $doc_date === '' && $transcript === ''
             && $pdf_access === 'public' && $video_access === 'public'
             && $image_access === 'public' && !$image_redact_regions && $language === ''
             && $placeholder_image === '' && $seo_title === '' && $seo_desc === ''
@@ -14089,6 +15823,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
                 'category' => $cat,
                 'tags' => $tags,
                 'document_type' => $document_type,
+                'entity_relation' => $entity_relation,
+                'entity_org' => $entity_org,
                 'doc_date' => $doc_date,
                 'seo_title' => $seo_title,
                 'seo_desc' => $seo_desc,
@@ -14136,6 +15872,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'meta'
         'category_url' => $cat !== '' ? url_category($cat) : '',
         'tags' => $tags,
         'document_type' => $document_type,
+        'entity_relation' => $entity_relation,
+        'entity_org' => $entity_org,
         'pdf_access' => $pdf_access,
     ]));
 }
@@ -14785,6 +16523,12 @@ foreach (scandir($abs_dir) as $entry) {
             'category' => $m['category'] ?? '',
             'tags'  => $m['tags'] ?? [],
             'document_type' => $m['document_type'] ?? '',
+            // The stored choice, and separately what is actually in force —
+            // the admin needs to see an inferred value as inferred, not as
+            // something it decided.
+            'entity_relation' => entity_relations_clean((array) ($m['entity_relation'] ?? [])),
+            'entity_relation_effective' => entity_relations_for($m, $rel_entry ?? ''),
+            'entity_org' => (string) ($m['entity_org'] ?? ''),
 
             'doc_date' => $m['doc_date'] ?? '',
             'seo_title' => $m['seo_title'] ?? '',
@@ -14971,8 +16715,8 @@ $dataset_node = [
     'url'             => $collection_url,
     'inLanguage'      => SITE_LANGUAGE,
     'isAccessibleForFree' => true,
-    'creator'         => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => BASE_URL . '#person'] : null,
-    'publisher'       => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => BASE_URL . '#person'] : null,
+    'creator'         => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => person_id()] : null,
+    'publisher'       => trim((string) PUBLISHER_NAME) !== '' ? ['@id' => person_id()] : null,
     'numberOfItems'   => count($list_items),
     'distribution'    => [
         '@type'             => 'DataDownload',
@@ -15088,6 +16832,7 @@ $listing_ld = [
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=catalogue">Catalogue</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=docs">Docs</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=pages">Pages</a>
+            <a class="admin-link" href="<?= e(BASE_URL) ?>?action=entities">Entities</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=redirects">Redirects</a>
             <a class="admin-link" href="<?= e(BASE_URL) ?>?action=diagnostics">Diagnostics</a>
         </div>
@@ -15320,6 +17065,61 @@ $listing_ld = [
                                 </select>
                             </label>
                             <?php endif; ?>
+                            <?php
+                            $er_eff    = $f['entity_relation_effective'] ?? ['relations' => [], 'source' => 'fallback'];
+                            $er_chosen = $f['entity_relation'] ?? [];
+                            $er_source = (string) ($er_eff['source'] ?? 'fallback');
+                            ?>
+                            <fieldset class="meta-relation-fields">
+                                <legend>Relationship to <?= e(PUBLISHER_NAME !== '' ? PUBLISHER_NAME : 'the archive subject') ?></legend>
+                                <p class="field-note">
+                                    How this record relates to the person the archive is about. Tick everything
+                                    that genuinely applies. Leave all of them clear and Folio works it out from
+                                    the folder the file sits in, falling back to &ldquo;Archived by&rdquo; &mdash;
+                                    which claims only that the item is deliberately kept here, never that it
+                                    was written by them.
+                                </p>
+                                <?php if ($er_source !== 'explicit'): ?>
+                                    <p class="field-note relation-inferred">
+                                        Currently <strong><?= e($er_source === 'inferred' ? 'inferred from the folder' : 'using the safe default') ?></strong>:
+                                        <?php
+                                        $er_names = [];
+                                        foreach (($er_eff['relations'] ?? []) as $er_r) {
+                                            $er_names[] = entity_relations()[$er_r]['label'] ?? $er_r;
+                                        }
+                                        echo e(implode(', ', $er_names));
+                                        ?>. Ticking anything below replaces this with your own choice.
+                                    </p>
+                                <?php endif; ?>
+                                <?php foreach (entity_relations() as $er_key => $er_def): ?>
+                                    <label class="check-row relation-row">
+                                        <input type="checkbox" name="entity_relation[]" value="<?= e($er_key) ?>"
+                                               <?= in_array($er_key, $er_chosen, true) ? 'checked' : '' ?>>
+                                        <span>
+                                            <?= e($er_def['label']) ?>
+                                            <span class="field-note field-note-inline"><?= e($er_def['meaning']) ?></span>
+                                        </span>
+                                    </label>
+                                <?php endforeach; ?>
+                                <?php $er_orgs = entities_load()['organizations']; ?>
+                                <?php if ($er_orgs): ?>
+                                    <label class="meta-form-label">
+                                        Organisation
+                                        <select name="entity_org">
+                                            <option value="">Not stated</option>
+                                            <?php foreach ($er_orgs as $eo_key => $eo): ?>
+                                                <option value="<?= e($eo_key) ?>" <?= ($f['entity_org'] ?? '') === $eo_key ? 'selected' : '' ?>><?= e($eo['name']) ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <span class="field-note">
+                                            Which organisation the &ldquo;Published by&rdquo; or &ldquo;Issued by&rdquo;
+                                            relation above refers to. Those two say nothing at all until one is named
+                                            here &mdash; naming no one is better than implying the author published
+                                            his own work. Manage the list on the Entities screen.
+                                        </span>
+                                    </label>
+                                <?php endif; ?>
+                            </fieldset>
                             <input type="text" name="language" maxlength="35" placeholder="Language (e.g. en, ms, ar)" value="<?= e($f['language']) ?>">
                             <?php $av = in_array($f['kind'], ['audio', 'video'], true); ?>
                             <label class="meta-form-label">

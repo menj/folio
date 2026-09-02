@@ -6,7 +6,7 @@ Project URI: https://github.com/menj/folio
 Requires PHP: 8.4
 Requires at least: PHP 8.4
 Tested up to: PHP 8.4
-Stable tag: 1.60.0
+Stable tag: 1.67.1
 License: GPL-3.0-or-later
 License URI: https://www.gnu.org/licenses/gpl-3.0.html
 
@@ -42,9 +42,11 @@ layout holds up cleanly at desktop, tablet, and mobile widths.
 == Metadata and files ==
 
 Upload, rename, and remove documents over FTP. Folio never edits the document
-contents. Titles, descriptions, categories, and tags are stored atomically in
+contents. Titles, descriptions, categories, tags, and each record's stated
+relationship to the archive's subject are stored atomically in
 data/metadata.json, with data/metadata.json.bak as the last-known-good backup.
-Older uploads/.sfm-meta.json data is read for migration.
+Older uploads/.sfm-meta.json data is read for migration. Reusable organisation
+and book entities live separately in data/entities.json.
 
 Supported preview formats are PDF, PNG, JPEG, GIF, WebP, BMP, SVG, and Markdown.
 Audio and video (MP3, M4A, AAC, WAV, FLAC, OGG, Opus, MP4, M4V, WebM, OGV, MOV)
@@ -112,6 +114,31 @@ The guided installer performs this automatically.
 
 Categories have crawlable archive pages spanning all folders. Tags filter the
 current listing in the browser and do not have archive pages.
+
+= Why does my document not say I wrote it? =
+
+Because it does not claim authorship unless you say so. Each record states how
+it relates to the archive's subject, chosen on the document's metadata form.
+Where you make no choice Folio infers one from the folder — works/ suggests
+authorship, sources/ suggests collection — and where the path suggests nothing
+it falls back to "archived by", which asserts only that the item is
+deliberately kept. This is intentional: an archive that claims authorship of
+everything it holds is making a false statement about every source its subject
+merely collected.
+
+= Why is "published by" not showing a publisher? =
+
+It names a second party, so it stays silent until you name one. Declare the
+publisher on the Entities screen, then select it on the document's metadata
+form. Naming no one is deliberate: pointing the field at the archive's subject
+would assert that an author published his own book.
+
+= What is the Entities screen for? =
+
+Declaring organisations and books once so that every record can point at them
+by identifier. Six documents naming one publisher then describe one publisher
+rather than six unrelated strings. Books record their real publisher and their
+own language, since a press can publish in more than one.
 
 = Does it work on Nginx? =
 
@@ -221,6 +248,66 @@ Poppler. Without Tesseract there is no OCR but nothing else changes. Without
 any of them Folio behaves exactly as it did before the feature existed.
 
 PDF pages are rendered with Poppler where it is installed.
+
+= 1.67.1 =
+
+Adds an Entities screen for the organisations and books the archive refers to
+more than once, so each has one stable identifier instead of being repeated as
+a bare string. Books record their real publisher, never the author standing in
+for one, and their own language.
+
+Every record now states how it relates to the archive's subject, from a fixed
+vocabulary. This fixes a real error: any document catalogued as an article
+previously asserted the publisher as its author in structured data, including
+a newspaper clipping the subject had merely kept. Authorship is now claimed
+only where a record says so; folder layout supplies a sensible default and the
+fallback asserts only that an item is deliberately kept.
+
+Also adds a canonical identity setting for archives documenting someone whose
+main page lives on another domain, a canonical portrait setting, a tabbed
+Settings screen, and icons for ORCID, ISNI, VIAF, WorldCat, Open Library and
+Suno. Existing installations that set none of these emit exactly what they
+emitted before.
+
+= 1.64.0 =
+
+Adds an AI crawler tracker: logs every hit on the seven discovery files
+(robots.txt, llms.txt, library.yaml, vcard.vcf, identity.json, sitemap.html,
+sitemap.xml) from a known bot, with a new Overview / Recent hits / Known bots
+panel on the Crawlers screen, CSV export, and configurable retention. Fixes
+library.yaml returning 403 on Apache/LiteSpeed, and removes a hardcoded,
+mislabelled "Library" link from the footer — replaced by robots.txt, now
+first in the default footer order alongside the other six discovery files.
+
+= 1.63.0 =
+
+Adds spouse, children and parents fields to Settings. Empty by default; when
+filled, they publish as structured Person entries in identity.json and the
+site's schema data. The Settings note says plainly that these publish other
+people's names, with a caution about naming minor children.
+
+= 1.62.1 =
+
+Nationality now accepts a comma-separated list, so dual citizenship is
+published as two nationalities rather than one garbled string.
+
+= 1.62.0 =
+
+Adds ten Person biography fields to Settings: honorific prefix, given and
+family name, birth date and place, gender, pronouns, languages, employer and
+awards. They flow into identity.json, the site's structured data and
+vcard.vcf through one shared code path. Relationship fields (spouse, children,
+siblings) are deliberately not supported: they would name other people in a
+public machine-readable file.
+
+= 1.61.0 =
+
+Fixes two privacy leaks: hidden documents were listed in llms.txt, and hidden
+images stayed in the folder listing and library.yaml. Restructures llms.txt so
+AI systems get orientation and canonical resource links before the document
+inventory. identity.json gains knowsAbout derived from your categories and a
+link to the About page. library.yaml entries gain date, document type, media
+type, access tier and transcript availability.
 
 = 1.60.0 =
 

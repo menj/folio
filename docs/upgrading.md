@@ -7,7 +7,7 @@ of a release:
 
 ```
 config.php              your credentials, secrets, and settings
-data/                   accounts, saved settings, metadata, page content
+data/                   accounts, saved settings, metadata, entities, page content
 uploads/                your documents
 uploads/.sfm-meta.json  every title, description, category, and tag
 ```
@@ -20,7 +20,7 @@ you to delete `data/` or `uploads/`, stop: that is wrong.
 Back up these installation-specific items:
 
 - `config.php`
-- `data/`, including accounts, settings, `metadata.json`, and its backup
+- `data/`, including accounts, settings, `metadata.json`, `entities.json`, and their backups
 - `uploads/`
 - the installed root `.htaccess`
 
@@ -1161,3 +1161,46 @@ your live one; without it the numbered parts will not resolve under clean
 URLs.
 Libraries below the limit are served exactly as before.
 
+## Upgrading to 1.67
+
+**Nothing is required.** An existing installation that declares no entities and
+sets no new options emits byte-for-byte what it emitted before; this was
+verified against 1.64 for `identity.json`, `library.yaml` and `vcard.vcf`. The
+changes below are all opt-in.
+
+**Your documents now state what they are.** Each record carries a relationship
+to the archive's subject. Nothing was written to your metadata during the
+upgrade: records with no stored relationship have one inferred from their
+folder at read time, falling back to *archived by*, which asserts only that the
+item is deliberately kept. You can leave every record alone and the library
+will simply stop over-claiming.
+
+**One behaviour genuinely changed, and it is a correction.** Before 1.66, any
+document catalogued as an article asserted the publisher as its `author` in
+structured data — including a newspaper clipping the subject had merely kept.
+That claim is now made only where a record actually says *authored by*. If you
+were relying on the old behaviour to mark your own writing, set *authored by*
+on those records; the folder inference will already have done it for anything
+under `works/`.
+
+**`published by` and `issued by` need an organisation.** Both stay silent until
+you declare the organisation on the new **Entities** screen and select it on the
+document. This is deliberate — pointing them at the archive's subject would
+assert that an author published his own book.
+
+**New optional settings**, all defaulting to previous behaviour:
+
+- `PUBLISHER_CANONICAL_ID` — pins the subject's identifier to another domain,
+  for an archive documenting someone whose main page lives elsewhere. Leave it
+  empty unless you know you need it.
+- `PUBLISHER_IMAGE` — one portrait or logo reused across the structured data,
+  the About page and `vcard.vcf`. Falls back to the site icon.
+- `PUBLISHER_CONTACT_TYPE`, `PUBLISHER_CONTACT_LANGUAGES` — label the published
+  contact address.
+
+**A new file appears.** `data/entities.json` is created the first time you save
+on the Entities screen. Add it to your backups. If it is absent or unreadable,
+Folio behaves as though no entities were declared rather than erroring.
+
+**No migration step, no schema change, no new dependency.** The metadata format
+is unchanged and older records are read exactly as before.

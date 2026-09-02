@@ -3,6 +3,318 @@
 All notable changes to Folio are recorded here. Versions follow semantic
 versioning: major for breaking changes, minor for features, patch for fixes.
 
+## 1.67.1 — 2 September 2026
+
+### Added
+
+- **Authority identifier icons.** ORCID, ISNI, VIAF, WorldCat Entities, Open
+  Library and Suno are now recognised in the verified-profiles list, each with
+  its own icon in the footer and its proper label in `vcard.vcf`. Previously
+  every one of them fell through to the generic link glyph labelled from its
+  bare domain.
+
+  Drawn as single-colour `currentColor` SVGs to match the existing set rather
+  than embedded as the supplied favicons: a 16×16 multi-colour raster cannot
+  recolour with the four themes and looks poor at any larger size. The
+  supplied icons were used as the reference for each mark.
+
+## 1.67.0 — 2 September 2026
+
+### Added
+
+- **Entities screen.** A new admin screen at `?action=entities` for the
+  organisations and works the archive refers to more than once: publishers,
+  universities, institutions, and the subject's own books. Each gets a stable
+  identifier derived from its name, so six documents naming one publisher
+  describe one publisher rather than six unrelated strings. Stored in
+  `data/entities.json` alongside the other JSON state, with the same atomic
+  write and backup as pages and metadata.
+
+- **Book entities.** Books carry author, publisher, publication date,
+  language, ISBN and OCLC. The publisher is a reference to an organisation,
+  never the author standing in for one — a book published by Jahabersa is not
+  self-published. Language belongs to the work rather than the press, since a
+  publisher can and does publish in more than one.
+
+### Fixed
+
+- **`published by` and `issued by` now resolve.** Both were accepted in 1.66.0
+  but deliberately emitted nothing, because they name a second party that had
+  no way to be identified. With organisations declared they resolve to the
+  named entity, and where none is named they still stay silent rather than
+  falling back to the author.
+
+- **Documents no longer claim to be self-published.** The publisher claim on a
+  document node is now cleared unless the record actually names a publisher,
+  matching the correction made to the author claim in 1.66.0.
+
+- **`alumniOf` and `affiliation` link to entities.** Where a declared
+  organisation matches the name, these become references to it instead of bare
+  strings. A name matching nothing stays a plain string, and the list shape is
+  unchanged, so existing installations see no difference.
+
+## 1.66.0 — 2 September 2026
+
+### Added
+
+- **Entity relationships.** Every record can now state how it relates to the
+  person the archive is about, from a controlled vocabulary of twelve terms:
+  authored by, about, evidence for, published by, translated by, collected
+  by, appeared in, performed by, client work, issued by, mentions, and
+  archived by. Chosen as checkboxes in the per-document metadata form and
+  stored as `entity_relation` in the existing metadata file — no new store,
+  no schema migration.
+
+  Where no choice has been made, Folio infers one from the folder the file
+  sits in (`works/` suggests authorship, `sources/` suggests collection, and
+  so on, longest prefix winning), and where the path suggests nothing it
+  falls back to `archived_by` — which claims only that the item is
+  deliberately kept, never that the subject wrote it. Explicit choices always
+  win over inference, and the form labels an inferred value *as* inferred so
+  a guess does not quietly acquire the authority of a decision.
+
+### Fixed
+
+- **Documents no longer claim authorship by default.** Anything catalogued as
+  an article previously asserted the publisher as its `author` in structured
+  data, including a newspaper clipping the subject had merely kept. The
+  author claim is now emitted only where the record actually says
+  `authored_by`; a collected source instead carries a `contributor` with the
+  role Archivist, which is what is true of it. This is the correction the
+  whole relationship model exists to make.
+
+  Relations that name a second party Folio cannot yet identify — a
+  publisher, a client, an issuing institution — deliberately emit nothing
+  rather than pointing at the archive's own subject, so "published by" can
+  never be read as the author publishing his own book. Those become real
+  entities in a later phase.
+
+- **`library.yaml` states provenance.** Each document now carries its
+  `entity_relation` and a `relation_source` of explicit, inferred or
+  fallback, so a reader can weigh how the claim was arrived at. `identity.json`
+  and every existing YAML field are unchanged.
+
+## 1.65.0 — 2 September 2026
+
+### Added
+
+- **Canonical identity ID.** A new `PUBLISHER_CANONICAL_ID` setting pins the
+  `@id` of the Person or Organization the library is about, so a satellite
+  archive can point at the subject's authoritative page on another domain
+  rather than minting a second, competing identity node for the same person.
+  Left empty — the default, and every existing install — the identifier is
+  derived from the library's own address exactly as before, and the generated
+  output is byte-for-byte identical to 1.64.0.
+
+  Every schema graph now resolves the identifier through one shared
+  `person_id()` function instead of building `BASE_URL . '#person'` at
+  thirteen separate call sites, so `identity.json`, the page-level JSON-LD,
+  the About ProfilePage, the Dataset, and `vcard.vcf` cannot drift from one
+  another. Diagnostics gained a "canonical identity" row stating plainly
+  which identifier the site publishes, since an external one is otherwise
+  invisible once configured.
+
+- **Canonical portrait.** `PUBLISHER_IMAGE` sets one image reused across the
+  structured data, the About page, and the embedded vCard photo. Falls back
+  to `SITE_ICON` when unset, which is the previous behaviour; the vCard's
+  existing path-confinement and size checks are unchanged.
+
+- **Configurable contact point.** `PUBLISHER_CONTACT_TYPE` and
+  `PUBLISHER_CONTACT_LANGUAGES` replace the hardcoded "customer support" and
+  single-language `availableLanguage`. Defaults reproduce the previous
+  output. Both graphs now build the node through one `schema_contact_point()`
+  function rather than duplicating it.
+
+### Changed
+
+- **Settings is tabbed.** The Settings screen's roughly thirty fields are
+  grouped into Site, Publisher, AI Policy and Advanced panels, following the
+  same progressive-enhancement pattern as the Diagnostics and AI Crawlers
+  tabs: without JavaScript every panel stays visible and the page reads as
+  labelled sections. A field failing browser validation inside a hidden panel
+  now switches to that panel and focuses the field, so an error can never
+  point somewhere the admin cannot see. No field was added, removed or
+  renamed by the regrouping.
+
+## 1.64.0 — 1 September 2026
+
+### Added
+
+- **AI crawler tracker.** Logs every request to the seven discovery files —
+  robots.txt, llms.txt, library.yaml, vcard.vcf, identity.json, sitemap.html,
+  sitemap.xml — from a bot in the existing `ai_crawlers()` registry, into
+  `data/crawler-log.jsonl` (one compact `{t,b,r}` line per hit: timestamp,
+  bot, route — no raw user-agent string, no ordinary visitor ever recorded).
+  Independent of `AI_ALLOW_*`: those state a policy in robots.txt and
+  llms.txt, this records who actually showed up, including a bot that
+  ignores it.
+
+  A new "AI crawler tracker" panel on the Crawlers screen, tabbed as
+  Overview / Recent hits / Known bots: 30-day summary stats, a per-file hit
+  breakdown fixed in the ROBOTS/LLMS/YAML/vCard/JSON/HTML/XML order, a
+  per-bot breakdown (operator, purpose, hits, last seen, top file), the last
+  50 raw hits, CSV export, and a settings form (on/off, retention 7–365
+  days, default 90). Retention is enforced opportunistically on write (a
+  1-in-200 chance per hit triggers a prune) rather than by cron, which Folio
+  does not have.
+
+  No new discovery file was added — the tracker is an observability layer
+  over the existing seven-file stack, consistent with the AI Discovery
+  Stack's standing rule against adding a new surface while an existing one
+  can carry the information.
+
+### Fixed
+
+- **`library.yaml` returned 403.** The `.htaccess` rule that denies stray
+  backup/config file extensions (`.bak`, `.yml`, `.yaml`, and so on) was
+  also catching `library.yaml` itself before its rewrite to `index.php`
+  could run, even though it is a virtual route with no file on disk. A
+  `<Files "library.yaml">` grant, declared after the deny block so it wins
+  — the same pattern already used to re-allow `index.php` — fixes it
+  without loosening the rule for anything else.
+- **Footer nav carried a hardcoded, unlabelled home link.** A `<a
+  href="<?= BASE_URL ?>">Library</a>` sat in front of the footer's
+  discovery-file links, outside the `footer_link_keys()` system entirely —
+  rendered uppercase by the footer's own CSS, so it read as "LIBRARY" and
+  pointed wherever `BASE_URL` resolved on that install, not to any
+  discovery file. Removed. `ROBOTS.TXT` now takes its old first position in
+  the footer, added as a proper `footer_link_keys()` entry alongside the
+  other six. Default footer order is now `robots, llms, yaml, vcard, json,
+  html, xml` — every discovery file, YAML included.
+
+## 1.63.0 — 29 August 2026
+
+### Added
+
+- **Family fields: spouse, children, parents.** Three new Settings fields,
+  empty by default, publishing as typed Person nodes in identity.json and
+  every page's JSON-LD — `spouse` as one node, `children` and `parent` as
+  node arrays parsed from comma lists. Names only, no URLs and no `@id`s:
+  Folio holds no further facts about the people named and must not imply
+  any.
+
+  1.62.0 documented these as permanently excluded on third-party privacy
+  grounds. That was an overreach, corrected here at the publisher's
+  request: whether one's family appears in one's own biography is the
+  publisher's decision, the same one every autobiography and Wikipedia
+  infobox makes. What remains of the original concern is exactly what it
+  should be — the fields default to empty, and the Settings note says
+  plainly that they publish other people's names in a machine-readable
+  file, with a caution about naming minor children.
+
+  Still excluded: `sibling`, `knows`, `colleague`, `relatedTo`, and the
+  location properties. The vCard is untouched, because Folio emits vCard
+  3.0 and `RELATED` exists only in vCard 4.
+
+  The exclusion test is rewritten to guard the properties that remain out
+  and to assert the family fields emit as typed Person nodes; with an
+  end-to-end assertion that empty fields publish nothing, the suite is at
+  98.
+
+## 1.62.1 — 29 August 2026
+
+### Fixed
+
+- **Nationality supports dual citizenship.** The field was a single string,
+  so a dual national's honest answer — "Malaysian, Singaporean" — would have
+  been published as one garbled nationality, and stating one of two is as
+  wrong as stating neither. It now parses as a comma list like languages and
+  alternate names: two values publish as an array, one stays a bare string
+  so existing consumers see exactly what they saw before.
+
+  Emission is consolidated into the shared biography emitter — it was
+  duplicated in `schema_publisher()` and identity.json, the drift the
+  emitter exists to prevent. A side effect of the move is a small
+  correctness fix: an Organization publisher no longer emits `nationality`
+  at all, which Schema.org defines for Person only.
+
+## 1.62.0 — 29 August 2026
+
+### Added
+
+- **Person biography, audited against the full Schema.org Person type.** Of
+  the type's own properties, Folio emitted ten; ten more are now settable in
+  Settings — honorific prefix, given and family name, birth date and place,
+  gender, pronouns, languages, employer, and awards. Every value is typed by
+  the publisher and published verbatim; Folio derives none of them. The
+  birth date is validated as ISO with year precision allowed, and its field
+  note says plainly that it becomes a public fact once set.
+
+  One shared emitter (`schema_person_biography()`) feeds identity.json, the
+  page JSON-LD and schema_publisher(), so the graphs cannot disagree about
+  the same person. The vCard gains the matching fields: BDAY, LANG per
+  language, and a populated structured N line
+  (Family;Given;;Prefix;) replacing the empty placeholder — exactly one N
+  either way, as vCard 3.0 requires. `PUBLISHER_NICKNAME`, previously
+  published in the vCard alone, now also appears as `additionalName` in the
+  schema graphs, which should not know less than the vCard does.
+
+  Given and family name matter more than they look: Malay names do not
+  split where a Western parser guesses, so stating the split beats letting
+  every consumer guess it wrongly.
+
+  **Deliberately excluded, permanently:** the relationship properties —
+  spouse, children, parent, sibling, knows, colleague, relatedTo — because
+  they name third parties in a public machine-readable file, and that
+  consent is not the publisher's to give on someone else's behalf. Likewise
+  homeLocation and workLocation: addressCountry already states the coarse
+  fact without publishing a locality. Documented in `docs/ssot.md` and
+  guarded by test.
+
+  Four tests added, bringing the suite to 96.
+
+## 1.61.0 — 29 August 2026
+
+### Fixed
+
+- **Two privacy leaks in the AI discovery layer.** `llms.txt` listed hidden
+  documents by name and URL — hidden from the folder listing but announced
+  to every AI system that read the discovery file, which is the reverse of
+  what the tier promises. And `media_page_visible()` had never been taught
+  about image tiers, so a hidden *image* stayed in the folder listing and
+  `library.yaml` even though hidden PDFs and video were correctly excluded.
+  Both verified empirically: a passport scan marked hidden appeared in
+  llms.txt before the fix and in neither surface after it.
+
+  The XML sitemap deliberately still lists a hidden document's *page* —
+  the delisting-only model settled in 1.38.0: the page is public, only the
+  bytes are withheld, and the sitemap never carries raw file URLs.
+
+### Added
+
+- **The AI Discovery Stack, rationalised.** Per the strengthening
+  specification: one integrated architecture where each surface answers one
+  question, documented in `docs/ssot.md`, with no new AI files added —
+  everything integrates into the surfaces Folio already publishes.
+
+  **llms.txt** now opens with orientation before inventory: a
+  `# Canonical resources` section pointing at identity.json, the About and
+  FAQ pages, library.yaml and the sitemap, so an AI reading top-down learns
+  who this is and where the authoritative resources live before it meets
+  the document list. The trailing section keeps the sitemap variants and
+  robots.txt without repeating what the orientation already named.
+
+  **identity.json** gains `knowsAbout`, derived from the categories of
+  visible documents — real editorial facts, never typed in, with categories
+  that exist only on hidden material excluded so private matter never
+  becomes a public claim. `subjectOf` and `mainEntityOfPage` point at the
+  About page when it has content. Deliberately absent: per-document
+  `author` claims, because Folio records no per-document author and a
+  biographical archive's documents are about their subject, not by them.
+
+  **library.yaml** entries gain `date` (the document's own date),
+  `document_type`, `media_type`, `access` (only when not public; hidden
+  never appears at all) and `transcript` availability — all from metadata
+  that already existed. llms.txt and library.yaml now filter through the
+  same `media_page_visible()` rule, so the two inventories cannot drift.
+
+  **Standalone pages** link to identity.json via
+  `rel="alternate" type="application/ld+json"`, making the About page and
+  the identity graph one hop from each other in both directions.
+
+  Five discovery-stack tests added and one stale assertion updated (it
+  encoded the old leaky llms.txt behaviour); the suite is at 92.
+
 ## 1.60.0 — 28 August 2026
 
 ### Added

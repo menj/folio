@@ -38,6 +38,14 @@
   narrow screens, so rows never scroll sideways
 * Editable title and short description per file; the raw filename and extension stay out of sight
 * One category and up to ten tags per file
+* A stated relationship between each record and the person the archive is
+  about, from a fixed vocabulary — authored, collected, translated, evidence,
+  client work, or simply archived — so the library never claims authorship of
+  work it merely holds. Inferred from the folder where you make no choice, and
+  falling back to a claim that asserts nothing
+* Reusable organisation and book entities, declared once and referenced by
+  identifier everywhere, so a publisher named by six documents is one publisher
+  rather than six unrelated strings
 * Browsable category archive pages with their own indexable URLs, gathering
   documents from every folder; tags filter the current view by chip. A
   category or tag chip also shows or hides subfolders by whether they
@@ -148,7 +156,7 @@ install.php            One-page guided installer; delete after use
 readme.md, changelog.md, security.md   At the root, where conventions expect them
 docs/                  Installation, upgrade, and readme.txt guides
 config-sample.php      Settings template; copy to config.php
-data/                  Private accounts, settings, metadata, and install token
+data/                  Private accounts, settings, metadata, entities, and install token
 .gitignore             Keeps configuration, runtime data, and uploads untracked
 assets/css/style.css   Stylesheet and colour schemes
 assets/css/flipbook.css  Styles for the PDF flip-view reader only
@@ -160,6 +168,8 @@ assets/js/admin.js     Admin-only: delete/remove confirmations, rewrite prefligh
 assets/js/flipbook.js  PDF flip-view reader; loaded only on that screen
 assets/js/library-view.js  Renders sitemap.html in the browser from library.yaml
 assets/img/            favicon.svg, favicon.ico, apple-touch-icon.png
+assets/img/social/     Single-colour profile icons, recoloured by the active theme
+assets/img/ui/         Single-colour status and function glyphs
 lib/parsedown/         Parsedown 1.8.0 (MIT), renders Markdown files
 lib/pdfjs/             Mozilla pdf.js 5.4.149 (Apache-2.0), powers both PDF readers
 lib/js-yaml/           js-yaml 5.3.0 (MIT), renders sitemap.html in the browser
@@ -308,6 +318,54 @@ File-page JSON-LD also mirrors Dublin Core Terms (`dcterms:title`,
 `dcterms:language`, `dcterms:modified`) alongside the Schema.org fields,
 additive to the same graph rather than a separate block.
 
+### Entity relationships
+
+An archive holds two very different kinds of thing: work its subject created,
+and work by other people that the subject kept. A library that cannot tell them
+apart ends up claiming authorship of everything it contains.
+
+Every record therefore states how it relates to the archive's subject, chosen
+from a fixed vocabulary on the document's own metadata form:
+
+| Relation | Means | Emits |
+| --- | --- | --- |
+| Authored by | The subject wrote the original work | `author`, `creator` |
+| About | The record is chiefly about the subject | `about` |
+| Evidence for | Documents or substantiates a claim | `about`, `subjectOf` |
+| Published by | Published by a named organisation | `publisher` |
+| Translated by | The subject made the translation | `translator` |
+| Collected by | Someone else's work, kept as a source | `contributor` (Archivist) |
+| Appeared in | First appeared in a named publication | `isPartOf` |
+| Performed by | The subject performed or recited it | `performer` |
+| Client work | Professional work for a client | `creator`, `about` |
+| Issued by | A certificate issued by an institution | `creator`, `publisher` |
+| Mentions | Refers to the subject in passing | `mentions` |
+| Archived by | Deliberately kept. Claims nothing more | `contributor` (Archive curator) |
+
+Where you make no choice, Folio infers one from the folder the file sits in —
+`works/` suggests authorship, `sources/` suggests collection, `translations/`
+suggests translation, and so on, with the longest matching prefix winning. Where
+the path suggests nothing, it falls back to **Archived by**, which claims only
+that the item is deliberately kept, never that the subject wrote it. Your own
+choice always overrides inference, and the form labels an inferred value *as*
+inferred so a guess does not quietly acquire the authority of a decision.
+
+**Published by** and **Issued by** name a second party, so they stay silent
+until you name an organisation on the same form. Naming no one is deliberate:
+pointing them at the subject would assert that an author published his own book.
+
+### Books and organisations
+
+Publishers, universities and the subject's own books are declared once on the
+**Entities** screen and referenced by identifier everywhere else, so six
+documents naming one publisher describe one publisher rather than six unrelated
+strings. See *Entities* below.
+
+`alumniOf` and `affiliation` on the subject upgrade from plain strings to entity
+references automatically when a declared organisation has the same name. A name
+matching nothing stays a plain string, so nothing you have already typed stops
+working.
+
 ## What Folio is not
 
 Folio is a **public** library. Being clear about this up front saves
@@ -360,6 +418,28 @@ Log in and click **Settings** in the top bar, or open
 description, publisher identity, language, and the Admin-link visibility. The
 change applies immediately across page titles, the header, the `lang`
 attribute, and the structured data.
+
+The screen is grouped into four tabs — **Site**, **Publisher**, **AI Policy**
+and **Advanced** — so around thirty fields are not one long scroll. Without
+JavaScript every panel stays visible and the page reads as labelled sections,
+so nothing is ever hidden from a text browser or a page search.
+
+Three Publisher settings are worth calling out because they are easy to
+misread:
+
+- **Canonical identity ID** pins the identifier used for the person or
+  organisation the library is about. Leave it empty and the identifier is
+  derived from this library's own address, which is right when the library and
+  the subject's main page are the same site. Set it only when this library is a
+  *satellite* archive about someone whose canonical page lives on another
+  domain, so the two sites do not describe the same person as two different
+  entities.
+- **Portrait or logo** is one image reused across the structured data, the
+  About page and `vcard.vcf`. Left empty it falls back to the site icon, which
+  is what Folio used before this setting existed — a favicon makes a poor
+  portrait, so set this if you publish a person.
+- **Contact type** and **Contact languages** label the published contact
+  address. The defaults reproduce what earlier versions emitted.
 
 Saved settings are written to `data/settings.php` and take precedence over
 `config.php`, which remains the fallback and still holds the settings that can
@@ -423,15 +503,37 @@ Log in and click **Crawlers**, or open `index.php?action=crawlers`. From there:
   Settings screen. It states terms; it does not enforce them (robots.txt and the
   access gates do that).
 * **Footer link order.** The Crawlers screen also controls which discovery-file
-  links (llms.txt, YAML, vCard, JSON, HTML, XML) appear in the site footer and
-  in what order, independent of each link's own enable/disable toggle above —
-  removing one from the footer only hides it there. Default order: llms.txt,
-  YAML, vCard, JSON, HTML, XML.
+  links (robots.txt, llms.txt, YAML, vCard, JSON, HTML, XML) appear in the site
+  footer and in what order, independent of each link's own enable/disable
+  toggle above — removing one from the footer only hides it there. Default
+  order: robots.txt, llms.txt, YAML, vCard, JSON, HTML, XML.
 * **robots.txt.** Generated automatically, reflecting the settings above.
   Served live at your domain root once Folio is installed there; a
   subfolder install needs one rewrite rule at the domain root's own
   config, shown filled in with the real path on this screen — see
   "Getting documents found" above for the exact line.
+* **AI crawler tracker.** A panel on the same screen logs every request to
+  the seven discovery files above (robots.txt, llms.txt, library.yaml,
+  vcard.vcf, identity.json, sitemap.html, sitemap.xml) from a bot in Folio's
+  own registry — GPTBot, ClaudeBot, PerplexityBot, and the rest — to
+  `data/crawler-log.jsonl`. Independent of the AI permission toggles above:
+  those state a policy, this records who actually showed up, including a
+  bot that ignores it. No raw user-agent string or ordinary visitor is ever
+  logged, only `{timestamp, bot, route}`.
+
+  Three tabs:
+
+  - **Overview** — 30-day totals, a per-file hit count fixed in the ROBOTS,
+    LLMS, YAML, vCard, JSON, HTML, XML order (never re-sorted by count), a
+    per-bot breakdown (operator, purpose, hits, last seen, top file), and
+    the on/off toggle plus retention (7–365 days, default 90).
+  - **Recent hits** — the last 50 hits with an Export CSV button and a
+    Clear log button (confirmed before it runs).
+  - **Known bots** — the full registry for reference.
+
+  Retention is enforced opportunistically on write rather than by a cron
+  job Folio does not have: roughly 1 in 200 logged hits triggers a prune of
+  entries past the retention window.
 * **Clean URLs** with a real preflight check: click **Test rewrite**, and Folio
   probes a fake pretty URL through your `.htaccess`. Only if that probe
   succeeds is the Enable button revealed. It cannot silently take the site
@@ -918,6 +1020,38 @@ A copy is only offered when it saves at least 3% and still opens correctly.
 An already-efficient document says so rather than being duplicated for
 nothing.
 
+## Entities
+
+Log in and click **Entities**, or open `index.php?action=entities`. This is
+where you declare the organisations and works the archive refers to more than
+once, so each gets a stable identifier that every record can point at.
+
+**Organisations** are publishers, universities, institutions — anything that
+issues or publishes. Each takes a name, a type (organisation, college or
+university, government body, NGO, publisher), an optional website, and optional
+authority links such as a Wikidata record.
+
+**Books** are works the subject authored. Each takes a title, a publisher chosen
+from the organisations you have declared, a publication date, a language, and
+optional ISBN, OCLC and archive-page values.
+
+Two details matter more than they look:
+
+- **The publisher is a separate organisation, never the author.** Leave it as
+  *Not stated* rather than implying a work was self-published. A book published
+  by an external press is not self-published, and the structured data should not
+  say it was.
+- **Language belongs to the book, not to its publisher.** A press can and does
+  publish in more than one language, so this is never inherited.
+
+Identifiers are derived from the name — "Langgam Fikir" becomes
+`…/#langgam-fikir` — and shown under each entry once saved. To remove an entry,
+clear its name and save. Removing an organisation that a document still refers
+to leaves that document's *published by* silent rather than broken.
+
+Entities appear in `identity.json` and on the records that reference them. An
+archive with none declared emits exactly what it did before.
+
 ## Standalone pages
 
 Folio can optionally publish informational pages alongside the library: an
@@ -1327,4 +1461,4 @@ is why Folio is version 3 or later rather than version 2.
 
 ## Version
 
-1.60.0. Single-file application with separated CSS and JS assets.
+1.67.1. Single-file application with separated CSS and JS assets.

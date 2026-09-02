@@ -389,6 +389,67 @@
     });
 })();
 
+/* ---- Settings tabs -----------------------------------------------------
+ * Same progressive-enhancement pattern as the Diagnostics tabs above:
+ * without JavaScript every panel stays visible and the page reads as
+ * labelled sections, so nothing in the settings form is ever hidden from
+ * a no-JS visitor or from a plain "Ctrl+F" search of the page.
+ */
+(function () {
+    var host = document.getElementById("settings-tabs");
+    if (!host) { return; }
+    host.classList.add("settings-tabs-live");
+
+    var tabs = host.querySelectorAll("[data-settings-tab]");
+    var panels = host.querySelectorAll("[data-settings-panel]");
+
+    function select(index) {
+        Array.prototype.forEach.call(tabs, function (t) {
+            var on = t.getAttribute("data-settings-tab") === index;
+            t.classList.toggle("is-active", on);
+            t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        Array.prototype.forEach.call(panels, function (p) {
+            p.classList.toggle("is-active", p.getAttribute("data-settings-panel") === index);
+        });
+    }
+
+    Array.prototype.forEach.call(tabs, function (t) {
+        t.addEventListener("click", function () {
+            select(t.getAttribute("data-settings-tab"));
+        });
+        t.addEventListener("keydown", function (ev) {
+            if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") { return; }
+            ev.preventDefault();
+            var list = Array.prototype.slice.call(tabs);
+            var at = list.indexOf(t);
+            var next = list[(at + (ev.key === "ArrowRight" ? 1 : list.length - 1)) % list.length];
+            next.focus();
+            select(next.getAttribute("data-settings-tab"));
+        });
+    });
+
+    /* If a field inside a hidden panel fails browser validation (e.g. the
+       required site name) or an inline field-note is what the admin is
+       looking for, jump to that field's panel and focus it, so validation
+       and search never point at a tab that never opens. */
+    var form = host.closest("form");
+    if (form) {
+        form.addEventListener("submit", function (ev) {
+            var invalid = form.querySelector(":invalid");
+            if (!invalid) { return; }
+            var panel = invalid.closest("[data-settings-panel]");
+            if (!panel) { return; }
+            var index = panel.getAttribute("data-settings-panel");
+            var activePanel = host.querySelector(".settings-panel.is-active");
+            if (activePanel && activePanel.getAttribute("data-settings-panel") === index) { return; }
+            ev.preventDefault();
+            select(index);
+            window.requestAnimationFrame(function () { invalid.focus(); });
+        });
+    }
+})();
+
     /* ---------------------------------------------------------------- */
     /* PDF redaction editor.
      * Uses the bundled pdf.js in the browser to render the original PDF.
@@ -980,3 +1041,55 @@
             buildEditor();
         });
     })();
+
+/* ---- AI crawler tracker tabs ------------------------------------------
+ * Same progressive-enhancement pattern as the diagnostics tabs above:
+ * without JavaScript every panel stays visible in labelled sections.
+ */
+(function () {
+    var host = document.getElementById("crawler-tabs");
+    if (!host) { return; }
+    host.classList.add("crawler-tabs-live");
+
+    var tabs = host.querySelectorAll("[data-crawler-tab]");
+    var panels = host.querySelectorAll("[data-crawler-panel]");
+
+    function select(index) {
+        Array.prototype.forEach.call(tabs, function (t) {
+            var on = t.getAttribute("data-crawler-tab") === index;
+            t.classList.toggle("is-active", on);
+            t.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        Array.prototype.forEach.call(panels, function (p) {
+            p.classList.toggle("is-active", p.getAttribute("data-crawler-panel") === index);
+        });
+    }
+
+    Array.prototype.forEach.call(tabs, function (t) {
+        t.addEventListener("click", function () {
+            select(t.getAttribute("data-crawler-tab"));
+        });
+        t.addEventListener("keydown", function (ev) {
+            if (ev.key !== "ArrowRight" && ev.key !== "ArrowLeft") { return; }
+            ev.preventDefault();
+            var list = Array.prototype.slice.call(tabs);
+            var at = list.indexOf(t);
+            var next = list[(at + (ev.key === "ArrowRight" ? 1 : list.length - 1)) % list.length];
+            next.focus();
+            select(next.getAttribute("data-crawler-tab"));
+        });
+    });
+})();
+
+/* Confirm before clearing the AI crawler log. */
+(function () {
+    document.addEventListener("submit", function (event) {
+        var form = event.target.closest(".crawler-clear-form");
+        if (!form) {
+            return;
+        }
+        if (!window.confirm("Clear the AI crawler log? This deletes every recorded hit and cannot be undone.")) {
+            event.preventDefault();
+        }
+    });
+})();

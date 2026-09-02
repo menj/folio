@@ -318,7 +318,12 @@ grep -Fq "view=foo-pdf-${HIDDEN_HASH}<" "${TMP}/pdf-sitemap.xml" || fail 'hidden
 ! grep -Fq 'noindex' "${TMP}/hidden-view.html" \
     || fail 'hidden PDF record page picked up an unrelated noindex — pdf_access must not affect page-level robots meta'
 curl -sS "${BASE}?action=llms" -o "${TMP}/pdf-llms.txt"
-grep -Fq 'full transcription available' "${TMP}/pdf-llms.txt" || fail 'llms.txt did not note transcription availability for the hidden PDF'
+# Changed with the AI-discovery hardening: llms.txt is a curated discovery
+# surface and now excludes hidden documents entirely, matching library.yaml.
+# The sitemap above still lists the page — that is deliberate (the page is
+# public; only the folder listing and discovery inventories delist it).
+! grep -Fq "foo-pdf-${HIDDEN_HASH}" "${TMP}/pdf-llms.txt" \
+    || fail 'llms.txt still lists a hidden PDF'
 pass 'pdf_access does not affect sitemap, robots meta, or llms.txt indexability'
 
 # llms.txt Specification (v1.7.0) conformance: Lang: immediately after the H1
@@ -1599,5 +1604,97 @@ pass 'VideoObject carries uploadDate'
 grep -q "'ContactPoint'" "${APP}/index.php" \
     || fail 'schema_publisher does not emit a ContactPoint'
 pass 'schema_publisher emits ContactPoint for the knowledge panel'
+
+# ------------------------------------------------------------------
+# FOLIO-AI-DISCOVERY: the discovery stack obeys access tiers
+#
+# The failure this guards against is quiet and severe: a document hidden
+# from every listing still being announced by name and URL to every AI
+# system that reads llms.txt or library.yaml.
+# ------------------------------------------------------------------
+
+cat > "${APP}/data/metadata.json" <<'AIDJSON'
+{"foo.jpg": {"title": "Hidden Passport Scan", "image_access": "hidden",
+             "category": "PrivateOnly"}}
+AIDJSON
+
+LLMS_OUT="$(curl -sS "${BASE}?action=llms")"
+! grep -Fq 'Hidden Passport Scan' <<<"${LLMS_OUT}" \
+    || fail 'llms.txt lists a hidden document'
+pass 'llms.txt withholds hidden documents'
+
+YAML_OUT="$(curl -sS "${BASE}?action=yaml")"
+! grep -Fq 'Hidden Passport Scan' <<<"${YAML_OUT}" \
+    || fail 'library.yaml lists a hidden document'
+pass 'library.yaml withholds hidden documents'
+
+# Orientation precedes inventory: the canonical-resources section must
+# appear before the first document heading.
+ORIENT_LINE="$(grep -n '^# Canonical resources' <<<"${LLMS_OUT}" | head -1 | cut -d: -f1)"
+[[ -n "${ORIENT_LINE}" ]] || fail 'llms.txt has no Canonical resources section'
+pass 'llms.txt carries an orientation section'
+
+# identity.json must not derive public claims from hidden-only material.
+IDENT_OUT="$(curl -sS "${BASE}?action=identity")"
+php -r '$d=json_decode($argv[1],true); is_array($d) or exit(1);' "${IDENT_OUT}" \
+    || fail 'identity.json is not valid JSON'
+! grep -Fq 'PrivateOnly' <<<"${IDENT_OUT}" \
+    || fail 'identity.json derives knowsAbout from a hidden-only category'
+pass 'identity.json ignores hidden-only categories'
+
+# Stable @ids: the same #person and #website anchors everywhere.
+grep -Fq '#person' <<<"${IDENT_OUT}" || fail 'identity.json lacks the #person @id'
+grep -Fq '#website' <<<"${IDENT_OUT}" || fail 'identity.json lacks the #website @id'
+pass 'identity.json carries stable @id anchors'
+
+rm -f "${APP}/data/metadata.json"
+
+# ------------------------------------------------------------------
+# FOLIO-PERSON: the Person biography flows to every surface, or none
+# ------------------------------------------------------------------
+
+# The shared emitter is what keeps schema_publisher and identity.json from
+# disagreeing about the same person; both must route through it.
+grep -q 'function schema_person_biography' "${APP}/index.php" \
+    || fail 'the shared Person biography emitter is missing'
+[[ "$(grep -c 'schema_person_biography(' "${APP}/index.php")" -ge 3 ]] \
+    || fail 'schema_person_biography is not applied to both Person nodes'
+pass 'one biography emitter feeds both Person graphs'
+
+# Family fields are opt-in (1.63.0): spouse, children and parent are the
+# publisher's to state. Still excluded: sibling/knows/colleague/relatedTo,
+# and the location properties.
+for FORBIDDEN in "'sibling'" "'knows'" "'colleague'" "'relatedTo'" "'homeLocation'" "'workLocation'"; do
+    ! grep -q "\$node\[${FORBIDDEN}\]\|\$subject\[${FORBIDDEN}\]" "${APP}/index.php" \
+        || fail "an excluded property ${FORBIDDEN} is being emitted"
+done
+pass 'the still-excluded relationship and location properties stay out'
+
+# The family fields must be typed Person nodes, never bare strings — a
+# consumer must know each value names a person.
+grep -q "\$node\['spouse'\] = \['@type' => 'Person'" "${APP}/index.php" \
+    || fail 'spouse is not emitted as a typed Person node'
+pass 'family fields are emitted as typed Person nodes'
+
+# An unset biography publishes nothing — empty settings must not become
+# empty schema claims.
+IDENT_BIO="$(curl -sS "${BASE}?action=identity")"
+! grep -Eq '"birthDate": ""|"givenName": ""' <<<"${IDENT_BIO}" \
+    || fail 'an empty biography field was published as an empty claim'
+pass 'unset biography fields publish nothing'
+
+# Nationality accepts a comma list — a dual national's second nationality
+# must not be silently mangled into one string or dropped.
+grep -q 'parse_name_list((string) PUBLISHER_NATIONALITY)' "${APP}/index.php" \
+    || fail 'nationality is not parsed as a list'
+[[ "$(grep -c "\['nationality'\]" "${APP}/index.php")" == '1' ]] \
+    || fail 'nationality is emitted from more than one code path'
+pass 'nationality supports dual citizenship through one code path'
+
+# vCard: exactly one N line, as vCard 3.0 requires.
+VCARD_OUT="$(curl -sS "${BASE}?action=vcard")"
+[[ "$(grep -cE '^N:' <<<"${VCARD_OUT}")" == '1' ]] \
+    || fail 'the vCard does not carry exactly one N line'
+pass 'the vCard carries exactly one structured-name line'
 
 printf '\nAll Folio smoke tests passed.\n'

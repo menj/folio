@@ -3,7 +3,7 @@
 The canonical reference for what Folio is made of. Where any other document
 disagrees with this one, this one is correct and the other is a bug.
 
-Version 1.60.0. Update this file in the same commit as any change it describes.
+Version 1.67.1. Update this file in the same commit as any change it describes.
 
 ## Project
 
@@ -27,11 +27,11 @@ for precisely this reason.
 
 | Location | Exact string |
 | --- | --- |
-| `index.php` | `define('FOLIO_VERSION', '1.60.0');` |
-| `changelog.md` | `## 1.60.0 — 27 August 2026` |
-| `readme.txt` | `Stable tag: 1.60.0` |
-| `readme.md` | `1.60.0.` under `## Version` |
-| `security.md` | `The current supported release is **1.60.0**.` |
+| `index.php` | `define('FOLIO_VERSION', '1.67.1');` |
+| `changelog.md` | `## 1.67.1 — 2 September 2026` |
+| `readme.txt` | `Stable tag: 1.67.1` |
+| `readme.md` | `1.67.1.` under `## Version` |
+| `security.md` | `The current supported release is **1.67.1**.` |
 | `docs/ssot.md` | this section |
 
 To check them all at once from the release root:
@@ -78,6 +78,7 @@ docs/.htaccess            denies web access to docs/
 assets/css/style.css      stylesheet, themes, all layout
 assets/css/*.min.css      minified twins, built by tools/minify.js
 assets/manifest.json      records which source each minified twin was built from
+assets/img/social/        single-colour profile icons, recoloured by the active theme
 assets/js/*.min.js        minified twins, built by tools/minify.js
 tools/minify.js           builds the minified twins; maintainers only
 assets/css/flipbook.css   flip reader only
@@ -131,8 +132,11 @@ config.php                credentials, secrets, settings
 data/users.php            accounts
 data/settings.php         settings saved from the admin
 data/metadata.json        titles, descriptions, categories, tags, document_type,
-                          transcript, pdf_access, language, placeholder_image
+                          entity_relation, entity_org, transcript, pdf_access,
+                          language, placeholder_image
 data/metadata.lock        write lock
+data/entities.json        reusable Organization and Book entities; absent until the
+                          first one is saved on the Entities screen
 data/folder-descriptions.json  folder descriptions, keyed by folder path
 data/pages.json           standalone page content
 data/redirects.json       explicit 301/302 rules; absent until the first one is saved
@@ -144,6 +148,11 @@ data/contact-rate.json    contact form rate limiting — salted hashes of trunca
                           networks with timestamps, never a raw address. Entries
                           expire after an hour and prune themselves; safe to delete
 data/contact-rate.json.lock  write lock
+data/crawler-log.jsonl    AI crawler tracker hits — one JSON line per hit
+                          ({t,b,r}: timestamp, bot, route). No raw
+                          user-agent, no ordinary visitor. Pruned
+                          opportunistically past CRAWLER_LOG_RETENTION;
+                          safe to delete
 data/aspect.json          cached PDF page shapes; safe to delete
 data/previews/            generated, cached blurred previews for hidden PDFs and
                           restricted/hidden video (distinct hash namespaces, one folder)
@@ -186,6 +195,10 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `PUBLISHER_TYPE` | `Person` | Settings |
 | `PUBLISHER_NAME` | empty | Settings |
 | `PUBLISHER_URL` | empty | Settings |
+| `PUBLISHER_CANONICAL_ID` | empty | Settings |
+| `PUBLISHER_IMAGE` | empty | Settings |
+| `PUBLISHER_CONTACT_TYPE` | `customer support` | Settings |
+| `PUBLISHER_CONTACT_LANGUAGES` | empty | Settings |
 | `SHOW_ADMIN_LINK` | `true` | Settings |
 | `AUDIO_PLAYLIST` | `true` | Settings |
 | `PUBLISHER_NICKNAME` | empty | no — vCard only, never identity.json |
@@ -195,11 +208,24 @@ Names containing digits are valid; `GA4_MEASUREMENT_ID` depends on this.
 | `PUBLISHER_BIO` | empty | Settings — identity.json's `Person.description`, replacing the library's own description as the fallback |
 | `PUBLISHER_OCCUPATION` | empty | Settings — identity.json's `Person.jobTitle` |
 | `PUBLISHER_ALT_NAMES` | empty | Settings — identity.json's `Person.alternateName` |
-| `PUBLISHER_NATIONALITY` | empty | Settings — identity.json's `Person.nationality` |
+| `PUBLISHER_NATIONALITY` | empty | Settings — Person `nationality`; comma list, so dual citizenship publishes both |
 | `PUBLISHER_ALUMNI_OF` | empty | Settings — identity.json's `Person.alumniOf` |
 | `PUBLISHER_AFFILIATION` | empty | Settings — identity.json's `Person.affiliation` |
 | `PUBLISHER_RELATED_SITE_URL` | empty | Settings — a second site about the same person, as a named `additionalProperty` |
 | `PUBLISHER_RELATED_SITE_LABEL` | empty | Settings — label for the above, defaulting to "Related site" |
+| `PUBLISHER_HONORIFIC_PREFIX` | empty | Settings — Person `honorificPrefix`; vCard N prefix |
+| `PUBLISHER_GIVEN_NAME` | empty | Settings — Person `givenName`; vCard N |
+| `PUBLISHER_FAMILY_NAME` | empty | Settings — Person `familyName`; vCard N |
+| `PUBLISHER_BIRTH_DATE` | empty | Settings — Person `birthDate` (ISO, year precision allowed); vCard BDAY |
+| `PUBLISHER_BIRTH_PLACE` | empty | Settings — Person `birthPlace` |
+| `PUBLISHER_GENDER` | empty | Settings — Person `gender` |
+| `PUBLISHER_PRONOUNS` | empty | Settings — Person `pronouns` |
+| `PUBLISHER_KNOWS_LANGUAGE` | empty | Settings — Person `knowsLanguage` (comma list); vCard LANG |
+| `PUBLISHER_WORKS_FOR` | empty | Settings — Person `worksFor` |
+| `PUBLISHER_AWARDS` | empty | Settings — Person `award` (comma list) |
+| `PUBLISHER_SPOUSE` | empty | Settings — Person `spouse`, a typed Person node |
+| `PUBLISHER_CHILDREN` | empty | Settings — Person `children` (comma list of typed Person nodes) |
+| `PUBLISHER_PARENTS` | empty | Settings — Person `parent` (comma list of typed Person nodes) |
 
 ### Addressing
 
@@ -230,7 +256,9 @@ a host matching `/^[A-Za-z0-9._-]+(:[0-9]{1,5})?$/`.
 | `IDENTITY_ENABLED` | `true` | Crawlers |
 | `VCARD_ENABLED` | `true` | Crawlers — also requires `IDENTITY_ENABLED` |
 | `YAML_ENABLED` | `true` | Crawlers |
-| `FOOTER_LINKS` | `llms,yaml,vcard,json,html,xml` | Crawlers — order and presence of the footer's discovery-file links; a key's own `*_ENABLED` toggle above still governs whether it can be served at all |
+| `FOOTER_LINKS` | `robots,llms,yaml,vcard,json,html,xml` | Crawlers — order and presence of the footer's discovery-file links; a key's own `*_ENABLED` toggle above still governs whether it can be served at all |
+| `CRAWLER_LOG_ENABLED` | `true` | Crawlers — whether the AI crawler tracker logs hits at all |
+| `CRAWLER_LOG_RETENTION` | `90` | Crawlers — days a hit is kept in `data/crawler-log.jsonl` before opportunistic pruning removes it; clamped to 7–365 |
 
 ### Analytics
 
@@ -296,7 +324,7 @@ Public:
 | `?action=sitemap_video` | the public video files themselves, `video:` extension tags — empty while the video guard is on, since a signed URL would expire before the sitemap is next crawled |
 | `?action=sitemap_categories` | the category archive pages, in their own sitemap |
 | `?action=sitemap` | XML sitemap, or index beyond 50,000 URLs |
-| `?action=identity` | Schema.org identity document — Person + WebSite (`/identity.json`) |
+| `?action=identity` | Schema.org identity document — Person + WebSite, plus any declared Book and Organization nodes (`/identity.json`) |
 | `?action=vcard` | Downloadable vCard 3.0 for identity.json's subject (`/vcard.vcf`); requires identity.json enabled, plus its own toggle |
 | `?action=yaml` | YAML index of every public document (`/library.yaml`) |
 | `?action=sitemap_html` | Human-readable HTML sitemap of library.yaml (`/sitemap.html`; old `/library.html` and `?action=yaml_view` still resolve, redirected) |
@@ -317,6 +345,7 @@ Admin, all requiring a session:
 | `?action=analytics` | Matomo and GA4 |
 | `?action=users` | accounts |
 | `?action=pages` | standalone pages |
+| `?action=entities` | reusable Organization and Book entities |
 | `?action=image_redacted` | public: an image with redaction boxes burned in; the only image served for a file carrying regions |
 | `?action=redirects` | admin: explicit 301/302 rules, the redirect tester, import/export, the 404 Monitor (`&tab=notfound`), and slug history (`&tab=slugs`) |
 | `/contact` (`?page=contact`) | public: the contact page and its form; POST submits it |
@@ -338,6 +367,91 @@ Under clean URLs these become `/slug/`, `/category/slug/`, `/sitemap.xml`,
 `/sitemap-pdf.xml`, `/sitemap-video.xml`, `/sitemap-categories.xml`, `/sitemap.html`, `/identity.json`, `/vcard.vcf`, `/llms.txt`,
 `/robots.txt`, `/library.yaml`, and
 `/{key}.txt`. Admin paths keep their query-string form.
+
+## The AI Discovery Stack
+
+One integrated architecture, not a collection of independent files. Each
+surface answers a different question, and none duplicates another's answer:
+
+| Surface | Question it answers |
+|---|---|
+| `identity.json` | WHO — the canonical machine-readable identity graph |
+| About page | WHAT IT MEANS — the authoritative human-readable account (ProfilePage) |
+| FAQ page | WHAT IT MEANS — canonical answers, human and machine alike (FAQPage) |
+| `llms.txt` | WHERE AN AI SHOULD START — orientation first, inventory second |
+| `library.yaml` | WHAT MATERIAL EXISTS — the canonical structured inventory, and how each item relates to the subject |
+| Page JSON-LD | WHAT EACH WEB RESOURCE REPRESENTS |
+| Sitemaps | WHERE THE URLS ARE |
+| `robots.txt` | HOW CRAWLERS SHOULD ACCESS THEM |
+| `vcard.vcf` | PORTABLE PERSON IDENTITY |
+
+Each `library.yaml` document additionally carries `entity_relation` — how the
+record relates to the archive's subject — and `relation_source`, which states
+whether that was chosen by an operator (`explicit`), derived from the folder
+(`inferred`), or is the safe default (`fallback`). The provenance is published
+rather than hidden so a consumer can weigh the claim instead of treating a
+guess as a decision.
+
+No new AI discovery file (`ai.json`, `ai.txt`, `brand.txt`, `faq-ai.txt` or
+similar) is to be added while an existing surface can carry the information.
+`library.yaml` keeps its name deliberately: it describes exactly what the file
+is, is tied to no AI vendor convention, and stays clearly distinct from
+`identity.json`.
+
+**AI crawler tracker.** An observability layer over the stack, not a new
+surface: it answers WHO ACTUALLY CAME, logging a hit whenever a bot in
+`ai_crawlers()` requests one of the seven files above, to
+`data/crawler-log.jsonl` via `crawler_maybe_log()`, called from each
+discovery route's handler after its own `*_ENABLED`/`SITE_INDEXABLE` gating
+already passed — a disabled or 404'd route is never logged as a hit.
+Deliberately independent of `AI_ALLOW_*`: those declare a policy in
+robots.txt and library.yaml; the tracker records who showed up regardless,
+including a bot that ignores the policy. No raw user-agent string and no
+ordinary document visitor is ever recorded — only `{timestamp, bot, route}`.
+Surfaced on the Crawlers screen, tabbed Overview / Recent hits / Known bots.
+
+**Single source of truth.** Person identity flows from the publisher settings
+into identity.json, the About page schema, vcard.vcf and llms.txt. External
+profiles flow from `SITE_SAMEAS` alone into identity.json, vcard.vcf, the
+footer and page JSON-LD. Documents flow from the metadata catalogue plus the
+filesystem into library.yaml, llms.txt, the sitemaps and page JSON-LD — all
+through `index_all_files()`, so the inventories cannot drift apart. Canonical
+URLs everywhere derive from `SITE_URL`. The stable anchors `#person` and
+`#website` are shared by identity.json and every page's JSON-LD, so consumers
+can merge the graphs.
+
+**Access tiers and discovery.** Hidden documents are excluded from
+`llms.txt`, `library.yaml`, `identity.json`'s derived fields (knowsAbout),
+and the folder listing — hidden means not announced. The XML sitemap is the
+one deliberate exception: a hidden document's *page* remains indexable by
+design (the delisting-only model settled in 1.38.0), because the page is
+public and only the bytes are withheld; the sitemap never carries raw file
+URLs. Restricted documents stay listed everywhere with their pages, and their
+file URLs are never published where enforcement is active. A category that
+exists only on hidden material never becomes a public `knowsAbout` claim.
+
+**Person coverage.** The Schema.org Person type's biographical properties
+are settable in Settings and flow through one shared emitter
+(`schema_person_biography()`) into identity.json, page JSON-LD and vcard.vcf,
+so the graphs cannot disagree. The family fields — `spouse`, `children`,
+`parent` — are opt-in and empty by default: they publish other people's
+names, the Settings note says so plainly, and whether one's family appears
+in one's own biography is the publisher's decision (1.62.0 documented them
+as permanently excluded; 1.63.0 corrected that overreach). Each publishes as
+a typed Person node carrying a name only — no URLs, no `@id`s — because
+Folio holds no further facts about the people named and must not imply any.
+Still excluded: `sibling`, `knows`, `colleague`, `relatedTo`, and
+`homeLocation`/`workLocation` — `addressCountry` already states the coarse
+fact without publishing a locality. The vCard is untouched: Folio emits
+vCard 3.0, and `RELATED` exists only in vCard 4.
+
+**identity.json restraint.** `knowsAbout` is derived from the categories of
+visible documents, never typed in; `subjectOf` points at the About page only
+when it has content; no `author` claims are made per document, because Folio
+records no per-document author and a biographical archive's documents
+(certificates, identity papers) are about their subject, not by them.
+Inventing authorship to populate a Schema.org property is exactly what the
+stack refuses to do.
 
 ## Derivative images
 
@@ -639,6 +753,26 @@ Rules that must hold. A change breaking any of these is a defect.
     (`$f['view']` / `url_view()`) stays absolute at source, because the
     canonical, structured-data, and sitemap surfaces read the same field. A
     link surface that must be absolute becoming root-relative is a defect.
+24. Authorship is never asserted without evidence. A document node carries
+    `author` only where its record states `authored_by`, explicitly or by
+    folder inference. The safe fallback, `archived_by`, claims only that an
+    item is deliberately kept. A change that makes any record claim authorship
+    by default is a defect, not a convenience — an archive holds work by other
+    people, and asserting the subject wrote it is a false public statement
+    about every source they merely collected.
+25. A relation naming a second party stays silent until that party is
+    identified. `published_by` and `issued_by` emit nothing unless the record
+    names a declared organisation. They never fall back to the archive's
+    subject: an author is not the publisher of his own book, and the
+    inherited claim must be cleared, not left standing.
+26. Explicit metadata always overrides inference, and the two are visibly
+    distinct in the admin. An inferred value presented as a decision is a
+    defect: the operator must be able to tell what they chose from what Folio
+    guessed.
+27. An entity is referenced by `@id`, never repeated as a bare string. One
+    organisation named by six records is one node with six references. An
+    entity that cannot be resolved is omitted rather than emitted as a
+    dangling reference or a guess.
 
 ## Documentation set
 

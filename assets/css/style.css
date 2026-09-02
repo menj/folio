@@ -2777,6 +2777,87 @@ th[aria-sort="descending"] .col-sort { color: var(--accent); }
 .diag-tabs-live .diag-panel.is-active { display: block; }
 .diag-tabs-live .diag-panel-heading { display: none; }
 
+/* ---- Entity relationship picker --------------------------------------
+   In the per-document metadata form. Grouped in a fieldset because these
+   checkboxes are one decision made together, not a run of unrelated flags. */
+.meta-relation-fields {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    padding: 0.6rem 0.8rem 0.7rem;
+    margin: 0.35rem 0;
+    min-width: 0;
+}
+.meta-relation-fields legend {
+    font-family: var(--sans);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    padding: 0 0.35rem;
+}
+.meta-relation-fields .relation-row {
+    align-items: flex-start;
+    gap: 0.45rem;
+    margin: 0.28rem 0;
+}
+.meta-relation-fields .relation-row input {
+    margin-top: 0.2rem;
+    flex: none;
+}
+.meta-relation-fields .relation-row > span {
+    display: flex;
+    flex-direction: column;
+    gap: 0.05rem;
+}
+.meta-relation-fields .relation-row .field-note-inline {
+    margin: 0;
+    font-size: 0.72rem;
+    line-height: 1.4;
+}
+/* An inferred value must not read as a decision the archivist made. */
+.relation-inferred {
+    border-left: 2px solid var(--rule);
+    padding-left: 0.6rem;
+    margin: 0 0 0.6rem;
+}
+
+/* ---- Settings tabs -----------------------------------------------------
+   Same pattern as .diag-tabs above: every panel shows without JavaScript,
+   so nothing in the settings form is ever hidden from a no-JS visitor. */
+.settings-tablist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--rule);
+    margin: 0 0 1.25rem;
+    padding-bottom: 0.5rem;
+}
+.settings-tabs:not(.settings-tabs-live) .settings-tablist { display: none; }
+
+.settings-tab {
+    font-family: var(--sans);
+    font-size: 0.74rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    min-height: 2.25rem;
+}
+.settings-tab:hover { color: var(--ink); }
+.settings-tab.is-active {
+    color: var(--accent);
+    border-color: var(--rule);
+    background: var(--leaf);
+}
+
+.settings-tabs-live .settings-panel { display: none; }
+.settings-tabs-live .settings-panel.is-active { display: block; }
+.settings-tabs-live .settings-panel-heading { display: none; }
+
 /* The group a row came from, shown only in the Needs attention list where
    rows are pulled out of their original sections. */
 .diag-row-group {
@@ -2991,3 +3072,112 @@ th[aria-sort="descending"] .col-sort { color: var(--accent); }
 
 /* Paginated headers are links, not buttons; they must not inherit button reset. */
 a.col-sort { text-decoration: none; }
+
+/* ---- AI crawler tracker tabs --------------------------------------------
+   Same pattern as .diag-tabs above: every panel shows without JavaScript,
+   so the page degrades to labelled sections instead of hiding content. */
+.crawler-tablist {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    border-bottom: 1px solid var(--rule);
+    margin: 0 0 1.25rem;
+    padding-bottom: 0.5rem;
+}
+.crawler-tabs:not(.crawler-tabs-live) .crawler-tablist { display: none; }
+
+.crawler-tab {
+    font-family: var(--sans);
+    font-size: 0.74rem;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    background: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    padding: 0.4rem 0.7rem;
+    cursor: pointer;
+    min-height: 2.25rem;
+}
+.crawler-tab:hover { color: var(--ink); }
+.crawler-tab.is-active {
+    color: var(--accent);
+    border-color: var(--rule);
+    background: var(--leaf);
+}
+.crawler-tabs-live .crawler-panel { display: none; }
+.crawler-tabs-live .crawler-panel.is-active { display: block; }
+
+.crawler-subhead { font-size: 1rem; margin: 1.6rem 0 0.7rem; }
+.crawler-subhead:first-child { margin-top: 0; }
+
+.crawler-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 0 0 1.4rem;
+}
+.crawler-stat {
+    flex: 1 1 10rem;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--leaf);
+}
+.crawler-stat-num {
+    display: block;
+    font-family: var(--serif);
+    font-size: 1.6rem;
+    color: var(--accent);
+    line-height: 1.15;
+}
+.crawler-stat-label {
+    display: block;
+    font-family: var(--sans);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--quiet);
+    margin-top: 0.25rem;
+}
+
+/* ---- Entities screen ---------------------------------------------------
+   One fieldset per organisation or book. Grouped rather than tabulated
+   because each entity is several related facts, not a row of cells. */
+.entities-form { max-width: 44rem; }
+.entity-row {
+    border: 1px solid var(--rule);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem 1rem;
+    margin: 0 0 1rem;
+    min-width: 0;
+}
+.entity-row legend {
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink);
+    padding: 0 0.4rem;
+}
+.entity-row .meta-form-label { margin-top: 0.55rem; }
+.entity-row .meta-form-label:first-of-type { margin-top: 0; }
+.entity-row input[type="text"],
+.entity-row select {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--sans);
+    font-size: 0.9rem;
+    padding: 0.4rem 0.55rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    background: var(--paper);
+    color: var(--ink);
+}
+.entity-row input[type="text"]:focus,
+.entity-row select:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+    outline: 0;
+}
+.entity-row code { overflow-wrap: anywhere; }

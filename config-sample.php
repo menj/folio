@@ -54,6 +54,49 @@ define('PUBLISHER_NAME', '');
 define('PUBLISHER_URL', '');
 
 /**
+ * Optional. By default the Person/Organization node's @id is derived from
+ * this installation's own canonical URL (…#person) — correct for the
+ * overwhelming majority of installs, where the library and its subject's
+ * authoritative page are the same site.
+ *
+ * Set this only when this Folio install is a *satellite* documenting a
+ * subject whose canonical identity lives on a different domain — for
+ * example a documentary archive at example-archive.com about a person
+ * whose primary page is example-person.com. Every schema graph this
+ * installation emits then points at that one external @id instead of
+ * minting a second, competing Person node here. Must be a full URL with a
+ * fragment, e.g.:
+ *
+ *   define('PUBLISHER_CANONICAL_ID', 'https://example-person.com/#person');
+ *
+ * Leave empty unless you specifically need this.
+ */
+define('PUBLISHER_CANONICAL_ID', '');
+
+/**
+ * A canonical portrait (Person) or logo (Organization), reused across every
+ * identity surface: the structured-data graphs, the About page, and
+ * vcard.vcf. A path inside the installation or a full URL. Put the file in
+ * branding/ so an upgrade does not overwrite it:
+ *
+ *   define('PUBLISHER_IMAGE', 'branding/portrait.jpg');
+ *
+ * Left empty, Folio falls back to SITE_ICON, which is what it used before
+ * this setting existed. A favicon makes a poor portrait, so set this if you
+ * publish a Person.
+ */
+define('PUBLISHER_IMAGE', '');
+
+/**
+ * How the published contact address is labelled in structured data, and the
+ * languages someone writing to it may use. PUBLISHER_CONTACT_LANGUAGES takes
+ * a comma-separated list; left empty it uses SITE_LANGUAGE. The defaults
+ * reproduce exactly what Folio emitted before these were configurable.
+ */
+define('PUBLISHER_CONTACT_TYPE', 'customer support');
+define('PUBLISHER_CONTACT_LANGUAGES', '');
+
+/**
  * Optional, used only by the downloadable vCard (vcard.vcf), never by
  * identity.json. Each renders in the card only when set; leave any of them
  * as '' to omit that field entirely rather than emit an empty one.
